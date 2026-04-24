@@ -48,3 +48,11 @@ packages = ["src/pdft"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:jax.*",
+]
