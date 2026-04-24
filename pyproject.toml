@@ -33,6 +33,7 @@ dev = [
     "ruff>=0.5",
     "numpy>=1.26",
     "jaxtyping>=0.2",
+    "matplotlib>=3.8",
 ]
 plot = ["matplotlib>=3.8"]
 gpu = ["jax[cuda12]>=0.10.0"]

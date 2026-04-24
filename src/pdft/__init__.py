@@ -20,6 +20,17 @@ from .basis import (  # noqa: E402
     TEBDBasis,
     bases_allclose,
 )
+from .compression import (  # noqa: E402
+    CompressedImage,
+    compress,
+    compress_with_k,
+    compressed_to_dict,
+    compression_stats,
+    dict_to_compressed,
+    load_compressed,
+    recover,
+    save_compressed,
+)
 from .entangled_qft import entangled_qft_code  # noqa: E402
 from .mera import mera_code  # noqa: E402
 from .tebd import tebd_code  # noqa: E402

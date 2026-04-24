@@ -49,3 +49,7 @@ coverage.xml
 
 # Claude Code
 .claude/
+
+# Example outputs
+out/
+/out/

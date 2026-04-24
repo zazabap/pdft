@@ -224,6 +224,27 @@ let
     npzwrite(joinpath(OUT_DIR, "mera_4x4.npz"), kw)
 end
 
+# ---------- Case: compression_roundtrip_4x4 ----------
+let
+    Random.seed!(17)
+    m, n = 2, 2
+    basis = QFTBasis(m, n)
+    img = rand(2^m, 2^n)
+    k = 8
+    compressed = ParametricDFT.compress_with_k(basis, img; k=k)
+    recovered = ParametricDFT.recover(basis, compressed; verify_hash=true)
+    # Save: original image, kept indices (1-based column-major), real/imag,
+    # k, and the recovered image for direct Python comparison.
+    npzwrite(joinpath(OUT_DIR, "compression_roundtrip_4x4.npz"),
+             Dict("image" => img,
+                  "k" => [k],
+                  "indices" => compressed.indices,
+                  "values_real" => compressed.values_real,
+                  "values_imag" => compressed.values_imag,
+                  "recovered" => recovered,
+                  "basis_hash_chars" => collect(UInt8, compressed.basis_hash)))
+end
+
 # ---------- Manifest ----------
 function file_sha256(path)
     open(path, "r") do io
