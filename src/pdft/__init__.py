@@ -12,7 +12,17 @@ _jax.config.update("jax_enable_x64", True)
 __version__ = "0.0.0"
 __upstream_ref__ = "nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef"
 
-from .basis import AbstractSparseBasis, QFTBasis, bases_allclose  # noqa: E402
+from .basis import (  # noqa: E402
+    AbstractSparseBasis,
+    EntangledQFTBasis,
+    MERABasis,
+    QFTBasis,
+    TEBDBasis,
+    bases_allclose,
+)
+from .entangled_qft import entangled_qft_code  # noqa: E402
+from .mera import mera_code  # noqa: E402
+from .tebd import tebd_code  # noqa: E402
 from .loss import (  # noqa: E402
     AbstractLoss,
     L1Norm,
@@ -42,12 +52,15 @@ __all__ = [
     "AbstractLoss",
     "AbstractRiemannianManifold",
     "AbstractSparseBasis",
+    "EntangledQFTBasis",
     "L1Norm",
+    "MERABasis",
     "MSELoss",
     "PhaseManifold",
     "QFTBasis",
     "RiemannianAdam",
     "RiemannianGD",
+    "TEBDBasis",
     "TrainingResult",
     "UnitaryManifold",
     "__upstream_ref__",
@@ -57,14 +70,17 @@ __all__ = [
     "basis_to_dict",
     "classify_manifold",
     "dict_to_basis",
+    "entangled_qft_code",
     "ft_mat",
     "group_by_manifold",
     "ift_mat",
     "load_basis",
     "loss_function",
+    "mera_code",
     "optimize",
     "qft_code",
     "save_basis",
+    "tebd_code",
     "topk_truncate",
     "train_basis",
 ]

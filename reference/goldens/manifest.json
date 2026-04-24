@@ -1,17 +1,20 @@
 {
     "julia_version": "1.12.5",
     "files": {
-        "qft_code_4x4.npz": "41309c7d74dfaca28fdc5f8f70b92de080e9efb9a6864993c88721270136d228",
-        "adam_trajectory_4x4.npz": "7d24e34cac05bafb1120c311960738c2225401ba0467e992caca1292bd4d5dd4",
         "basis_roundtrip_hash.txt": "c8f0187251324ec674631ac4127fe2cf21d09c362f4ffab27ccd74cda214c1b2",
-        "loss_values.npz": "50591d432fa264ce7fe289e03233fdfb4d83104e99f628d87fcbbf78d5faa2a1",
-        "manifest.json": "1a500080a2e14c52f717225e340969ee7a0571d9da3a294f931c71f94985cb77",
-        "manifold_project_retract.npz": "2d10e329363a5cc8f162f3b8e8b93274182801249a6868649adcf89850c80077",
+        "entangled_qft_4x4.npz": "6b864441b7bd55fdda1c45dc70d448cf338f9d151f7c60733ce3fd51a009ecac",
         "qft_basis_trained.json": "ef76d7e0c8df397ef129591dc72fd2450b6d13007254e3f09175162c12cb2aa2",
-        "train_trajectory_4x4.npz": "c57972a722569b5c518b0ef1d3c8daee0678a47ee6870815d0d8d9cf8f592420",
-        "ft_mat_roundtrip.npz": "36fd6e89b59684ad6f99e68e2a704cb595c33c0a5f39e7e25c8e49c76a23ace1",
-        "basis_roundtrip.npz": "1885e88af19652d1b0fe15a86df7c54ada3e7230c334b6b176a0c53b3a86524c"
+        "ft_mat_roundtrip.npz": "deb69e2ab7b0123e5f61f62e8f3e40a869fb01dc8d483eb4af9dad39f39f033f",
+        "adam_trajectory_4x4.npz": "42f0d5abbe716329c667da14f16739e6d37420b95c1e17e70e492e89a5feb3e0",
+        "loss_values.npz": "7dc0a814dd26a24687cd43d802ed276b20babed1928a1f8a08606f0216c30643",
+        "manifest.json": "74a471a06806a57ea578e8a1824be63cc6585964f26013e6ac147fe8a5df350a",
+        "train_trajectory_4x4.npz": "633eabb28e8e9c633c860ff02fc47a7480e09f79e8c3d325ab91732b3d94a583",
+        "qft_code_4x4.npz": "c7810d55dc197953f94ad3735223508a35596211ffc99ccdfdc54bbd85b71b18",
+        "tebd_4x4.npz": "d6bb485ba6785bee4e3280c5190491176184d4b2454382e24708caf1baca3a03",
+        "manifold_project_retract.npz": "fbbd2022cbb7495233ea823cdaf73074834debf75f9317d498ec69beb04b72f0",
+        "mera_4x4.npz": "5907dce5c74b94ac3488c833eb6a1f3083b6497a2548b472a79db1c55ba1d119",
+        "basis_roundtrip.npz": "6e91a5b23da1e8bb83ce93dc62478c519a352c768e7db0ac113db272c1746e67"
     },
     "upstream_sha": "a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef",
-    "generated_at": "2026-04-24T16:41:57.350"
+    "generated_at": "2026-04-24T17:03:03.826"
 }

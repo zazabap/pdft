@@ -175,6 +175,55 @@ let
     npzwrite(joinpath(OUT_DIR, "adam_trajectory_4x4.npz"), kv)
 end
 
+# ---------- Case: entangled_qft_4x4 ----------
+let
+    Random.seed!(8)
+    m, n = 2, 2
+    entangle_phases = [0.3, 0.5]
+    code_fwd, tensors_raw, n_ent = entangled_qft_code(m, n; entangle_phases=entangle_phases)
+    tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_raw]
+    pic = Complex{Float64}.(rand(2^m, 2^n))
+    fwd = reshape(code_fwd(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+    kw = Dict{String, Any}("pic" => pic, "fwd" => fwd, "n_entangle" => [n_ent],
+                           "entangle_phases" => entangle_phases)
+    for (i, t) in enumerate(tensors)
+        kw["tensor_$(i-1)"] = collect(t)
+    end
+    npzwrite(joinpath(OUT_DIR, "entangled_qft_4x4.npz"), kw)
+end
+
+# ---------- Case: tebd_4x4 ----------
+let
+    Random.seed!(9)
+    m, n = 2, 2
+    phases = [0.1, 0.2, 0.3, 0.4]
+    code_fwd, tensors_raw, _, _ = tebd_code(m, n; phases=phases)
+    tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_raw]
+    pic = Complex{Float64}.(rand(2^m, 2^n))
+    fwd = reshape(code_fwd(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+    kw = Dict{String, Any}("pic" => pic, "fwd" => fwd, "phases" => phases)
+    for (i, t) in enumerate(tensors)
+        kw["tensor_$(i-1)"] = collect(t)
+    end
+    npzwrite(joinpath(OUT_DIR, "tebd_4x4.npz"), kw)
+end
+
+# ---------- Case: mera_4x4 ----------
+let
+    Random.seed!(11)
+    m, n = 2, 2
+    phases = [0.1, 0.2, 0.3, 0.4]
+    code_fwd, tensors_raw, _, _ = mera_code(m, n; phases=phases)
+    tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_raw]
+    pic = Complex{Float64}.(rand(2^m, 2^n))
+    fwd = reshape(code_fwd(tensors..., reshape(pic, fill(2, m+n)...)), 2^m, 2^n)
+    kw = Dict{String, Any}("pic" => pic, "fwd" => fwd, "phases" => phases)
+    for (i, t) in enumerate(tensors)
+        kw["tensor_$(i-1)"] = collect(t)
+    end
+    npzwrite(joinpath(OUT_DIR, "mera_4x4.npz"), kw)
+end
+
 # ---------- Manifest ----------
 function file_sha256(path)
     open(path, "r") do io

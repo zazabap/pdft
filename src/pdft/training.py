@@ -1,4 +1,4 @@
-"""Single-target training loop for AbstractSparseBasis instances.
+"""Single-target training loop for any registered basis.
 
 Mirror of the inner optimization path in upstream src/training.jl. Phase 1
 does not port batches, epochs, validation splits, LR schedules, or
@@ -8,19 +8,20 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import jax
+from jax import tree_util
 
-from .basis import QFTBasis
 from .loss import AbstractLoss, loss_function
-from .optimizers import RiemannianGD, optimize
+from .optimizers import AbstractRiemannianOptimizer, optimize
 
 Array = jax.Array
 
 
 @dataclass
 class TrainingResult:
-    basis: QFTBasis
+    basis: Any  # any registered basis type
     loss_history: list[float]
     seed: int
     steps: int
@@ -28,19 +29,21 @@ class TrainingResult:
 
 
 def train_basis(
-    basis: QFTBasis,
+    basis,
     *,
     target: Array,
     loss: AbstractLoss,
-    optimizer: RiemannianGD,
+    optimizer: AbstractRiemannianOptimizer,
     steps: int,
     seed: int = 0,
     device: str = "cpu",
 ) -> TrainingResult:
     """Train `basis` to minimize `loss(basis.tensors, target)` over `steps`.
 
-    `seed` is reserved for stochastic extensions; RiemannianGD itself is
-    deterministic given identical inputs.
+    Works for any basis registered as a JAX pytree whose leaves begin with
+    the forward-circuit tensor list followed by the inverse-circuit tensor
+    list (current convention for all four bases: QFTBasis, EntangledQFTBasis,
+    TEBDBasis, MERABasis).
     """
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")
@@ -68,14 +71,16 @@ def train_basis(
     )
     elapsed = time.perf_counter() - t0
 
-    trained = QFTBasis(
-        m=m,
-        n=n,
-        tensors=final_tensors,
-        inv_tensors=basis.inv_tensors,
-        code=basis.code,
-        inv_code=basis.inv_code,
-    )
+    # Reconstruct a basis of the same concrete type with trained `tensors`.
+    # We rely on the JAX pytree registration: leaves are (tensors..., inv_tensors...)
+    # in that order, and aux data carries everything else (m, n, code, inv_code,
+    # optional counts). Replacing the first len(tensors) leaves reconstructs
+    # a same-typed basis.
+    leaves, treedef = tree_util.tree_flatten(basis)
+    n_fwd = len(basis.tensors)
+    new_leaves = list(final_tensors) + list(leaves[n_fwd:])
+    trained = tree_util.tree_unflatten(treedef, new_leaves)
+
     return TrainingResult(
         basis=trained,
         loss_history=history,
