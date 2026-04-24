@@ -1,0 +1,28 @@
+name: Verify upstream pin
+
+on:
+  pull_request:
+    paths:
+      - "reference/**"
+      - ".github/workflows/verify-upstream-pin.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract pinned sha
+        id: pin
+        run: |
+          sha=$(grep -oP 'UPSTREAM_SHA = "\K[0-9a-f]+' reference/julia/generate_goldens.jl | head -n1)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Assert sha exists upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="${{ steps.pin.outputs.sha }}"
+          if [ -z "$sha" ]; then
+            echo "Could not extract UPSTREAM_SHA from generate_goldens.jl"
+            exit 1
+          fi
+          gh api "repos/nzy1997/ParametricDFT.jl/commits/$sha" >/dev/null

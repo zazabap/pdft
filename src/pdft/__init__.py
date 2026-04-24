@@ -13,4 +13,4 @@ __version__ = "0.0.0"
 
 # Filled at release time to the upstream commit sha that the committed
 # goldens were generated against. See reference/goldens/manifest.json.
-__upstream_ref__ = "nzy1997/ParametricDFT.jl@unpinned"
+__upstream_ref__ = "nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef"

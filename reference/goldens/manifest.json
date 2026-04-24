@@ -1,0 +1,12 @@
+{
+    "julia_version": "1.12.5",
+    "files": {
+        "loss_values.npz": "d967d74aacc64933a05da3385f94715d6e7aefe425179d95e2c82a05b249d6a3",
+        "manifold_project_retract.npz": "60faa0b0c79ae4c14ef6c2aa66f6a9f5a6de99f6d3816385fba43a86c66ec363",
+        "train_trajectory_4x4.npz": "f92f4bde434d7345844846d54469a5d7d34e6dd6cd91d13c035357efea912fcf",
+        "ft_mat_roundtrip.npz": "1afa59e4de2ab857eda9da8c86585da891e2cf617fa8b12da2c3f9e0e2427ce5",
+        "qft_code_4x4.npz": "60c59ad15d473c0a183430f6215fb4eca1f6799c5124ce55cb38b2f082f91d5d"
+    },
+    "upstream_sha": "a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef",
+    "generated_at": "2026-04-24T15:54:18.389"
+}
