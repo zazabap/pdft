@@ -199,14 +199,18 @@ def optimize(
         )
         if record_loss:
             if jnp.isnan(cached_loss):
+                # Re-evaluate loss at current (post-fallback) tensors for the
+                # trace, but do NOT overwrite cached_loss — next iteration
+                # must recompute fresh, matching upstream src/optimizers.jl:392-403.
                 for manifold, indices in state.manifold_groups.items():
                     unstack_tensors(
                         state.point_batches[manifold],
                         indices,
                         into=state.current_tensors,
                     )
-                cached_loss = float(loss_fn(state.current_tensors))
-            trace.append(float(cached_loss))
+                trace.append(float(loss_fn(state.current_tensors)))
+            else:
+                trace.append(float(cached_loss))
 
     for manifold, indices in state.manifold_groups.items():
         unstack_tensors(
