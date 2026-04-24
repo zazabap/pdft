@@ -31,6 +31,8 @@ This is not a Pythonic rewrite. APIs and data layouts mirror Julia's wherever a 
 | Serialization | Bidirectional JSON compatible with Julia `StructTypes` schema | Enables cross-language round-trips |
 | Circuit framework | **Hand-rolled** einsum skeletons | No Yao / Qiskit / PennyLane dep; circuits are fixed, known topologies |
 | Package layout | Python files mirror `src/*.jl` filenames 1:1, created progressively per phase | Max traceability for Julia maintainers |
+| Numerical precision | `complex128` / `float64` everywhere; `jax.config.update("jax_enable_x64", True)` set at `pdft` import time | Matches Julia's default `ComplexF64`; without x64, every parity test drifts by ~1e-7 and the tolerances in Section 6 are impossible to hit. The import-time side effect is documented in the README. |
+| Upstream pinning | Exact `ParametricDFT.jl` git sha pinned in `reference/julia/Project.toml` and recorded in `manifest.json` on every golden regeneration | Prevents silent numerical drift when upstream moves |
 
 ## 3. Package layout
 
@@ -221,6 +223,16 @@ No plotting in Phase 1.
 ### Phase 1 public API (`__init__.py`)
 
 ```python
+# Global: enable float64 / complex128 to match Julia's ComplexF64 default.
+# Must precede any pdft import; documented as a side effect in the README.
+import jax
+jax.config.update("jax_enable_x64", True)
+
+# Records the upstream ParametricDFT.jl commit this port is validated against.
+# Updated atomically with golden regeneration (see reference/goldens/manifest.json).
+__upstream_ref__ = "nzy1997/ParametricDFT.jl@<sha>"   # filled per-release
+__version__      = "0.0.0"
+
 from .loss       import AbstractLoss, L1Norm, MSELoss, topk_truncate, loss_function
 from .qft        import qft_code, ft_mat, ift_mat
 from .manifolds  import (AbstractRiemannianManifold, UnitaryManifold, PhaseManifold,
@@ -284,7 +296,9 @@ See Section 3 for layout. Summary of cases and tolerances:
 
 **Complex numbers.** `.npz` handles `complex128` natively; Julia's `NPZ.jl` writes the same format. No manual re-packing.
 
-**`manifest.json`.** Records SHA256 of each `.npz`, upstream commit sha, Julia version, timestamp. Python tests *skip* (not fail) if the upstream sha in `reference/julia/Project.toml` diverges from the manifest — prevents silent drift after regeneration.
+**Upstream commit pinning.** `reference/julia/Project.toml` records an exact `ParametricDFT.jl` git sha via `[compat]` + a Manifest.toml that pins the rev (e.g., `Pkg.add(url="...", rev="<sha>")`). The same sha is written to `reference/goldens/manifest.json` on every regeneration. A CI job (`.github/workflows/verify-upstream-pin.yml`) runs on PRs that touch `reference/` and fails if the pinned sha does not exist in the upstream repo history (one `gh api repos/nzy1997/ParametricDFT.jl/commits/<sha>` call). This catches accidentally-rebased or typo'd shas before they hit main.
+
+**`manifest.json`.** Records SHA256 of each `.npz`, the pinned upstream commit sha, Julia version, timestamp, and (once we publish) the `pdft` version that produced this generation. Python tests *skip* (not fail) if the upstream sha in `reference/julia/Project.toml` diverges from the manifest — prevents silent drift after regeneration. The release process updates `pdft.__upstream_ref__` to match `manifest.json["upstream_sha"]` at tag time.
 
 **Regeneration.** `make goldens` in repo root; needs Julia installed. Normal Python devs consume committed `.npz` files; they don't regenerate.
 
@@ -345,6 +359,14 @@ Internal helpers (`batched_matmul`, `stack_tensors`, `classify_manifold`, einsum
 **Logging.** No `logging` calls in hot paths. `training.py` has an optional `verbose` + `log_every` knob that uses `print`. Silent by default.
 
 **Error message style.** One line, include offending value + valid range: `ValueError("m must be >= 1, got m=0")`.
+
+### 8.1 Conventions and invariants
+
+**Complex dtype.** All public entry points accept real or complex `pic`. Internal representation is always `complex128` once `jax_enable_x64` is active (which `pdft` sets at import time). Real inputs are promoted to `complex128` at the API boundary; we never run a circuit in `complex64`. `tensors` and `inv_tensors` on `QFTBasis` are always `complex128`.
+
+**Basis equality.** `QFTBasis` is a `dataclass` *and* a JAX pytree. Its `code` / `inv_code` fields are jit-compiled closures and compare by identity, so the dataclass-generated `__eq__` is useless for semantic comparison. `code` and `inv_code` are therefore declared `field(compare=False)`, and semantic equality is defined as: **same `m, n` and `jnp.allclose(tensors, tensors')` + `jnp.allclose(inv_tensors, inv_tensors')` element-wise under a stated tolerance.** A helper `pdft.basis.bases_allclose(a, b, *, atol=1e-10)` is provided for tests and serialization round-trip checks.
+
+**Thread-safety.** `QFTBasis` is *not* thread-safe during training — `tensors` is rebound each step, and the update is not atomic. Training loops must not share a single `QFTBasis` across threads. Python 3.13 free-threading builds are supported for read-only use (inference via `ft_mat` / `ift_mat` on an already-trained basis), not for concurrent training.
 
 ## 9. Phased roadmap
 
