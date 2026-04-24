@@ -116,6 +116,65 @@ let
     npzwrite(joinpath(OUT_DIR, "train_trajectory_4x4.npz"), kv)
 end
 
+# ---------- Case: basis_roundtrip (cross-language JSON) ----------
+let
+    Random.seed!(42)
+    m, n = 2, 2
+    code_fwd, tensors_raw = qft_code(m, n)
+    tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_raw]
+    # Perturb tensors slightly so they differ from defaults (meaningful roundtrip)
+    perturbed = [t .+ ComplexF64(1e-6 * (0.3 + 0.5im)) for t in tensors]
+    basis = QFTBasis(m, n, perturbed)
+
+    # Save to JSON using upstream's save_basis
+    json_path = joinpath(OUT_DIR, "qft_basis_trained.json")
+    save_basis(json_path, basis)
+
+    # Also save expected ft_mat output on a fixed image for verification
+    pic = Complex{Float64}.(rand(2^m, 2^n))
+    fwd = ft_mat(basis.tensors, code_fwd, m, n, pic)
+    expected_hash = ParametricDFT.basis_hash(basis)
+    npzwrite(joinpath(OUT_DIR, "basis_roundtrip.npz"),
+             Dict("pic" => pic,
+                  "fwd" => fwd,
+                  "m" => [m], "n" => [n]))
+    # Record hash in a side file so Python tests can check it independently of JSON parse
+    open(joinpath(OUT_DIR, "basis_roundtrip_hash.txt"), "w") do io
+        write(io, expected_hash)
+    end
+end
+
+# ---------- Case: adam_trajectory_4x4 ----------
+let
+    Random.seed!(0)
+    m, n = 2, 2
+    code_fwd, tensors_init_raw = qft_code(m, n)
+    tensors_init = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_init_raw]
+    target = Complex{Float64}.(rand(2^m, 2^n))
+
+    loss_fn(ts) = ParametricDFT.loss_function(ts, m, n, code_fwd, target, L1Norm())
+    grad_fn(ts) = Zygote.gradient(loss_fn, ts)[1]
+
+    loss_trace = Float64[]
+    push!(loss_trace, Float64(loss_fn(tensors_init)))
+
+    final = optimize!(RiemannianAdam(lr=0.01), copy(tensors_init), loss_fn, grad_fn;
+                      max_iter=50, tol=1e-10, loss_trace=loss_trace)
+
+    kv = Dict{String, Any}(
+        "target" => target,
+        "loss_history" => loss_trace,
+        "config_lr" => [0.01], "config_steps" => [50], "config_seed" => [0],
+    )
+    for (i, t) in enumerate(tensors_init)
+        kv["tensors_init_$(i-1)"] = collect(t)
+    end
+    for (i, t) in enumerate(final)
+        kv["tensors_final_$(i-1)"] = collect(t)
+    end
+    npzwrite(joinpath(OUT_DIR, "adam_trajectory_4x4.npz"), kv)
+end
+
 # ---------- Manifest ----------
 function file_sha256(path)
     open(path, "r") do io
@@ -129,7 +188,8 @@ manifest = Dict(
     "generated_at" => string(now()),
     "files" => Dict(
         f => file_sha256(joinpath(OUT_DIR, f))
-        for f in readdir(OUT_DIR) if endswith(f, ".npz")
+        for f in readdir(OUT_DIR)
+        if endswith(f, ".npz") || endswith(f, ".json") || endswith(f, ".txt")
     ),
 )
 open(joinpath(OUT_DIR, "manifest.json"), "w") do io

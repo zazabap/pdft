@@ -27,7 +27,14 @@ from .manifolds import (  # noqa: E402
     classify_manifold,
     group_by_manifold,
 )
-from .optimizers import RiemannianGD, optimize  # noqa: E402
+from .io_json import (  # noqa: E402
+    basis_hash,
+    basis_to_dict,
+    dict_to_basis,
+    load_basis,
+    save_basis,
+)
+from .optimizers import RiemannianAdam, RiemannianGD, optimize  # noqa: E402
 from .qft import ft_mat, ift_mat, qft_code  # noqa: E402
 from .training import TrainingResult, train_basis  # noqa: E402
 
@@ -39,19 +46,25 @@ __all__ = [
     "MSELoss",
     "PhaseManifold",
     "QFTBasis",
+    "RiemannianAdam",
     "RiemannianGD",
     "TrainingResult",
     "UnitaryManifold",
     "__upstream_ref__",
     "__version__",
     "bases_allclose",
+    "basis_hash",
+    "basis_to_dict",
     "classify_manifold",
+    "dict_to_basis",
     "ft_mat",
     "group_by_manifold",
     "ift_mat",
+    "load_basis",
     "loss_function",
     "optimize",
     "qft_code",
+    "save_basis",
     "topk_truncate",
     "train_basis",
 ]

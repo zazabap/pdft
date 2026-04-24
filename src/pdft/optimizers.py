@@ -38,6 +38,24 @@ class RiemannianGD:
     max_grad_norm: float | None = None
 
 
+@dataclass(frozen=True)
+class RiemannianAdam:
+    """Riemannian Adam optimizer (Becigneul & Ganea, 2019).
+
+    Mirror of upstream src/optimizers.jl:173-183. Defaults match upstream.
+    """
+
+    lr: float = 0.001
+    beta1: float = 0.9
+    beta2: float = 0.999
+    eps: float = 1e-8
+    max_grad_norm: float | None = None
+
+
+# Union of supported optimizer types for dispatch.
+AbstractRiemannianOptimizer = RiemannianGD | RiemannianAdam
+
+
 # ---------------------------------------------------------------------------
 # Shared setup state
 # ---------------------------------------------------------------------------
@@ -96,6 +114,65 @@ def _batched_project(state: _OptimizationState, euclid_grads: list[Array]):
 # ---------------------------------------------------------------------------
 
 
+def _init_adam_state(state: _OptimizationState):
+    """Mirror of upstream src/optimizers.jl:197-216.
+
+    Returns a dict with per-manifold m (first moment, complex) and v
+    (second moment, real) buffers, all initialized to zero.
+    """
+    m_buf: dict = {}
+    v_buf: dict = {}
+    for manifold, indices in state.manifold_groups.items():
+        if not indices:
+            continue
+        pb = state.point_batches[manifold]
+        m_buf[manifold] = jnp.zeros_like(pb)
+        v_buf[manifold] = jnp.zeros(pb.shape, dtype=jnp.float64)
+    return {"m": m_buf, "v": v_buf}
+
+
+def _adam_step(
+    opt: RiemannianAdam,
+    state: _OptimizationState,
+    rg_batches: dict,
+    iter_1_based: int,
+    adam_state: dict,
+) -> None:
+    """Mirror of upstream src/optimizers.jl:277-319.
+
+    Update m, v, direction buffer; retract along -direction; transport
+    m onto the new tangent space. Mutates `state.point_batches` and
+    `adam_state` in place.
+    """
+    beta1, beta2 = opt.beta1, opt.beta2
+    bc1 = 1.0 - beta1 ** iter_1_based
+    bc2 = 1.0 - beta2 ** iter_1_based
+
+    for manifold, _indices in state.manifold_groups.items():
+        rg = rg_batches[manifold]
+        m_state = adam_state["m"][manifold]
+        v_state = adam_state["v"][manifold]
+
+        # In-place (functional) moment update
+        m_state = beta1 * m_state + (1.0 - beta1) * rg
+        v_state = beta2 * v_state + (1.0 - beta2) * jnp.real(jnp.conj(rg) * rg)
+
+        # Bias-corrected direction
+        direction = (m_state / bc1) / (jnp.sqrt(v_state / bc2) + opt.eps)
+
+        # Retract along -direction
+        old_batch = state.point_batches[manifold]
+        ib = state.ibatch_cache.get(manifold)
+        new_batch = manifold.retract(old_batch, -direction, opt.lr, I_batch=ib)
+
+        # Transport momentum (re-project onto new tangent space)
+        m_state = manifold.transport(old_batch, new_batch, m_state)
+
+        adam_state["m"][manifold] = m_state
+        adam_state["v"][manifold] = v_state
+        state.point_batches[manifold] = new_batch
+
+
 def _armijo_step(
     opt: RiemannianGD,
     state: _OptimizationState,
@@ -144,7 +221,7 @@ def _armijo_step(
 
 
 def optimize(
-    opt: RiemannianGD,
+    opt: "RiemannianGD | RiemannianAdam",
     tensors: list[Array],
     loss_fn: Callable[[list[Array]], Array],
     grad_fn: Callable[[list[Array]], list[Array]],
@@ -170,14 +247,21 @@ def optimize(
         trace.append(float(loss_fn(state.current_tensors)))
 
     cached_loss = float("nan")
+    adam_state = _init_adam_state(state) if isinstance(opt, RiemannianAdam) else None
 
-    for _ in range(max_iter):
+    for iter_0 in range(max_iter):
         for manifold, indices in state.manifold_groups.items():
             unstack_tensors(
                 state.point_batches[manifold], indices, into=state.current_tensors
             )
 
         raw_grads = grad_fn(state.current_tensors)
+        # JAX and Julia's Zygote use opposite Wirtinger conventions for gradients
+        # of real-valued functions of complex inputs: JAX returns ∂f/∂z̄ while
+        # Julia returns ∂f/∂z. These are complex conjugates. To match Julia's
+        # trajectory (and produce correct updates w.r.t. the real manifold
+        # structure), we conjugate the raw gradient before projection.
+        raw_grads = [jnp.conj(g) for g in raw_grads]
         for g in raw_grads:
             if not bool(jnp.all(jnp.isfinite(g))):
                 warnings.warn("Non-finite gradient — optimizer stopping.", stacklevel=2)
@@ -194,14 +278,25 @@ def optimize(
         if float(grad_norm) < tol:
             break
 
-        cached_loss = _armijo_step(
-            opt, state, rg_batches, loss_fn, grad_norm_sq, cached_loss
-        )
-        if record_loss:
-            if jnp.isnan(cached_loss):
-                # Re-evaluate loss at current (post-fallback) tensors for the
-                # trace, but do NOT overwrite cached_loss — next iteration
-                # must recompute fresh, matching upstream src/optimizers.jl:392-403.
+        if isinstance(opt, RiemannianGD):
+            cached_loss = _armijo_step(
+                opt, state, rg_batches, loss_fn, grad_norm_sq, cached_loss
+            )
+            if record_loss:
+                if jnp.isnan(cached_loss):
+                    for manifold, indices in state.manifold_groups.items():
+                        unstack_tensors(
+                            state.point_batches[manifold],
+                            indices,
+                            into=state.current_tensors,
+                        )
+                    trace.append(float(loss_fn(state.current_tensors)))
+                else:
+                    trace.append(float(cached_loss))
+        elif isinstance(opt, RiemannianAdam):
+            _adam_step(opt, state, rg_batches, iter_0 + 1, adam_state)
+            if record_loss:
+                # Adam does not evaluate loss; re-compute for the trace.
                 for manifold, indices in state.manifold_groups.items():
                     unstack_tensors(
                         state.point_batches[manifold],
@@ -209,8 +304,8 @@ def optimize(
                         into=state.current_tensors,
                     )
                 trace.append(float(loss_fn(state.current_tensors)))
-            else:
-                trace.append(float(cached_loss))
+        else:
+            raise TypeError(f"unsupported optimizer type: {type(opt).__name__}")
 
     for manifold, indices in state.manifold_groups.items():
         unstack_tensors(

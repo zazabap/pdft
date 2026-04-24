@@ -152,6 +152,25 @@ def _build_qft_einsum(m: int, n: int, *, inverse: bool):
         else:
             raise AssertionError(f"unknown gate kind: {g['kind']}")
 
+    # Match Julia's `perm_vec = sortperm(tn.tensors, by=x -> !(x ≈ mat(H)))`:
+    # reorder tensors + their subscripts so Hadamards come first, then
+    # diagonal CPs. The einsum remains valid because we permute tensor_list
+    # and tensor_subscripts with the same permutation. Required for
+    # cross-language JSON interop (Phase 2) — Julia's serialization uses
+    # this order.
+    import numpy as _np
+
+    H_np = _np.asarray(HADAMARD)
+    is_not_hadamard = [
+        not _np.allclose(_np.asarray(t), H_np, atol=1e-12) for t in tensor_list
+    ]
+    perm = sorted(range(len(tensor_list)), key=lambda i: is_not_hadamard[i])
+    tensor_list = [tensor_list[i] for i in perm]
+    tensor_subscripts = [tensor_subscripts[i] for i in perm]
+    # tensor_shapes at this point has exactly len(tensor_list) entries (pic
+    # shape is appended below, after this block). Permute in place.
+    tensor_shapes = [tensor_shapes[i] for i in perm]
+
     # Yao uses little-endian qubit ordering: qubit 1 = LSB of the state index.
     # Python's `pic.reshape((2,)*(m+n))` gives axes in big-endian order
     # (axis 0 = MSB of row, ..., axis m-1 = LSB of row, then same for cols).
