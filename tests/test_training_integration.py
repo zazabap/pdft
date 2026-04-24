@@ -23,8 +23,8 @@ def test_full_training_loop_no_nan():
         manifold = pdft.classify_manifold(t_init)
         if isinstance(manifold, pdft.UnitaryManifold):
             d = t_trained.shape[0]
-            I = jnp.eye(d, dtype=t_trained.dtype)
-            assert jnp.allclose(t_trained @ jnp.conj(t_trained).T, I, atol=1e-6)
+            I_mat = jnp.eye(d, dtype=t_trained.dtype)
+            assert jnp.allclose(t_trained @ jnp.conj(t_trained).T, I_mat, atol=1e-6)
         elif isinstance(manifold, pdft.PhaseManifold):
             assert jnp.allclose(jnp.abs(t_trained), 1.0, atol=1e-6)
 

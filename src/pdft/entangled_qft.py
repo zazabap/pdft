@@ -11,11 +11,9 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 import jax
-import jax.numpy as jnp
 
 from ._circuit import (
     Gate,
-    apply_circuit,
     compile_circuit,
     controlled_phase_diag,
 )

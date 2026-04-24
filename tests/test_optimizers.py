@@ -45,7 +45,10 @@ def test_optimize_rejects_bad_params():
     import pytest
 
     tensors = _random_unitary_tensors(d=2, count=1)
-    loss_fn = lambda ts: jnp.real(jnp.trace(ts[0]))
+
+    def loss_fn(ts):
+        return jnp.real(jnp.trace(ts[0]))
+
     grad_fn = jax.grad(loss_fn)
 
     with pytest.raises(ValueError):

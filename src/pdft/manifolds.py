@@ -44,8 +44,8 @@ def batched_inv(A: Array) -> Array:
 
 def _make_identity_batch(dtype, d: int, n: int) -> Array:
     """(d, d, n) array of identity matrices. Mirror of upstream src/manifolds.jl:87-92."""
-    I = jnp.eye(d, dtype=dtype)
-    return jnp.broadcast_to(I[:, :, None], (d, d, n))
+    I_mat = jnp.eye(d, dtype=dtype)
+    return jnp.broadcast_to(I_mat[:, :, None], (d, d, n))
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +98,8 @@ def is_unitary_general(t: Array, atol: float = 1e-6) -> bool:
     """
     if t.ndim != 2 or t.shape[0] != t.shape[1]:
         return False
-    I = jnp.eye(t.shape[0], dtype=t.dtype)
-    return bool(jnp.allclose(t @ jnp.conj(t).T, I, atol=atol))
+    I_mat = jnp.eye(t.shape[0], dtype=t.dtype)
+    return bool(jnp.allclose(t @ jnp.conj(t).T, I_mat, atol=atol))
 
 
 # Forward declarations — dataclasses defined below — so classify_manifold can

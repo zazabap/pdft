@@ -11,12 +11,10 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 import jax
-import jax.numpy as jnp
 
 from ._circuit import (
     HADAMARD,
     Gate,
-    apply_circuit,
     compile_circuit,
     controlled_phase_diag,
 )
@@ -57,8 +55,8 @@ def _mera_single_dim_gates(
     gates: list[Gate] = []
     phase_idx = 0
 
-    for l in range(1, k + 1):
-        s = 2 ** (l - 1)
+    for layer in range(1, k + 1):
+        s = 2 ** (layer - 1)
         n_pairs = n_qubits // (2 * s)
 
         # Disentanglers

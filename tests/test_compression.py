@@ -5,15 +5,12 @@ import pytest
 
 from pdft.basis import QFTBasis
 from pdft.compression import (
-    CompressedImage,
     compress,
     compress_with_k,
     compression_stats,
-    dict_to_compressed,
     load_compressed,
     recover,
     save_compressed,
-    compressed_to_dict,
 )
 
 
