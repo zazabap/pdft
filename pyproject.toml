@@ -7,31 +7,35 @@ name = "pdft"
 version = "0.0.0"
 description = "Python port of ParametricDFT.jl: learning parametric quantum Fourier transforms via manifold optimization."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "zazabap" }]
-keywords = ["quantum", "dft", "fourier", "variational", "manifold-optimization"]
+keywords = ["quantum", "dft", "fourier", "variational", "manifold-optimization", "jax"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-    "numpy>=1.24",
-    "scipy>=1.11",
+    "jax>=0.10.0",
+    "typing-extensions>=4.5",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7",
-    "pytest-cov",
-    "ruff",
+    "pytest-cov>=4",
+    "ruff>=0.5",
+    "numpy>=1.26",
+    "jaxtyping>=0.2",
 ]
+plot = ["matplotlib>=3.8"]
+gpu = ["jax[cuda12]>=0.10.0"]
 
 [project.urls]
 Homepage = "https://github.com/zazabap/pdft"
@@ -43,4 +47,4 @@ packages = ["src/pdft"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"

@@ -22,8 +22,8 @@ This is not a Pythonic rewrite. APIs and data layouts mirror Julia's wherever a 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Goal | Faithful reference / interop | Per user direction |
-| Array + autodiff stack | **JAX** (`jax.grad`, `custom_vjp`, `vmap`, `jit`) | Functional/immutable semantics mirror Julia; autodiff + GPU in one package; `custom_vjp` ≈ `ChainRulesCore.rrule` |
-| Einsum path optimization | `opt_einsum` (paths) + `jnp.einsum` (exec) | Matches Julia's `optimize_code_cached`/OMEinsum split |
+| Array + autodiff stack | **JAX** (`jax.grad`, `custom_vjp`, `vmap`, `jit`, `jnp.einsum`, `jnp.fft`, `jnp.linalg`) | Functional/immutable semantics mirror Julia; autodiff + GPU in one package; `custom_vjp` ≈ `ChainRulesCore.rrule`. Used **maximally** — no NumPy/SciPy at runtime. |
+| Einsum path optimization | `jnp.einsum` + `jnp.einsum_path`, cached via `jax.jit` | XLA's contraction planner is effectively optimal for networks of this size; avoids an `opt_einsum` dep. If Phase 3 benchmarks show regression vs. Julia's `TreeSA`, we can reintroduce `opt_einsum` behind a feature flag. |
 | Minimum Python | `>=3.11` | Tracks JAX 0.10.0's `requires_python` |
 | CI matrix | 3.11 / 3.12 / 3.13 | Active security-supported Python lines, minus 3.14 (pending JAX wheel support) |
 | Phasing | MVP vertical slice first (4 phases) | Ships working code early; each phase independently testable |
@@ -38,7 +38,7 @@ This is not a Pythonic rewrite. APIs and data layouts mirror Julia's wherever a 
 pdft/
 ├── src/pdft/
 │   ├── __init__.py                  re-exports the public API per phase
-│   ├── einsum_cache.py              path-cache for opt_einsum  (mirrors einsum_cache.jl)
+│   ├── einsum_cache.py              jit-compiled einsum path cache (mirrors einsum_cache.jl)
 │   ├── loss.py                      AbstractLoss, L1Norm, MSELoss, topk_truncate, loss_function
 │   ├── qft.py                       qft_code, ft_mat, ift_mat                 ── Phase 1
 │   ├── manifolds.py                 UnitaryManifold, PhaseManifold, batched ops, classify, stack/unstack  ── Phase 1
@@ -104,16 +104,24 @@ def loss_function(loss: AbstractLoss, pred: Array, target: Array) -> Array:   # 
 ### `einsum_cache.py`
 
 ```python
-def optimize_code_cached(subscripts: str, *shapes) -> ContractExpr:
-    """Returns an opt_einsum ContractExpr, caching by (subscripts, shapes)."""
+def optimize_code_cached(subscripts: str, *shapes) -> Callable[..., jax.Array]:
+    """Return a jit-compiled einsum closure bound to fixed subscripts and shapes.
+
+    Internally: compute `jnp.einsum_path(subscripts, *dummy_arrays_of_shape)` once,
+    then return `jax.jit(lambda *ops: jnp.einsum(subscripts, *ops, optimize=path))`.
+    Cached by (subscripts, shapes). Behaviorally replaces Julia's
+    `optimize_code_cached(... TreeSA())`."""
 ```
 
 ### `qft.py`
 
 ```python
-def qft_code(m: int, n: int, *, inverse: bool = False) -> tuple[ContractExpr, list[Array]]:
-    """Return (contraction, initial_tensors). Tensors are ordered so all
-    Hadamard-like gates come first (matches Julia's perm_vec sort)."""
+EinsumFn = Callable[..., jax.Array]   # jit-compiled closure returned by einsum_cache
+
+def qft_code(m: int, n: int, *, inverse: bool = False) -> tuple[EinsumFn, list[Array]]:
+    """Return (contraction_fn, initial_tensors). Tensors are ordered so all
+    Hadamard-like gates come first (matches Julia's perm_vec sort).
+    contraction_fn is a jit-compiled einsum bound to the fixed subscripts."""
 
 def ft_mat (tensors, code, m, n, pic: Array[2**m, 2**n]) -> Array[2**m, 2**n]: ...
 def ift_mat(tensors, code, m, n, pic: Array[2**m, 2**n]) -> Array[2**m, 2**n]: ...
@@ -162,8 +170,8 @@ class QFTBasis(AbstractSparseBasis):
     n: int
     tensors:     list[Array]                       # forward circuit
     inv_tensors: list[Array]                       # inverse circuit
-    code:     ContractExpr = field(compare=False)  # static (not a pytree leaf)
-    inv_code: ContractExpr = field(compare=False)
+    code:     EinsumFn = field(compare=False)  # jit-compiled einsum closure; static (not a pytree leaf)
+    inv_code: EinsumFn = field(compare=False)
 ```
 
 `QFTBasis` is a registered JAX pytree: its `tensors` / `inv_tensors` lists are leaves, and `(m, n, code, inv_code)` are aux data. This lets `jax.grad(loss_fn)(basis, ...)` traverse the basis transparently.
@@ -228,7 +236,7 @@ from .training   import train_basis, TrainingResult
 ┌───────────────────────────┐
 │ target: Array[2^m, 2^n]   │   (e.g. FFTW-computed DFT of a 4×4 image)
 │ basis:  QFTBasis          │   tensors, inv_tensors     ── pytree leaves
-│                           │   code, inv_code           ── opt_einsum ContractExpr (closure static)
+│                           │   code, inv_code           ── jit-compiled einsum closures (closure static)
 │ opt:    RiemannianGD(lr)  │
 └──────────────┬────────────┘
                ▼
@@ -250,7 +258,7 @@ from .training   import train_basis, TrainingResult
 
 - The pure per-step function is `step(tensors, target) -> (new_tensors, loss)`. `basis` splits into `(tensors, static_rest)` so `jax.jit(step)` sees only array leaves.
 - `code`, `inv_code`, `m`, `n`, `idx_U`, `idx_P` are closure constants (static), not leaves.
-- `jax.grad` traverses the `tensors` list naturally; returns a same-shape list of Euclidean gradients. `opt_einsum`-wrapped `jnp.einsum` is fully differentiable.
+- `jax.grad` traverses the `tensors` list naturally; returns a same-shape list of Euclidean gradients. The jit-compiled `jnp.einsum` closure is fully differentiable under JAX.
 - `I_batch` per manifold group is allocated once outside the step and closed over (matches Julia's pre-allocation strategy).
 - GPU: `jax.device_put(tensors, jax.devices('gpu')[0])` before the loop. Step function is device-agnostic.
 
@@ -260,7 +268,7 @@ from .training   import train_basis, TrainingResult
 - `batched_inv`: Julia uses a Python-level loop. JAX transposes `(d, d, n)` → `(n, d, d)`, calls `jnp.linalg.inv`, transposes back — truly batched.
 - `classify_manifold` is called once at `QFTBasis.__post_init__`, not per step.
 
-**Determinism.** `seed` creates `jax.random.PRNGKey(seed)`, threaded through any stochastic piece. `opt_einsum` paths are deterministic given fixed shapes; cached by `(subscripts, shapes)`.
+**Determinism.** `seed` creates `jax.random.PRNGKey(seed)`, threaded through any stochastic piece. `jnp.einsum_path` results are deterministic given fixed shapes; cached by `(subscripts, shapes)` in `einsum_cache.py`.
 
 ## 6. Parity harness
 
