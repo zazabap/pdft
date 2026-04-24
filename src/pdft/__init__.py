@@ -10,7 +10,48 @@ import jax as _jax
 _jax.config.update("jax_enable_x64", True)
 
 __version__ = "0.0.0"
-
-# Filled at release time to the upstream commit sha that the committed
-# goldens were generated against. See reference/goldens/manifest.json.
 __upstream_ref__ = "nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef"
+
+from .basis import AbstractSparseBasis, QFTBasis, bases_allclose  # noqa: E402
+from .loss import (  # noqa: E402
+    AbstractLoss,
+    L1Norm,
+    MSELoss,
+    loss_function,
+    topk_truncate,
+)
+from .manifolds import (  # noqa: E402
+    AbstractRiemannianManifold,
+    PhaseManifold,
+    UnitaryManifold,
+    classify_manifold,
+    group_by_manifold,
+)
+from .optimizers import RiemannianGD, optimize  # noqa: E402
+from .qft import ft_mat, ift_mat, qft_code  # noqa: E402
+from .training import TrainingResult, train_basis  # noqa: E402
+
+__all__ = [
+    "AbstractLoss",
+    "AbstractRiemannianManifold",
+    "AbstractSparseBasis",
+    "L1Norm",
+    "MSELoss",
+    "PhaseManifold",
+    "QFTBasis",
+    "RiemannianGD",
+    "TrainingResult",
+    "UnitaryManifold",
+    "__upstream_ref__",
+    "__version__",
+    "bases_allclose",
+    "classify_manifold",
+    "ft_mat",
+    "group_by_manifold",
+    "ift_mat",
+    "loss_function",
+    "optimize",
+    "qft_code",
+    "topk_truncate",
+    "train_basis",
+]
