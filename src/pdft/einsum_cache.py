@@ -38,7 +38,10 @@ def optimize_code_cached(subscripts: str, *shapes: tuple[int, ...]) -> Callable[
         return _CACHE[key]
 
     dummies = [jnp.zeros(shape, dtype=jnp.complex128) for shape in shapes]
-    path, _info = jnp.einsum_path(subscripts, *dummies, optimize="optimal")
+    # "greedy" scales polynomially in tensor count; "optimal" is exponential
+    # and becomes impractical beyond ~10 tensors (a 3x3 QFT has 12).
+    # For circuits of this size "greedy" matches "optimal" in practice.
+    path, _info = jnp.einsum_path(subscripts, *dummies, optimize="greedy")
 
     @jax.jit
     def _contract(*operands):
