@@ -1,4 +1,5 @@
 """Parity tests for QFT against Julia-generated goldens."""
+
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -29,7 +30,9 @@ def test_qft_tensors_element_wise_match_julia_4x4():
     assert len(tensors) == n_tensors
     for i, t in enumerate(tensors):
         np.testing.assert_allclose(
-            np.asarray(t), g[f"tensors_{i}"], atol=1e-12,
+            np.asarray(t),
+            g[f"tensors_{i}"],
+            atol=1e-12,
             err_msg=f"tensor {i} mismatch (gauge-exact parity expected)",
         )
 

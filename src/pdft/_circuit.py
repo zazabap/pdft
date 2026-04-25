@@ -13,6 +13,7 @@ Julia's Yao + yao2einsum output:
   maps to the LOWEST-index reshape axis within each block, hence we
   reverse within-block qubit order for both pic_labels and out_labels.
 """
+
 from __future__ import annotations
 
 import string
@@ -108,9 +109,7 @@ def build_circuit_einsum(
     import numpy as _np
 
     H_np = _np.asarray(HADAMARD)
-    is_not_hadamard = [
-        not _np.allclose(_np.asarray(t), H_np, atol=1e-12) for t in tensor_list
-    ]
+    is_not_hadamard = [not _np.allclose(_np.asarray(t), H_np, atol=1e-12) for t in tensor_list]
     perm = sorted(range(len(tensor_list)), key=lambda i: is_not_hadamard[i])
     tensor_list = [tensor_list[i] for i in perm]
     tensor_subscripts = [tensor_subscripts[i] for i in perm]
@@ -160,13 +159,11 @@ def apply_circuit(
     pic: Array,
 ) -> Array:
     """Contract pic through the circuit and reshape back to (2^m, 2^n)."""
-    if pic.shape != (2 ** m, 2 ** n):
-        raise ValueError(
-            f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}"
-        )
+    if pic.shape != (2**m, 2**n):
+        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
     reshaped = pic.astype(jnp.complex128).reshape((2,) * (m + n))
     out = code(*tensors, reshaped)
-    return out.reshape(2 ** m, 2 ** n)
+    return out.reshape(2**m, 2**n)
 
 
 # ---------------------------------------------------------------------------

@@ -91,6 +91,47 @@ def evaluate_baseline(
     return out, elapsed
 
 
+def evaluate_basis_shared(
+    basis,
+    test_images: np.ndarray,
+    keep_ratios: Sequence[float],
+) -> tuple[dict[str, dict[str, float]], dict[str, int]]:
+    """One trained basis evaluated on every image in `test_images`.
+
+    Mirrors `ParametricDFT-Benchmarks.jl/evaluation.jl::evaluate_basis`. Moves
+    the basis to host via `jax.tree_util.tree_map(jax.device_get, ...)` (sidesteps
+    the GPU scalar-indexing path in compress/recover). Per-(image, keep_ratio)
+    failures are recorded as NaN so they don't sink the run.
+
+    Returns ({kr_str: aggregated_metrics}, {kr_str: nan_count}).
+    """
+    import jax
+
+    import pdft  # noqa: F401  -- ensures jax_enable_x64 is set before any jnp use
+
+    cpu_basis = jax.tree_util.tree_map(jax.device_get, basis)
+
+    out: dict[str, dict[str, float]] = {}
+    nan_counts: dict[str, int] = {}
+    for kr in keep_ratios:
+        discard_ratio = 1.0 - kr
+        per_image: list[dict[str, float]] = []
+        for img in test_images:
+            try:
+                compressed = pdft.compress(
+                    cpu_basis, np.asarray(img, dtype=np.float64), ratio=discard_ratio
+                )
+                recovered = pdft.recover(cpu_basis, compressed)
+                per_image.append(compute_metrics(img, recovered))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("compress/recover failed on (kr=%s): %s", kr, e)
+                per_image.append({"mse": float("nan"), "psnr": float("nan"), "ssim": float("nan")})
+        agg = aggregate_per_keep_ratio(per_image)
+        out[str(kr)] = agg
+        nan_counts[str(kr)] = agg["nan_count"]
+    return out, nan_counts
+
+
 def evaluate_basis_per_image(
     bases: list,
     test_images: np.ndarray,

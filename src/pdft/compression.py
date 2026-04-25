@@ -6,6 +6,7 @@ as a sparse tuple (indices, real parts, imag parts, original size,
 basis_hash). Indices use Julia's 1-based column-major convention for
 cross-language JSON compatibility.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,8 @@ class CompressedImage:
     column-major linear indices into the frequency-domain matrix (Julia
     convention, chosen for cross-language JSON interop).
     """
-    indices: list[int]           # 1-based column-major
+
+    indices: list[int]  # 1-based column-major
     values_real: list[float]
     values_imag: list[float]
     original_size: tuple[int, int]
@@ -107,9 +109,7 @@ def _reconstruct_frequency_domain(compressed: CompressedImage) -> np.ndarray:
     """Fill a zero matrix with `compressed` non-zero entries (1-based colmajor indices)."""
     h, w = compressed.original_size
     freq_flat_colmajor = np.zeros(h * w, dtype=np.complex128)
-    for idx_1b, re, im in zip(
-        compressed.indices, compressed.values_real, compressed.values_imag
-    ):
+    for idx_1b, re, im in zip(compressed.indices, compressed.values_real, compressed.values_imag):
         freq_flat_colmajor[idx_1b - 1] = complex(re, im)
     # Reshape from column-major back to (h, w)
     return freq_flat_colmajor.reshape((h, w), order="F")
@@ -125,8 +125,7 @@ def recover(basis, compressed: CompressedImage, *, verify_hash: bool = True) -> 
         expected = basis_hash(basis)
         if expected != compressed.basis_hash:
             raise ValueError(
-                f"Basis hash mismatch. Compressed: {compressed.basis_hash}, "
-                f"basis: {expected}"
+                f"Basis hash mismatch. Compressed: {compressed.basis_hash}, basis: {expected}"
             )
     if tuple(compressed.original_size) != tuple(basis.image_size):
         raise ValueError(

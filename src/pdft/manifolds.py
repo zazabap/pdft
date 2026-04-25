@@ -3,6 +3,7 @@
 Mirror of upstream src/manifolds.jl. Device-agnostic: works on CPU and GPU
 via JAX; no `similar`, `copyto!`, or mutable updates — pure functional.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

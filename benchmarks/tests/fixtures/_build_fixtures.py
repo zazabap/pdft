@@ -2,6 +2,7 @@
 Run once: `python benchmarks/tests/fixtures/_build_fixtures.py`.
 The output .npy/.png files are committed; this script is not invoked by tests.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -16,7 +16,7 @@ from pdft.compression import (
 
 def _fixed_image(m=2, n=2, seed=0):
     return np.asarray(
-        jax.random.normal(jax.random.PRNGKey(seed), (2 ** m, 2 ** n)).astype(jnp.complex128).real
+        jax.random.normal(jax.random.PRNGKey(seed), (2**m, 2**n)).astype(jnp.complex128).real
     ).astype(np.float64)
 
 

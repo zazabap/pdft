@@ -39,7 +39,7 @@ def test_qft_code_returns_callable_and_tensors():
 
 
 def test_qft_code_tensor_count_mxn_matches_formula():
-    for (m, n) in [(1, 1), (2, 2), (3, 2), (2, 3), (3, 3)]:
+    for m, n in [(1, 1), (2, 2), (3, 2), (2, 3), (3, 3)]:
         _, tensors = qft_code(m, n)
         expected = (m + m * (m - 1) // 2) + (n + n * (n - 1) // 2)
         assert len(tensors) == expected

@@ -32,13 +32,26 @@ def test_full_training_loop_no_nan():
 def test_public_api_is_re_exported():
     # All Phase 1 public names available directly on the package
     expected = {
-        "AbstractLoss", "L1Norm", "MSELoss", "topk_truncate", "loss_function",
-        "qft_code", "ft_mat", "ift_mat",
-        "AbstractRiemannianManifold", "UnitaryManifold", "PhaseManifold",
-        "classify_manifold", "group_by_manifold",
-        "AbstractSparseBasis", "QFTBasis", "bases_allclose",
-        "RiemannianGD", "optimize",
-        "train_basis", "TrainingResult",
+        "AbstractLoss",
+        "L1Norm",
+        "MSELoss",
+        "topk_truncate",
+        "loss_function",
+        "qft_code",
+        "ft_mat",
+        "ift_mat",
+        "AbstractRiemannianManifold",
+        "UnitaryManifold",
+        "PhaseManifold",
+        "classify_manifold",
+        "group_by_manifold",
+        "AbstractSparseBasis",
+        "QFTBasis",
+        "bases_allclose",
+        "RiemannianGD",
+        "optimize",
+        "train_basis",
+        "TrainingResult",
     }
     for name in expected:
         assert hasattr(pdft, name), f"missing export: {name}"

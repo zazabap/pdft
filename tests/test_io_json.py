@@ -32,6 +32,7 @@ def test_basis_hash_format_matches_spec():
     b = QFTBasis(m=1, n=1)
     h = 1.0 / float(jnp.sqrt(2.0))
     import numpy as np
+
     H = np.array([[h, h], [h, -h]], dtype=np.complex128)
     vals = H.flatten(order="F")
     parts = ["QFTBasis:m=1:n=1:"]
@@ -84,7 +85,9 @@ def test_file_roundtrip(tmp_path: Path):
 
 def test_dict_to_basis_rejects_wrong_type():
     with pytest.raises(ValueError, match="Unknown basis type"):
-        dict_to_basis({"type": "MERABasis", "version": "1.0", "m": 2, "n": 2, "tensors": [], "hash": ""})
+        dict_to_basis(
+            {"type": "MERABasis", "version": "1.0", "m": 2, "n": 2, "tensors": [], "hash": ""}
+        )
 
 
 def test_dict_to_basis_warns_on_hash_mismatch():

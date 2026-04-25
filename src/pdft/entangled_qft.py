@@ -6,6 +6,7 @@ corresponding row and column qubits. Phase 3 supports the default
 `:back` entangle_position (entanglement at the end of the circuit);
 `:front` and `:middle` positions are not yet ported.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -41,9 +42,7 @@ def get_entangle_tensor_indices(tensors: list[Array], n_entangle: int) -> list[i
     return select_last_n_cp_indices(tensors, n_entangle)
 
 
-def extract_entangle_phases(
-    tensors: list[Array], entangle_indices: list[int]
-) -> list[float]:
+def extract_entangle_phases(tensors: list[Array], entangle_indices: list[int]) -> list[float]:
     """Extract phases φ_k from entanglement-gate tensors.
 
     Mirror of upstream src/entangled_qft.jl:316-326.

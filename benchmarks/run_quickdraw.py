@@ -5,8 +5,9 @@ Usage:
     python benchmarks/run_quickdraw.py <preset> [--gpu N] [--out DIR]
                                        [--allow-cpu] [--verbose] [--log-file]
 
-Mirrors run_quickdraw.jl from ParametricDFT-Benchmarks.jl. Single-target
-pdft.train_basis per image (P pairing). Skips MERA (m+n=10 not power of 2).
+Mirrors run_quickdraw.jl from ParametricDFT-Benchmarks.jl. Trains one shared
+basis per class on the full dataset via `pdft.train_basis_batched` (cosine
+LR, validation split, early stopping). Skips MERA on m+n not a power of 2.
 """
 
 from __future__ import annotations
@@ -37,9 +38,9 @@ from baselines import (
 )
 from config import get_preset
 from data_loading import load_quickdraw
-from evaluation import evaluate_baseline, evaluate_basis_per_image
+from evaluation import evaluate_baseline, evaluate_basis_shared
 from generate_report import main as generate_report_main
-from harness import dump_metrics_json, train_one_basis
+from harness import dump_metrics_json, train_one_basis_batched
 
 # ----------------------------------------------------------------------------
 # Constants
@@ -49,11 +50,24 @@ DATASET_NAME = "quickdraw"
 M = 5
 N = 5
 
+
+# Basis factories pull `seed` from the active preset at call time so the
+# random init for EntangledQFT/TEBD/MERA is deterministic and breaks the
+# QFT-clone collapse documented in issue #5. QFT itself is analytic.
+def _make_basis_factories(preset_seed: int) -> dict:
+    return {
+        "qft": lambda: pdft.QFTBasis(m=M, n=N),
+        "entangled_qft": lambda: pdft.EntangledQFTBasis(m=M, n=N, seed=preset_seed),
+        "tebd": lambda: pdft.TEBDBasis(m=M, n=N, seed=preset_seed),
+        "mera": lambda: pdft.MERABasis(m=M, n=N, seed=preset_seed),
+    }
+
+
 BASIS_FACTORIES = {
     "qft": lambda: pdft.QFTBasis(m=M, n=N),
-    "entangled_qft": lambda: pdft.EntangledQFTBasis(m=M, n=N),
-    "tebd": lambda: pdft.TEBDBasis(m=M, n=N),
-    "mera": lambda: pdft.MERABasis(m=M, n=N),
+    "entangled_qft": lambda: pdft.EntangledQFTBasis(m=M, n=N, seed=42),
+    "tebd": lambda: pdft.TEBDBasis(m=M, n=N, seed=42),
+    "mera": lambda: pdft.MERABasis(m=M, n=N, seed=42),
 }
 
 BASELINE_FACTORIES = {
@@ -75,7 +89,7 @@ def _is_power_of_two(x: int) -> bool:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    p.add_argument("preset", choices=("smoke", "light", "moderate", "heavy"))
+    p.add_argument("preset", choices=("smoke", "light", "moderate", "heavy", "generalized"))
     p.add_argument("--gpu", type=int, default=0, help="GPU device index (default 0)")
     p.add_argument("--out", type=Path, default=None, help="results directory")
     p.add_argument(
@@ -230,7 +244,13 @@ def run_dataset(
             "n_train": preset.n_train,
             "n_test": preset.n_test,
             "optimizer": preset.optimizer,
-            "lr": preset.lr,
+            "batch_size": preset.batch_size,
+            "warmup_frac": preset.warmup_frac,
+            "lr_peak": preset.lr_peak,
+            "lr_final": preset.lr_final,
+            "max_grad_norm": preset.max_grad_norm,
+            "validation_split": preset.validation_split,
+            "early_stopping_patience": preset.early_stopping_patience,
             "seed": preset.seed,
             "keep_ratios": list(preset.keep_ratios),
         },
@@ -243,77 +263,69 @@ def run_dataset(
     train_imgs, test_imgs = loader_fn(preset)
 
     metrics_payload: dict = {}
-    host_bases_for_analysis: dict[str, list] = {}
+    host_bases_for_analysis: dict = {}
 
-    # ----- bases
-    for basis_name, factory in basis_factories.items():
+    # Bind seed-aware factories to the active preset (so seeded init is
+    # deterministic per-preset) while keeping per-basis-class skip semantics.
+    seeded_factories = _make_basis_factories(preset.seed)
+    seeded_factories = {k: seeded_factories[k] for k in basis_factories}
+
+    # ----- bases (one shared basis per class, batched training)
+    for basis_name, factory in seeded_factories.items():
         if basis_name == "mera" and not _is_power_of_two(m + n):
             logger.info("skipping %s — m+n=%d not a power of 2", basis_name, m + n)
             metrics_payload[basis_name] = {"skipped": "incompatible_qubits"}
             continue
 
         logger.info(
-            "training %s — %d images × %d epochs",
+            "training %s — %d images × %d epochs (batch_size=%d, optimizer=%s)",
             basis_name,
             preset.n_train,
             preset.epochs,
+            preset.batch_size,
+            preset.optimizer,
         )
-        trained: list = []
-        loss_histories: list[list[float]] = []
-        total_time = 0.0
-        warmup_s = 0.0
-        oom_streak = 0
-
-        for i, img in enumerate(train_imgs):
-            try:
-                res = train_one_basis(factory, img, preset, device=device, is_first_image=(i == 0))
-                if i == 0:
-                    warmup_s = res.warmup_s
-                total_time += res.time
-                trained.append(res.basis)
-                loss_histories.append(res.loss_history)
-                oom_streak = 0
-            except (RuntimeError, MemoryError) as e:  # noqa: PERF203
-                logger.warning("basis=%s image=%d FAILED: %s", basis_name, i, e)
-                _record_failure(failures_dir, basis_name, i, e)
-                if "out of memory" in str(e).lower() or isinstance(e, MemoryError):
-                    oom_streak += 1
-                    if oom_streak >= 3:
-                        logger.error("basis=%s aborted after 3 consecutive OOMs", basis_name)
-                        break
-            except Exception as e:  # noqa: BLE001
-                logger.warning("basis=%s image=%d FAILED: %s", basis_name, i, e)
-                _record_failure(failures_dir, basis_name, i, e)
-
-        if not trained:
+        try:
+            res = train_one_basis_batched(factory, train_imgs, preset, device=device)
+        except (RuntimeError, MemoryError) as e:
+            logger.warning("basis=%s training FAILED: %s", basis_name, e)
+            _record_failure(failures_dir, basis_name, -1, e)
             metrics_payload[basis_name] = {
-                "failed": {
-                    "error": "all training images failed",
-                    "n_attempted": len(train_imgs),
-                },
-                "time": total_time,
+                "failed": {"phase": "train", "error": f"{type(e).__name__}: {e}"},
+                "time": 0.0,
+            }
+            continue
+        except Exception as e:  # noqa: BLE001
+            logger.warning("basis=%s training FAILED: %s", basis_name, e)
+            _record_failure(failures_dir, basis_name, -1, e)
+            metrics_payload[basis_name] = {
+                "failed": {"phase": "train", "error": f"{type(e).__name__}: {e}"},
+                "time": 0.0,
             }
             continue
 
-        # Save trained bases (JSON array) and loss histories.
+        # Save loss history (per-step train losses + per-epoch val losses) and
+        # the trained basis. trained_<basis>.json captures actual class name
+        # because pdft.save_basis is QFT-only (issue #5 sub-thread).
         try:
             (results_dir / "loss_history").mkdir(parents=True, exist_ok=True)
             (results_dir / "loss_history" / f"{basis_name}_loss.json").write_text(
-                json.dumps(loss_histories)
-            )
-            # pdft.save_basis is hardcoded to QFTBasis (Phase 2). For
-            # cross-basis serialisation we dump the host-resident tensor list
-            # directly with the actual class name so trained_<basis>.json is
-            # honest about what was trained. If/when pdft's serialiser supports
-            # all basis classes, swap this back to pdft.save_basis.
-            arr = []
-            for b in trained:
-                host_tensors = [jax.device_get(t) for t in b.tensors]
-                arr.append(
+                json.dumps(
                     {
-                        "type": type(b).__name__,
-                        "m": int(b.m),
-                        "n": int(b.n),
+                        "step_losses": list(res.loss_history),
+                        "val_losses": list(res.val_history),
+                        "epochs_completed": res.epochs_completed,
+                        "steps": res.steps,
+                    }
+                )
+            )
+            host_tensors = [jax.device_get(t) for t in res.basis.tensors]
+            (results_dir / f"trained_{basis_name}.json").write_text(
+                json.dumps(
+                    {
+                        "type": type(res.basis).__name__,
+                        "m": int(res.basis.m),
+                        "n": int(res.basis.n),
                         "tensors": [
                             [
                                 [float(v.real), float(v.imag)]
@@ -321,31 +333,31 @@ def run_dataset(
                             ]
                             for t in host_tensors
                         ],
-                    }
+                    },
+                    indent=2,
                 )
-            (results_dir / f"trained_{basis_name}.json").write_text(json.dumps(arr, indent=2))
+            )
         except Exception as e:  # noqa: BLE001
-            logger.warning("could not save trained bases for %s: %s", basis_name, e)
+            logger.warning("could not save trained basis for %s: %s", basis_name, e)
 
-        # Per-image evaluation (P pairing). Truncate trained / test to same length
-        # in case some images failed. Bases are moved to host once and reused
-        # for the post-eval reconstruction analysis.
-        n_eval = min(len(trained), len(test_imgs))
-        host_bases = [jax.tree_util.tree_map(jax.device_get, b) for b in trained[:n_eval]]
-        host_bases_for_analysis[basis_name] = host_bases
+        # Move basis to host once; reuse for eval and reconstruction analysis.
+        host_basis = jax.tree_util.tree_map(jax.device_get, res.basis)
+        host_bases_for_analysis[basis_name] = host_basis
         try:
-            kr_metrics, nan_counts = evaluate_basis_per_image(
-                host_bases,
-                test_imgs[:n_eval],
+            kr_metrics, nan_counts = evaluate_basis_shared(
+                host_basis,
+                test_imgs,
                 preset.keep_ratios,
             )
             metrics_payload[basis_name] = {
                 "metrics": kr_metrics,
-                "time": total_time,
+                "time": res.time,
                 "_pdft_py": {
-                    "warmup_s": warmup_s,
+                    "warmup_s": res.warmup_s,
                     "device": str(device),
-                    "n_eval_pairs": n_eval,
+                    "epochs_completed": res.epochs_completed,
+                    "steps": res.steps,
+                    "n_test": len(test_imgs),
                     "eval_failed_count": nan_counts,
                 },
             }
@@ -353,7 +365,7 @@ def run_dataset(
             logger.warning("evaluation failed for %s: %s", basis_name, e)
             metrics_payload[basis_name] = {
                 "failed": {"phase": "eval", "error": f"{type(e).__name__}: {e}"},
-                "time": total_time,
+                "time": res.time,
             }
 
     # ----- baselines

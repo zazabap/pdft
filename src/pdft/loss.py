@@ -3,6 +3,7 @@
 Mirror of upstream src/loss.jl. Single-image path only; batched loss
 dispatch is deferred to a later phase.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,12 +18,14 @@ Array = jax.Array
 @runtime_checkable
 class AbstractLoss(Protocol):
     """Marker protocol for loss types. No behavior; dispatch is functional."""
+
     ...
 
 
 @dataclass(frozen=True)
 class L1Norm:
     """L1 norm loss: minimizes `sum(|T(x)|)` to encourage sparsity."""
+
     pass
 
 
@@ -36,6 +39,7 @@ class MSELoss:
         Number of coefficients to keep after top-k magnitude truncation.
         Must be positive.
     """
+
     k: int
 
     def __post_init__(self):
@@ -62,6 +66,8 @@ def topk_truncate(x: Array, k: int) -> Array:
     Array
         Same shape and dtype as `x`; all but k entries are zero.
     """
+    # `k` is a Python int (static under vmap); the size comparison is also
+    # static. We branch on it OUTSIDE any traced computation.
     k2 = min(int(k), x.size)
     if k2 >= x.size:
         return x
@@ -72,21 +78,20 @@ def topk_truncate(x: Array, k: int) -> Array:
     flat = magnitudes.reshape(-1)
     # k-th largest magnitude: sort ascending, take index -k2 (i.e. k2-th from top)
     threshold = jnp.sort(flat)[-k2]
-    mask = magnitudes >= threshold
 
-    # Tiebreaking: if more than k entries equal the threshold, keep the
-    # first k by flattened order. Matches upstream src/loss.jl:52-60.
-    n_kept = int(jnp.sum(mask.astype(jnp.int32)))
-    if n_kept <= k2:
-        return x * mask.astype(x.dtype)
-
-    # Over-selection at the threshold — trim excess ties.
-    flat_mask = mask.reshape(-1)
-    tie_positions = jnp.where((flat == threshold) & flat_mask)[0]
-    n_excess = n_kept - k2
-    drop_indices = tie_positions[-n_excess:]
-    flat_mask = flat_mask.at[drop_indices].set(False)
-    return (x.reshape(-1) * flat_mask.astype(x.dtype)).reshape(x.shape)
+    # Tiebreaking, expressed entirely in JAX ops so this composes with vmap
+    # (mirror of upstream src/loss.jl:52-60). Strictly-greater entries are
+    # always kept; among the entries equal to the threshold, keep just enough
+    # to reach k, in flattened-order. The `cumsum <= needed_from_ties`
+    # construction selects the FIRST `needed_from_ties` ties.
+    strict_mask = flat > threshold
+    n_strict = jnp.sum(strict_mask.astype(jnp.int32))
+    needed_from_ties = jnp.int32(k2) - n_strict
+    tie_mask = (flat == threshold)
+    tie_cumsum = jnp.cumsum(tie_mask.astype(jnp.int32))
+    keep_tie = tie_mask & (tie_cumsum <= needed_from_ties)
+    final_flat_mask = strict_mask | keep_tie
+    return (x.reshape(-1) * final_flat_mask.astype(x.dtype)).reshape(x.shape)
 
 
 def _apply_circuit(tensors: list[Array], code, m: int, n: int, pic: Array) -> Array:
@@ -94,13 +99,18 @@ def _apply_circuit(tensors: list[Array], code, m: int, n: int, pic: Array) -> Ar
     dims = (2,) * (m + n)
     reshaped = pic.reshape(dims)
     out = code(*tensors, reshaped)
-    return out.reshape(2 ** m, 2 ** n)
+    return out.reshape(2**m, 2**n)
 
 
-def _scalar_loss(pred: Array, target: Array, loss: AbstractLoss,
-                 tensors: list[Array] | None = None,
-                 m: int | None = None, n: int | None = None,
-                 inverse_code=None) -> Array:
+def _scalar_loss(
+    pred: Array,
+    target: Array,
+    loss: AbstractLoss,
+    tensors: list[Array] | None = None,
+    m: int | None = None,
+    n: int | None = None,
+    inverse_code=None,
+) -> Array:
     """Loss from already-computed forward output. Dispatches on loss type."""
     if isinstance(loss, L1Norm):
         return jnp.sum(jnp.abs(pred))
@@ -143,9 +153,7 @@ def loss_function(
     inverse_code : callable, optional
         Required for MSELoss; the inverse einsum closure.
     """
-    if pic.shape != (2 ** m, 2 ** n):
-        raise ValueError(
-            f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}"
-        )
+    if pic.shape != (2**m, 2**n):
+        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
     pred = _apply_circuit(tensors, code, m, n, pic)
     return _scalar_loss(pred, pic, loss, tensors, m, n, inverse_code)

@@ -1,4 +1,5 @@
 """Smoke + property tests for EntangledQFTBasis, TEBDBasis, MERABasis."""
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -7,9 +8,7 @@ from pdft.basis import EntangledQFTBasis, MERABasis, QFTBasis, TEBDBasis, bases_
 
 
 def _random_pic(m: int, n: int, key_seed: int = 0):
-    return jax.random.normal(
-        jax.random.PRNGKey(key_seed), (2 ** m, 2 ** n)
-    ).astype(jnp.complex128)
+    return jax.random.normal(jax.random.PRNGKey(key_seed), (2**m, 2**n)).astype(jnp.complex128)
 
 
 # ---------- EntangledQFTBasis ----------
@@ -24,9 +23,7 @@ def test_entangled_qft_basis_init_and_shape():
 
 
 def test_entangled_qft_basis_front_position_zero_phases_matches_qft():
-    eb = EntangledQFTBasis(
-        m=2, n=2, entangle_phases=[0.0, 0.0], entangle_position="front"
-    )
+    eb = EntangledQFTBasis(m=2, n=2, entangle_phases=[0.0, 0.0], entangle_position="front")
     qb = QFTBasis(m=2, n=2)
     pic = _random_pic(2, 2, key_seed=11)
     assert jnp.allclose(eb.forward_transform(pic), qb.forward_transform(pic), atol=1e-10)
@@ -34,12 +31,8 @@ def test_entangled_qft_basis_front_position_zero_phases_matches_qft():
 
 def test_entangled_qft_basis_front_and_back_differ_for_nonzero_phases():
     pic = _random_pic(2, 2, key_seed=12)
-    front = EntangledQFTBasis(
-        m=2, n=2, entangle_phases=[0.5, 1.2], entangle_position="front"
-    )
-    back = EntangledQFTBasis(
-        m=2, n=2, entangle_phases=[0.5, 1.2], entangle_position="back"
-    )
+    front = EntangledQFTBasis(m=2, n=2, entangle_phases=[0.5, 1.2], entangle_position="front")
+    back = EntangledQFTBasis(m=2, n=2, entangle_phases=[0.5, 1.2], entangle_position="back")
     out_f = front.forward_transform(pic)
     out_b = back.forward_transform(pic)
     # The two positions are mathematically distinct because the entangle layer

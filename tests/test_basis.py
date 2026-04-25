@@ -8,14 +8,16 @@ def test_qftbasis_constructor_initializes_tensors():
     b = QFTBasis(m=2, n=2)
     # 2 blocks of 2 qubits: 2 H + 1 CP per block, 6 gates total
     assert len(b.tensors) == 6
-    assert len(b.inv_tensors) == 6
+    # inv_tensors is a back-compat property aliasing tensors
+    assert b.inv_tensors is b.tensors
     assert b.m == 2 and b.n == 2
 
 
 def test_qftbasis_is_jax_pytree():
     b = QFTBasis(m=2, n=2)
     leaves, treedef = jax.tree_util.tree_flatten(b)
-    assert len(leaves) == 12  # tensors + inv_tensors
+    # Julia's QFTBasis stores ONE tensor list; pytree leaves match.
+    assert len(leaves) == 6
     restored = jax.tree_util.tree_unflatten(treedef, leaves)
     assert bases_allclose(restored, b)
 

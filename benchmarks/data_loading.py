@@ -36,11 +36,13 @@ def load_quickdraw(
     data_root: Path = DEFAULT_QUICKDRAW_ROOT,
     img_size: int = 32,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Load `n_train + n_test` 28x28 QuickDraw drawings, resize to `img_size`,
-    return as float32 in [0, 1]. Images are stratified across the available
-    categories (.npy files in `data_root`).
+    """Load `n_train + n_test` 28x28 QuickDraw drawings, center-pad with zeros
+    to `img_size`, return as float32 in [0, 1].
 
-    Each .npy file is shape (N_drawings, 784) uint8.
+    Mirrors `pad_to_power_of_two` in `ParametricDFT-Benchmarks.jl/data_loading.jl`.
+    Padding (rather than resizing) preserves the sparse-line-drawing structure
+    of QuickDraw — the surrounding zeros compress trivially in any frequency
+    basis, which is what gives Julia's reported 30 dB at kr=0.20.
     """
     data_root = Path(data_root)
     _ensure_dir(data_root, "quickdraw")
@@ -52,18 +54,16 @@ def load_quickdraw(
     total_needed = n_train + n_test
     rng = np.random.default_rng(seed)
 
-    # Per-category sample count: ceil division so we always have enough.
     per_cat_target = (total_needed + len(npy_files) - 1) // len(npy_files)
 
     picked: list[np.ndarray] = []
     for npy in npy_files:
-        arr = np.load(npy)  # (N, 784) uint8
+        arr = np.load(npy)
         if arr.ndim != 2 or arr.shape[1] != 784:
             raise ValueError(f"{npy} has unexpected shape {arr.shape}; expected (N, 784)")
         n_avail = arr.shape[0]
         n_pick = min(per_cat_target, n_avail)
         idx = rng.choice(n_avail, size=n_pick, replace=False)
-        # Reshape to (n_pick, 28, 28).
         picked.append(arr[idx].reshape(n_pick, 28, 28))
 
     pool = np.concatenate(picked, axis=0).astype(np.float32) / 255.0
@@ -72,16 +72,33 @@ def load_quickdraw(
             f"not enough images in {data_root}: have {pool.shape[0]}, need {total_needed}"
         )
 
-    # Trim and shuffle once more before split so categories are interleaved.
     perm = rng.permutation(pool.shape[0])
     pool = pool[perm[:total_needed]]
 
     if img_size != 28:
-        pool = _resize_batch(pool, img_size)
+        pool = _pad_batch(pool, img_size)
 
     train = pool[:n_train]
     test = pool[n_train:]
     return train, test
+
+
+def _pad_batch(images: np.ndarray, target_size: int) -> np.ndarray:
+    """Center-pad each (h, w) image with zeros to (target_size, target_size).
+
+    Mirror of `pad_to_power_of_two` in
+    `ParametricDFT-Benchmarks.jl/data_loading.jl`.
+    """
+    n, h, w = images.shape
+    if h > target_size or w > target_size:
+        raise ValueError(
+            f"can't center-pad ({h},{w}) into ({target_size},{target_size}) — image larger than target"
+        )
+    out = np.zeros((n, target_size, target_size), dtype=images.dtype)
+    y_off = (target_size - h) // 2
+    x_off = (target_size - w) // 2
+    out[:, y_off:y_off + h, x_off:x_off + w] = images
+    return out
 
 
 def load_div2k(

@@ -13,11 +13,23 @@ matplotlib.rcParams["pdf.fonttype"] = 42  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 
+def _load_traces(payload):
+    """Accept either the new dict shape (`{step_losses, val_losses, ...}`) or
+    the legacy list-of-lists shape used by the per-image P-pair pipeline.
+    Returns (step_traces, val_trace_or_None, step_xs).
+    """
+    if isinstance(payload, dict):
+        step = payload.get("step_losses", [])
+        val = payload.get("val_losses", []) or None
+        return [step], val, list(range(1, len(step) + 1))
+    # Legacy: list-of-lists, one trajectory per training image.
+    return list(payload), None, None
+
+
 def plot_loss_trajectories(loss_dir: Path, out_pdf: Path, dataset_name: str) -> None:
-    """Reads *_loss.json files (list-of-lists) and produces one panel per basis."""
+    """Reads *_loss.json files and produces one panel per basis."""
     files = sorted(loss_dir.glob("*_loss.json"))
     if not files:
-        # No bases have loss histories (all skipped/failed) — write an empty PDF.
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.text(0.5, 0.5, "no loss histories", ha="center", va="center")
         ax.set_axis_off()
@@ -29,14 +41,27 @@ def plot_loss_trajectories(loss_dir: Path, out_pdf: Path, dataset_name: str) -> 
         axes_flat = axes.ravel()
         for ax, lf in zip(axes_flat, files):
             basis_name = lf.stem.replace("_loss", "")
-            histories = json.loads(lf.read_text())
-            for traj in histories:
-                ax.plot(traj, alpha=0.6, linewidth=0.8)
+            payload = json.loads(lf.read_text())
+            traces, val_trace, _ = _load_traces(payload)
+            for traj in traces:
+                ax.plot(traj, alpha=0.7, linewidth=1.0, label="train")
+            if val_trace:
+                # Validation is per-epoch; place markers along the x-range so
+                # the curve is visible even with one or two points.
+                if traces and traces[0]:
+                    n_steps = len(traces[0])
+                    n_epochs = len(val_trace)
+                    if n_epochs > 0:
+                        xs = [int(round((i + 1) * (n_steps / n_epochs))) for i in range(n_epochs)]
+                    else:
+                        xs = []
+                    ax.plot(xs, val_trace, "o-", color="tab:red", label="val", linewidth=1.2)
             ax.set_title(f"{basis_name} — loss trajectories")
             ax.set_xlabel("Step")
             ax.set_ylabel("Loss")
             ax.grid(True, alpha=0.3)
-        # Hide any unused subplots.
+            if val_trace:
+                ax.legend(loc="best", fontsize=7)
         for ax in axes_flat[len(files) :]:
             ax.set_axis_off()
 
