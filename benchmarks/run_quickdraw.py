@@ -16,7 +16,6 @@ import json
 import logging
 import subprocess
 import sys
-import tempfile
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +23,7 @@ from pathlib import Path
 import _bootstrap  # noqa: F401  -- sys.path bootstrap
 
 import jax
+import numpy as np
 
 # Importing pdft sets jax_enable_x64; must come before any other jax math.
 import pdft
@@ -299,13 +299,23 @@ def run_dataset(
             (results_dir / "loss_history" / f"{basis_name}_loss.json").write_text(
                 json.dumps(loss_histories)
             )
-            # Use pdft.save_basis on each, then concatenate into an array file.
+            # pdft.save_basis is hardcoded to QFTBasis (Phase 2). For
+            # cross-basis serialisation we dump the host-resident tensor list
+            # directly with the actual class name so trained_<basis>.json is
+            # honest about what was trained. If/when pdft's serialiser supports
+            # all basis classes, swap this back to pdft.save_basis.
             arr = []
-            with tempfile.TemporaryDirectory() as td:
-                for k, b in enumerate(trained):
-                    p = Path(td) / f"{k}.json"
-                    pdft.save_basis(str(p), b)
-                    arr.append(json.loads(p.read_text()))
+            for b in trained:
+                host_tensors = [jax.device_get(t) for t in b.tensors]
+                arr.append({
+                    "type": type(b).__name__,
+                    "m": int(b.m),
+                    "n": int(b.n),
+                    "tensors": [
+                        [[float(v.real), float(v.imag)] for v in np.asarray(t).flatten(order="F")]
+                        for t in host_tensors
+                    ],
+                })
             (results_dir / f"trained_{basis_name}.json").write_text(json.dumps(arr, indent=2))
         except Exception as e:  # noqa: BLE001
             logger.warning("could not save trained bases for %s: %s", basis_name, e)

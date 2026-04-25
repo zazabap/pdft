@@ -98,16 +98,18 @@ def evaluate_basis_per_image(
 ) -> tuple[dict[str, dict[str, float]], dict[str, int]]:
     """Per-image (P pairing): basis[i] evaluated on test_images[i].
 
-    Round-trips each basis through pdft.io_json save_basis/load_basis to land
-    tensors on host (sidesteps GPU scalar-indexing in compress/recover —
-    same workaround as evaluation.jl:55-57).
+    Moves each basis to host via jax.tree_util.tree_map(jax.device_get, ...).
+    This sidesteps the GPU scalar-indexing path that compress/recover hit when
+    tensors are still CuArrays (same intent as evaluation.jl:55-57). We avoid
+    pdft.io_json save_basis/load_basis here because that path is hardcoded to
+    QFTBasis (Phase 2 of the upstream port); the pytree map preserves the
+    actual basis class for QFT/EntangledQFT/TEBD/MERA alike.
 
     Returns ({kr_str: aggregated_metrics}, {kr_str: nan_count}).
     """
-    import tempfile
-    from pathlib import Path
+    import jax
 
-    import pdft
+    import pdft  # noqa: F401  -- ensures jax_enable_x64 is set before any jnp use
 
     if len(bases) != len(test_images):
         raise ValueError(
@@ -115,13 +117,7 @@ def evaluate_basis_per_image(
             f"got {len(bases)} bases vs {len(test_images)} images"
         )
 
-    # Host-roundtrip every basis once at the start.
-    cpu_bases = []
-    with tempfile.TemporaryDirectory() as td:
-        for i, b in enumerate(bases):
-            path = Path(td) / f"b{i}.json"
-            pdft.save_basis(str(path), b)
-            cpu_bases.append(pdft.load_basis(str(path)))
+    cpu_bases = [jax.tree_util.tree_map(jax.device_get, b) for b in bases]
 
     out: dict[str, dict[str, float]] = {}
     nan_counts: dict[str, int] = {}
