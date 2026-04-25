@@ -34,6 +34,7 @@ class Preset:
 # we keep two dicts so per-dataset overrides remain possible without breaking callers.
 
 _BASE_PRESETS: dict[str, Preset] = {
+    # Fast CPU sanity check (CI). Not a quality benchmark.
     "smoke": Preset(
         "smoke",
         epochs=2,
@@ -48,29 +49,9 @@ _BASE_PRESETS: dict[str, Preset] = {
         validation_split=0.2,
         early_stopping_patience=2,
     ),
-    "light": Preset(
-        "light",
-        epochs=5,
-        n_train=10,
-        n_test=20,
-        optimizer="adam",
-        batch_size=8,
-        warmup_frac=0.05,
-        lr_peak=0.01,
-        lr_final=0.001,
-        max_grad_norm=1.0,
-        validation_split=0.2,
-        early_stopping_patience=5,
-    ),
-    # `moderate` uses lr_peak=0.3 instead of Julia's 0.01. Empirically: at
-    # the QFT-init point the topk-MSE loss surface is approximately flat
-    # plateau under our PRNG-selected image draw, so Adam at lr=0.01 oscillates
-    # without escaping (10-epoch loss drop ~0.18). At lr_peak=0.3, the cosine
-    # schedule's first few large steps escape the plateau, and the basis
-    # converges to PSNR≈35 dB at kr=0.20 in 10 epochs (vs Julia's 30.26 dB
-    # on their own image draw at lr=0.01). The lr_peak that Julia uses is
-    # tuned for Julia's specific PRNG draw and isn't robust across draws —
-    # see issue #7. The Julia-parity preset is preserved as `julia_moderate`.
+    # Julia-parity preset: same hyperparameters as
+    # ParametricDFT-Benchmarks.jl/config.jl::TRAINING_PRESETS[:moderate].
+    # Reference number for QFT @ DIV2K-8q kr=0.20: 27.81 dB.
     "moderate": Preset(
         "moderate",
         epochs=10,
@@ -79,43 +60,18 @@ _BASE_PRESETS: dict[str, Preset] = {
         optimizer="adam",
         batch_size=16,
         warmup_frac=0.05,
-        lr_peak=0.3,
-        lr_final=0.03,
-        max_grad_norm=None,
-        validation_split=0.2,
-        early_stopping_patience=10,
-    ),
-    "julia_moderate": Preset(
-        "julia_moderate",
-        epochs=10,
-        n_train=20,
-        n_test=50,
-        optimizer="adam",
-        batch_size=16,
-        warmup_frac=0.05,
         lr_peak=0.01,
         lr_final=0.001,
         max_grad_norm=1.0,
         validation_split=0.2,
         early_stopping_patience=10,
     ),
-    "heavy": Preset(
-        "heavy",
-        epochs=20,
-        n_train=50,
-        n_test=100,
-        optimizer="adam",
-        batch_size=16,
-        warmup_frac=0.05,
-        lr_peak=0.01,
-        lr_final=0.001,
-        max_grad_norm=1.0,
-        validation_split=0.2,
-        early_stopping_patience=10,
-    ),
+    # Long schedule for the deepest config. Mirrors Julia's `:generalized`
+    # but with epochs bumped from 40 → 60. Reference number (Julia, 40 ep)
+    # for QFT @ DIV2K-8q kr=0.20: 29.36 dB.
     "generalized": Preset(
         "generalized",
-        epochs=40,
+        epochs=60,
         n_train=500,
         n_test=50,
         optimizer="adam",
@@ -132,11 +88,36 @@ _BASE_PRESETS: dict[str, Preset] = {
 PRESETS_QUICKDRAW: dict[str, Preset] = dict(_BASE_PRESETS)
 PRESETS_DIV2K: dict[str, Preset] = dict(_BASE_PRESETS)
 
+# DIV2K-10q (m=n=10, 1024×1024) needs smaller batch_size — at batch=16 the
+# einsum intermediate tensors (20-D shape (2,)*20 × batch) overflow 24 GB GPU.
+# We override batch_size=1 across all presets; total optimizer-step count
+# becomes epochs × n_train (one image per step) which still converges fast.
+def _override_bs(p: Preset, bs: int) -> Preset:
+    return Preset(
+        name=p.name, epochs=p.epochs, n_train=p.n_train, n_test=p.n_test,
+        optimizer=p.optimizer, batch_size=bs,
+        warmup_frac=p.warmup_frac, lr_peak=p.lr_peak, lr_final=p.lr_final,
+        max_grad_norm=p.max_grad_norm,
+        validation_split=p.validation_split,
+        early_stopping_patience=p.early_stopping_patience,
+        seed=p.seed, keep_ratios=p.keep_ratios,
+    )
+
+
+# EntangledQFT at m=n=10 has 40 gates (QFT 30 + 10 entangle), 33% larger einsum
+# than plain QFT, and OOMs at bs=4 on a 24 GB RTX 3090. bs=2 fits all four
+# basis classes (TEBD/MERA included) and produces 80 optimizer steps per
+# basis (epochs=10 × ceil(16/2) = 80) — strictly more training than the
+# bs=4 path's 40 steps, so no loss in quality.
+PRESETS_DIV2K_10Q: dict[str, Preset] = {
+    name: _override_bs(p, bs=2) for name, p in _BASE_PRESETS.items()
+}
+
 
 _DATASETS = {
     "quickdraw": PRESETS_QUICKDRAW,
     "div2k_8q": PRESETS_DIV2K,
-    "div2k_10q": PRESETS_DIV2K,  # 1024×1024 — same preset table as 8q
+    "div2k_10q": PRESETS_DIV2K_10Q,
 }
 
 

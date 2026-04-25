@@ -56,7 +56,7 @@ def test_preset_is_frozen():
 @pytest.mark.parametrize("presets", [PRESETS_QUICKDRAW, PRESETS_DIV2K])
 def test_all_presets_have_named_levels(presets):
     """Match the Julia table levels."""
-    assert set(presets.keys()) == {"smoke", "light", "moderate", "heavy", "generalized", "julia_moderate"}
+    assert set(presets.keys()) == {"smoke", "moderate", "generalized"}
 
 
 @pytest.mark.parametrize("presets", [PRESETS_QUICKDRAW, PRESETS_DIV2K])
@@ -108,7 +108,7 @@ def test_get_preset_div2k():
 
 def test_get_preset_generalized_matches_paper():
     p = get_preset("div2k_8q", "generalized")
-    assert p.epochs == 40
+    assert p.epochs == 60  # bumped from Julia's 40 for deeper convergence
     assert p.n_train == 500
     assert p.batch_size == 50
     assert p.lr_peak == 0.003

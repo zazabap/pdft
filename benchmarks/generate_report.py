@@ -27,7 +27,7 @@ def _dataset_slug(results_dir: Path) -> str:
     # Drop trailing tokens that match a date-time pattern.
     while parts and parts[-1].replace("-", "").isdigit():
         parts.pop()
-    if parts and parts[-1] in ("smoke", "light", "moderate", "heavy"):
+    if parts and parts[-1] in ("smoke", "moderate", "generalized"):
         parts.pop()
     return "_".join(parts) or "unknown"
 

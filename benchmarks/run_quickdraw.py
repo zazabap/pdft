@@ -89,9 +89,16 @@ def _is_power_of_two(x: int) -> bool:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    p.add_argument("preset", choices=("smoke", "light", "moderate", "heavy", "generalized"))
+    p.add_argument("preset", choices=("smoke", "moderate", "generalized"))
     p.add_argument("--gpu", type=int, default=0, help="GPU device index (default 0)")
     p.add_argument("--out", type=Path, default=None, help="results directory")
+    p.add_argument(
+        "--bases",
+        type=str,
+        default=None,
+        help="comma-separated subset of bases to train (e.g. 'qft' or 'tebd,mera'). "
+        "Default: all four.",
+    )
     p.add_argument(
         "--allow-cpu",
         action="store_true",
@@ -276,6 +283,18 @@ def run_dataset(
         "mera": lambda: pdft.MERABasis(m=m, n=n, seed=preset.seed),
     }
     seeded_factories = {k: seeded_factories[k] for k in basis_factories if k in seeded_factories}
+
+    # Optional --bases filter (e.g. for splitting work across multiple GPUs).
+    if args.bases is not None:
+        wanted = [b.strip() for b in args.bases.split(",") if b.strip()]
+        unknown = [b for b in wanted if b not in seeded_factories]
+        if unknown:
+            raise SystemExit(
+                f"unknown basis name(s) in --bases: {unknown}; "
+                f"available: {list(seeded_factories)}"
+            )
+        seeded_factories = {k: seeded_factories[k] for k in wanted}
+        logger.info("--bases filter active: training only %s", list(seeded_factories))
 
     # ----- bases (one shared basis per class, batched training)
     for basis_name, factory in seeded_factories.items():
