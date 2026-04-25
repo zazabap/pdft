@@ -24,9 +24,9 @@ _BENCH = Path(__file__).resolve().parent.parent
 if str(_BENCH) not in sys.path:
     sys.path.insert(0, str(_BENCH))
 
-import numpy as np
+import numpy as np  # noqa: E402
 
-import pdft  # sets jax_enable_x64 before any jax math
+import pdft  # noqa: E402  -- sets jax_enable_x64 before any jax math
 
 import jax  # noqa: E402
 

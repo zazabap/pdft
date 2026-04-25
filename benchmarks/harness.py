@@ -87,7 +87,7 @@ def train_one_basis_batched(
             warmup_res = pdft.train_basis_batched(
                 basis,
                 dataset=target_dataset[:1],
-                loss=pdft.L1Norm(),
+                loss=pdft.MSELoss(k=max(1, round(2 ** (basis.m + basis.n) * 0.1))),
                 epochs=1,
                 batch_size=1,
                 optimizer=preset.optimizer,
@@ -111,7 +111,7 @@ def train_one_basis_batched(
         result = pdft.train_basis_batched(
             basis,
             dataset=target_dataset,
-            loss=pdft.L1Norm(),
+            loss=pdft.MSELoss(k=max(1, round(2 ** (basis.m + basis.n) * 0.1))),
             epochs=preset.epochs,
             batch_size=preset.batch_size,
             optimizer=preset.optimizer,
@@ -165,7 +165,7 @@ def train_one_basis(
         result = pdft.train_basis(
             basis,
             target=target_jnp,
-            loss=pdft.L1Norm(),
+            loss=pdft.MSELoss(k=max(1, round(2 ** (basis.m + basis.n) * 0.1))),
             optimizer=optimizer,
             steps=preset.epochs,
             seed=preset.seed,

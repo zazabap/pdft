@@ -88,6 +88,7 @@ def train_basis(
     )
     elapsed = time.perf_counter() - t0
 
+    # Per Julia's design (single tensor list), pytree leaves are just `tensors`.
     leaves, treedef = tree_util.tree_flatten(basis)
     n_fwd = len(basis.tensors)
     new_leaves = list(final_tensors) + list(leaves[n_fwd:])
@@ -353,6 +354,7 @@ def train_basis_batched(
 
     elapsed = time.perf_counter() - t0
 
+    # Per Julia's design (single tensor list), pytree leaves are just `tensors`.
     leaves, treedef = tree_util.tree_flatten(basis)
     n_fwd = len(basis.tensors)
     new_leaves = list(best_tensors) + list(leaves[n_fwd:])
