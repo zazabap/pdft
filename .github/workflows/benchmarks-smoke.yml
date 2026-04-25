@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,4 +32,4 @@ jobs:
       - name: Lint
         run: ruff check benchmarks/
       - name: Test
-        run: pytest benchmarks/tests/ --no-cov -v
+        run: pytest benchmarks/tests/ -m 'not integration' --no-cov -v

@@ -7,9 +7,13 @@ from pathlib import Path
 
 import pytest
 
+from data_loading import DEFAULT_QUICKDRAW_ROOT
+
 
 @pytest.mark.integration
 def test_quickdraw_smoke_e2e(tmp_path: Path):
+    if not DEFAULT_QUICKDRAW_ROOT.is_dir():
+        pytest.skip(f"QuickDraw not available at {DEFAULT_QUICKDRAW_ROOT}")
     from run_quickdraw import main
 
     # Use a directory name that matches the expected slug pattern so that
