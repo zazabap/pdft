@@ -57,6 +57,150 @@ def _recover_basis(basis, image: np.ndarray, keep_ratio: float) -> np.ndarray:
     return np.clip(np.real(recovered), 0.0, 1.0)
 
 
+def _forward_magnitude(basis_or_fn, image: np.ndarray) -> np.ndarray:
+    """Forward-transform magnitude per method.
+
+    `basis_or_fn`: either a pdft basis (uses `.forward_transform`) OR a callable
+    `(image, keep_ratio=1.0) -> recovered_image` for baselines (we then transform
+    via the matching numpy/scipy primitive — see _baseline_freq below).
+    Returns abs(forward_output) as float64.
+    """
+    import jax.numpy as jnp
+
+    if hasattr(basis_or_fn, "forward_transform"):
+        freq = np.asarray(basis_or_fn.forward_transform(jnp.asarray(image, dtype=jnp.complex128)))
+        return np.abs(freq)
+    # baseline callables don't have a public forward; we approximate via the
+    # caller-provided baseline-freq function (set by _baseline_freq lookup).
+    raise ValueError("forward_magnitude needs a basis with forward_transform()")
+
+
+def _baseline_freq_magnitude(baseline_name: str, image: np.ndarray) -> np.ndarray:
+    """Compute frequency magnitude for the four classical baselines."""
+    from scipy.fft import dct as scipy_dct
+
+    if baseline_name == "fft":
+        return np.abs(np.fft.fftshift(np.fft.fft2(image)))
+    if baseline_name == "dct":
+        return np.abs(scipy_dct(scipy_dct(image, axis=0, norm="ortho"), axis=1, norm="ortho"))
+    if baseline_name in ("block_fft_8", "block_dct_8"):
+        # Per-block magnitude — visualise the per-block frequency layout.
+        b = 8
+        h, w = image.shape
+        tiles = (
+            image.reshape(h // b, b, w // b, b)
+            .swapaxes(1, 2)
+            .copy()
+        )
+        if baseline_name == "block_fft_8":
+            freq = np.fft.fft2(tiles, axes=(-2, -1))
+        else:
+            freq = scipy_dct(scipy_dct(tiles, axis=-2, norm="ortho"), axis=-1, norm="ortho")
+        # Reassemble into (h, w) layout for visualisation.
+        return (
+            np.abs(freq)
+            .swapaxes(1, 2)
+            .reshape(h, w)
+        )
+    raise ValueError(f"unknown baseline {baseline_name!r}")
+
+
+def _cumulative_energy(magnitude: np.ndarray) -> np.ndarray:
+    """Sorted-magnitude cumulative energy curve (Julia's analyze_frequency_space.jl:118)."""
+    e = np.sort(magnitude.flatten() ** 2)[::-1]
+    c = np.cumsum(e)
+    return c / c[-1] if c[-1] > 0 else c
+
+
+def _draw_frequency_spectra(
+    image: np.ndarray, image_idx: int,
+    method_magnitudes: dict[str, np.ndarray],
+    out_pdf: Path,
+) -> None:
+    """Log-magnitude frequency representation, one panel per method."""
+    methods = list(method_magnitudes.keys())
+    n = 1 + len(methods)
+    cols = min(4, n)
+    rows = (n + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(3.0 * cols, 3.0 * rows), squeeze=False)
+    flat = axes.ravel()
+    flat[0].imshow(image, cmap="gray", vmin=0.0, vmax=1.0)
+    flat[0].set_title("original", fontsize=8)
+    flat[0].set_xticks([]); flat[0].set_yticks([])
+    for ax, name in zip(flat[1:], methods):
+        mag = method_magnitudes[name]
+        log_mag = np.log10(mag + 1e-12)
+        ax.imshow(log_mag, cmap="viridis")
+        ax.set_title(f"{name} (log|F|)", fontsize=8)
+        ax.set_xticks([]); ax.set_yticks([])
+    for ax in flat[n:]:
+        ax.set_axis_off()
+    fig.suptitle(f"Frequency spectra — test image #{image_idx}", fontsize=10)
+    fig.tight_layout()
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _draw_cumulative_energy(
+    image_idx: int,
+    method_magnitudes: dict[str, np.ndarray],
+    keep_ratios: Sequence[float],
+    out_pdf: Path,
+) -> None:
+    """Cumulative captured-energy curve vs fraction of coefficients kept."""
+    fig, ax = plt.subplots(figsize=(7, 5))
+    n_total = next(iter(method_magnitudes.values())).size
+    xs = np.arange(1, n_total + 1) / n_total
+    for name, mag in method_magnitudes.items():
+        ce = _cumulative_energy(mag)
+        ax.plot(xs, ce, label=name, linewidth=1.0, alpha=0.9)
+    for kr in keep_ratios:
+        ax.axvline(kr, color="grey", linestyle=":", alpha=0.6, linewidth=0.8)
+    ax.set_xlabel("Fraction of coefficients kept (sorted by magnitude)")
+    ax.set_ylabel("Cumulative captured energy")
+    ax.set_title(f"Cumulative energy — test image #{image_idx}")
+    ax.set_xlim(0, max(keep_ratios) * 1.5)
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="lower right", fontsize=8)
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _draw_kept_coefficient_masks(
+    image_idx: int,
+    method_magnitudes: dict[str, np.ndarray],
+    keep_ratios: Sequence[float],
+    out_pdf: Path,
+) -> None:
+    """Binary masks of which coefficients are kept, per method × keep_ratio."""
+    methods = list(method_magnitudes.keys())
+    rows, cols = len(methods), len(keep_ratios)
+    fig, axes = plt.subplots(rows, cols, figsize=(2.0 * cols, 2.0 * rows), squeeze=False)
+    for i, name in enumerate(methods):
+        mag = method_magnitudes[name]
+        for j, kr in enumerate(keep_ratios):
+            k = max(1, int(np.floor(mag.size * kr)))
+            flat = mag.flatten()
+            idx = np.argpartition(-flat, k)[:k]
+            mask_flat = np.zeros_like(flat, dtype=bool)
+            mask_flat[idx] = True
+            mask = mask_flat.reshape(mag.shape)
+            axes[i][j].imshow(mask, cmap="gray", vmin=0, vmax=1)
+            if i == 0:
+                axes[i][j].set_title(f"keep={kr:g}", fontsize=8)
+            if j == 0:
+                axes[i][j].set_ylabel(name, fontsize=8, rotation=0, ha="right", va="center")
+            axes[i][j].set_xticks([]); axes[i][j].set_yticks([])
+    fig.suptitle(f"Kept-coefficient masks — test image #{image_idx}", fontsize=10)
+    fig.tight_layout()
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
 def _draw_grid(
     image: np.ndarray,
     image_idx: int,
@@ -231,4 +375,32 @@ def analyze_reconstructions(
         _draw_grid(img, i, recoveries, keep_ratios, per_image_dir / "reconstructions.pdf")
         _write_summary(img, i, recoveries, keep_ratios, per_image_dir / "summary.txt")
 
-    logger.info("analysis: wrote %d per-image reconstruction PDFs under %s", n, out_dir)
+        # Frequency-domain analysis (mirrors Julia's analyze_frequency_space.jl).
+        try:
+            method_magnitudes: dict[str, np.ndarray] = {}
+            for basis_name, basis_entry in host_bases.items():
+                basis = _resolve_basis(basis_entry, i)
+                if basis is None:
+                    continue
+                method_magnitudes[basis_name] = _forward_magnitude(
+                    basis, np.asarray(img, dtype=np.float64)
+                )
+            for baseline_name in baseline_fns.keys():
+                method_magnitudes[baseline_name] = _baseline_freq_magnitude(
+                    baseline_name, np.asarray(img, dtype=np.float64)
+                )
+            if method_magnitudes:
+                _draw_frequency_spectra(
+                    img, i, method_magnitudes, per_image_dir / "frequency_spectra.pdf"
+                )
+                _draw_cumulative_energy(
+                    i, method_magnitudes, keep_ratios, per_image_dir / "cumulative_energy.pdf"
+                )
+                _draw_kept_coefficient_masks(
+                    i, method_magnitudes, keep_ratios,
+                    per_image_dir / "kept_coefficient_masks.pdf",
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("analyze: frequency-domain plots failed for img=%d: %s", i, e)
+
+    logger.info("analysis: wrote %d per-image analysis bundles under %s", n, out_dir)

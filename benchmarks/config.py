@@ -136,6 +136,7 @@ PRESETS_DIV2K: dict[str, Preset] = dict(_BASE_PRESETS)
 _DATASETS = {
     "quickdraw": PRESETS_QUICKDRAW,
     "div2k_8q": PRESETS_DIV2K,
+    "div2k_10q": PRESETS_DIV2K,  # 1024×1024 — same preset table as 8q
 }
 
 
