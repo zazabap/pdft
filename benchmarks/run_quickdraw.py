@@ -265,10 +265,17 @@ def run_dataset(
     metrics_payload: dict = {}
     host_bases_for_analysis: dict = {}
 
-    # Bind seed-aware factories to the active preset (so seeded init is
-    # deterministic per-preset) while keeping per-basis-class skip semantics.
-    seeded_factories = _make_basis_factories(preset.seed)
-    seeded_factories = {k: seeded_factories[k] for k in basis_factories}
+    # Re-bind the dataset's basis factories with the active preset's seed so
+    # EntangledQFT/TEBD/MERA get deterministic random init. We rebuild factories
+    # using the dataset's m, n (NOT the QuickDraw module-level M, N) — earlier
+    # code mistakenly pulled QuickDraw-shaped factories for DIV2K runs.
+    seeded_factories = {
+        "qft": lambda: pdft.QFTBasis(m=m, n=n),
+        "entangled_qft": lambda: pdft.EntangledQFTBasis(m=m, n=n, seed=preset.seed),
+        "tebd": lambda: pdft.TEBDBasis(m=m, n=n, seed=preset.seed),
+        "mera": lambda: pdft.MERABasis(m=m, n=n, seed=preset.seed),
+    }
+    seeded_factories = {k: seeded_factories[k] for k in basis_factories if k in seeded_factories}
 
     # ----- bases (one shared basis per class, batched training)
     for basis_name, factory in seeded_factories.items():

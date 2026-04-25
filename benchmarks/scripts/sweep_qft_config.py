@@ -17,7 +17,6 @@ import numpy as np  # noqa: E402
 
 import pdft  # noqa: E402  -- sets jax_enable_x64
 
-import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 from skimage.metrics import peak_signal_noise_ratio  # noqa: E402
 
@@ -39,7 +38,6 @@ CONFIGS = [
 
 def run(name, epochs, batch_size, optimizer, lr_peak, lr_final, warmup_frac, val_split, mgn,
         train_imgs, test_imgs, m=5, n=5, k_keep=102):
-    rng = np.random.default_rng(42)
     target_dataset = [jnp.asarray(t, dtype=jnp.complex128) for t in train_imgs]
     basis = pdft.QFTBasis(m=m, n=n)
 
