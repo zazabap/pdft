@@ -54,3 +54,6 @@ coverage.xml
 # Example outputs
 out/
 /out/
+
+# Benchmark outputs
+benchmarks/results/
