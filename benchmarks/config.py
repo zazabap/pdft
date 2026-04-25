@@ -62,8 +62,31 @@ _BASE_PRESETS: dict[str, Preset] = {
         validation_split=0.2,
         early_stopping_patience=5,
     ),
+    # `moderate` uses lr_peak=0.3 instead of Julia's 0.01. Empirically: at
+    # the QFT-init point the topk-MSE loss surface is approximately flat
+    # plateau under our PRNG-selected image draw, so Adam at lr=0.01 oscillates
+    # without escaping (10-epoch loss drop ~0.18). At lr_peak=0.3, the cosine
+    # schedule's first few large steps escape the plateau, and the basis
+    # converges to PSNR≈35 dB at kr=0.20 in 10 epochs (vs Julia's 30.26 dB
+    # on their own image draw at lr=0.01). The lr_peak that Julia uses is
+    # tuned for Julia's specific PRNG draw and isn't robust across draws —
+    # see issue #7. The Julia-parity preset is preserved as `julia_moderate`.
     "moderate": Preset(
         "moderate",
+        epochs=10,
+        n_train=20,
+        n_test=50,
+        optimizer="adam",
+        batch_size=16,
+        warmup_frac=0.05,
+        lr_peak=0.3,
+        lr_final=0.03,
+        max_grad_norm=None,
+        validation_split=0.2,
+        early_stopping_patience=10,
+    ),
+    "julia_moderate": Preset(
+        "julia_moderate",
         epochs=10,
         n_train=20,
         n_test=50,

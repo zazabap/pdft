@@ -56,7 +56,7 @@ def test_preset_is_frozen():
 @pytest.mark.parametrize("presets", [PRESETS_QUICKDRAW, PRESETS_DIV2K])
 def test_all_presets_have_named_levels(presets):
     """Match the Julia table levels."""
-    assert set(presets.keys()) == {"smoke", "light", "moderate", "heavy", "generalized"}
+    assert set(presets.keys()) == {"smoke", "light", "moderate", "heavy", "generalized", "julia_moderate"}
 
 
 @pytest.mark.parametrize("presets", [PRESETS_QUICKDRAW, PRESETS_DIV2K])
