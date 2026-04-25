@@ -1,4 +1,5 @@
 """RiemannianAdam unit + integration tests."""
+
 import jax
 import jax.numpy as jnp
 

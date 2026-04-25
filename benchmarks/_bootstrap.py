@@ -4,6 +4,7 @@ This package intentionally has no __init__.py — each run_*.py script is
 standalone-runnable. This file is imported first to make `import config`,
 `import baselines`, etc. work from any entrypoint inside benchmarks/.
 """
+
 from __future__ import annotations
 
 import sys

@@ -6,6 +6,7 @@ dimension, each with `log2(n_qubits)` levels and `2*(n_qubits-1)` gates.
 Each dimension requires a power-of-2 qubit count (or 1 for no MERA in
 that dimension).
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -160,9 +161,7 @@ def mera_code(
 
     # Layer 2b: Col MERA
     if n >= 2:
-        gates.extend(
-            _mera_single_dim_gates(n, qubit_offset=m, phases=phases_list[n_row_gates:])
-        )
+        gates.extend(_mera_single_dim_gates(n, qubit_offset=m, phases=phases_list[n_row_gates:]))
 
     code, tensors = compile_circuit(gates, m, n, inverse=inverse)
     return code, tensors, n_row_gates, n_col_gates

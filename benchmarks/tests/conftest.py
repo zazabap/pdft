@@ -1,4 +1,5 @@
 """Test bootstrap: add benchmarks/ to sys.path so sibling modules import."""
+
 from __future__ import annotations
 
 import sys

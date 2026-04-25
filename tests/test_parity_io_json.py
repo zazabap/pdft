@@ -4,6 +4,7 @@ Verifies that a QFTBasis saved by Julia can be loaded by Python with
 an identical basis_hash and identical ft_mat output. This is the
 "bidirectional JSON" exit criterion from Phase 2 of the spec.
 """
+
 from pathlib import Path
 
 import jax.numpy as jnp

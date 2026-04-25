@@ -3,6 +3,7 @@
 Mirror of upstream src/basis.jl. Phase 1 shipped QFTBasis; Phase 3 adds
 EntangledQFTBasis, TEBDBasis, and MERABasis.
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -41,6 +42,7 @@ class QFTBasis:
         leaves   = tensors + inv_tensors     (flattened in this order)
         aux data = (m, n, len(tensors), len(inv_tensors), code, inv_code)
     """
+
     m: int
     n: int
     tensors: list[Array]
@@ -72,7 +74,7 @@ class QFTBasis:
 
     @property
     def image_size(self) -> tuple[int, int]:
-        return (2 ** self.m, 2 ** self.n)
+        return (2**self.m, 2**self.n)
 
     @property
     def num_parameters(self) -> int:
@@ -161,6 +163,7 @@ class EntangledQFTBasis:
 
     Mirror of upstream src/basis.jl:280-500 (entangle_position=:back only).
     """
+
     m: int
     n: int
     n_entangle: int
@@ -199,9 +202,7 @@ class EntangledQFTBasis:
         self.n = n
         n_entangle = min(m, n)
         if entangle_phases is None and seed is not None:
-            entangle_phases = list(
-                np.random.default_rng(seed).normal(0.0, 0.1, n_entangle)
-            )
+            entangle_phases = list(np.random.default_rng(seed).normal(0.0, 0.1, n_entangle))
         _code, init_tensors, self.n_entangle = entangled_qft_code(
             m, n, entangle_phases=entangle_phases, entangle_position=entangle_position
         )
@@ -215,7 +216,7 @@ class EntangledQFTBasis:
 
     @property
     def image_size(self) -> tuple[int, int]:
-        return (2 ** self.m, 2 ** self.n)
+        return (2**self.m, 2**self.n)
 
     @property
     def num_parameters(self) -> int:
@@ -259,9 +260,7 @@ def _entangled_unflatten(aux, leaves) -> EntangledQFTBasis:
     return out
 
 
-tree_util.register_pytree_node(
-    EntangledQFTBasis, _entangled_flatten, _entangled_unflatten
-)
+tree_util.register_pytree_node(EntangledQFTBasis, _entangled_flatten, _entangled_unflatten)
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +274,7 @@ class TEBDBasis:
 
     Mirror of upstream src/basis.jl:600-745.
     """
+
     m: int
     n: int
     n_row_gates: int
@@ -319,7 +319,7 @@ class TEBDBasis:
 
     @property
     def image_size(self) -> tuple[int, int]:
-        return (2 ** self.m, 2 ** self.n)
+        return (2**self.m, 2**self.n)
 
     @property
     def num_parameters(self) -> int:
@@ -344,7 +344,16 @@ class TEBDBasis:
 
 def _tebd_flatten(b: TEBDBasis):
     leaves = tuple(b.tensors) + tuple(b.inv_tensors)
-    aux = (b.m, b.n, b.n_row_gates, b.n_col_gates, len(b.tensors), len(b.inv_tensors), b.code, b.inv_code)
+    aux = (
+        b.m,
+        b.n,
+        b.n_row_gates,
+        b.n_col_gates,
+        len(b.tensors),
+        len(b.inv_tensors),
+        b.code,
+        b.inv_code,
+    )
     return leaves, aux
 
 
@@ -378,6 +387,7 @@ class MERABasis:
 
     Mirror of upstream src/basis.jl:840-1070.
     """
+
     m: int
     n: int
     n_row_gates: int
@@ -424,7 +434,7 @@ class MERABasis:
 
     @property
     def image_size(self) -> tuple[int, int]:
-        return (2 ** self.m, 2 ** self.n)
+        return (2**self.m, 2**self.n)
 
     @property
     def num_parameters(self) -> int:
@@ -449,7 +459,16 @@ class MERABasis:
 
 def _mera_flatten(b: MERABasis):
     leaves = tuple(b.tensors) + tuple(b.inv_tensors)
-    aux = (b.m, b.n, b.n_row_gates, b.n_col_gates, len(b.tensors), len(b.inv_tensors), b.code, b.inv_code)
+    aux = (
+        b.m,
+        b.n,
+        b.n_row_gates,
+        b.n_col_gates,
+        len(b.tensors),
+        len(b.inv_tensors),
+        b.code,
+        b.inv_code,
+    )
     return leaves, aux
 
 

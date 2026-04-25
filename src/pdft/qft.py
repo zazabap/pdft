@@ -12,6 +12,7 @@ QFT decomposition (upstream src/entangled_qft.jl:51-77):
 2D QFT = (m-qubit QFT on row qubits) tensor (n-qubit QFT on col qubits);
 no entanglement between blocks.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -53,7 +54,7 @@ def _qft_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
         for target in range(j + 1, n_qubits + 1):
             k = target - j + 1
             t = offset + target
-            phi = 2 * jnp.pi / (2 ** k)
+            phi = 2 * jnp.pi / (2**k)
             gates.append(
                 Gate(
                     kind="CP",

@@ -1,4 +1,5 @@
 """Scale parity: QFT 16x16 (m=n=4) — verify parity holds at larger sizes."""
+
 from pathlib import Path
 
 import jax.numpy as jnp

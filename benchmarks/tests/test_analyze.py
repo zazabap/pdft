@@ -48,17 +48,14 @@ def test_analyze_writes_per_image_pdfs(synthetic_data, tmp_path: Path):
         assert "half" in text
 
 
-def test_analyze_handles_basis_failure(synthetic_data, tmp_path: Path):
-    """A basis whose recover raises has 'n/a' tile and entry in summary."""
+def test_analyze_handles_basis_failure_legacy_list(synthetic_data, tmp_path: Path):
+    """Legacy P-pair shape (`{name: [basis_per_image]}`) still works."""
 
     class BadBasis:
         m = 2
         n = 2
         tensors = ()
 
-    # Stub host_bases with a 'qft' entry whose recover will fail because
-    # BadBasis isn't a real pdft basis. analyze_reconstructions should catch
-    # the per-(image, kr) failures and continue.
     analyze_reconstructions(
         synthetic_data[:1],
         host_bases={"qft": [BadBasis()]},
@@ -72,6 +69,30 @@ def test_analyze_handles_basis_failure(synthetic_data, tmp_path: Path):
     text = (tmp_path / "0000" / "summary.txt").read_text()
     assert "qft" in text
     assert "n/a" in text
+
+
+def test_analyze_handles_basis_failure_shared(synthetic_data, tmp_path: Path):
+    """New shared-basis shape (`{name: basis}`) — single object reused per image."""
+
+    class BadBasis:
+        m = 2
+        n = 2
+        tensors = ()
+
+    analyze_reconstructions(
+        synthetic_data[:2],
+        host_bases={"qft": BadBasis()},  # shared, not list
+        baseline_fns={},
+        keep_ratios=(0.1,),
+        out_dir=tmp_path,
+    )
+
+    for i in range(2):
+        pdf = tmp_path / f"{i:04d}" / "reconstructions.pdf"
+        assert pdf.is_file()
+        text = (tmp_path / f"{i:04d}" / "summary.txt").read_text()
+        assert "qft" in text
+        assert "n/a" in text
 
 
 def test_analyze_max_images_caps(synthetic_data, tmp_path: Path):

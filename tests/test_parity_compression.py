@@ -1,4 +1,5 @@
 """Parity tests for compression against Julia goldens."""
+
 from pathlib import Path
 
 import numpy as np
@@ -26,8 +27,10 @@ def test_compress_with_k_values_match_julia_where_indices_overlap():
     c = compress_with_k(basis, image, k=k)
 
     py_map = {idx: complex(re, im) for idx, re, im in zip(c.indices, c.values_real, c.values_imag)}
-    jl_map = {int(idx): complex(float(re), float(im)) for idx, re, im in
-              zip(g["indices"], g["values_real"], g["values_imag"])}
+    jl_map = {
+        int(idx): complex(float(re), float(im))
+        for idx, re, im in zip(g["indices"], g["values_real"], g["values_imag"])
+    }
     overlap = set(py_map) & set(jl_map)
     assert len(overlap) >= k - 2, f"only {len(overlap)} indices overlap, expected >= {k - 2}"
     for idx in overlap:

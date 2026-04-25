@@ -23,8 +23,7 @@ def test_entangled_qft_seed_breaks_symmetry_with_qft():
     # We check via tensor lists not being a strict prefix match.
     common = min(len(qft.tensors), len(eqft.tensors))
     same = all(
-        np.allclose(np.asarray(qft.tensors[i]), np.asarray(eqft.tensors[i]))
-        for i in range(common)
+        np.allclose(np.asarray(qft.tensors[i]), np.asarray(eqft.tensors[i])) for i in range(common)
     )
     # If they share a strict prefix, EntangledQFT's extra entanglement gates must
     # contain non-identity entries (at least one phase != 0 → CP tensor row≠[1,1])
@@ -54,8 +53,7 @@ def test_entangled_qft_different_seeds_differ():
     a = pdft.EntangledQFTBasis(m=3, n=3, seed=1)
     b = pdft.EntangledQFTBasis(m=3, n=3, seed=2)
     diffs = [
-        not np.allclose(np.asarray(ta), np.asarray(tb))
-        for ta, tb in zip(a.tensors, b.tensors)
+        not np.allclose(np.asarray(ta), np.asarray(tb)) for ta, tb in zip(a.tensors, b.tensors)
     ]
     assert any(diffs), "Different seeds should yield at least one differing tensor"
 

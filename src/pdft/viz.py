@@ -3,6 +3,7 @@
 Mirror of upstream src/visualization.jl (essentials only). Requires the
 `plot` extra: `pip install pdft[plot]`.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ def _require_matplotlib():
 @dataclass
 class TrainingHistory:
     """Thin wrapper around a loss trajectory for plotting."""
+
     losses: list[float]
     label: str = "training"
 
@@ -53,8 +55,12 @@ def plot_training_loss(
     x = list(range(len(history.losses)))
     ax.plot(x, history.losses, label=history.label, alpha=0.7)
     if smooth_alpha is not None:
-        ax.plot(x, ema_smooth(history.losses, alpha=smooth_alpha),
-                linewidth=2, label=f"{history.label} (EMA α={smooth_alpha})")
+        ax.plot(
+            x,
+            ema_smooth(history.losses, alpha=smooth_alpha),
+            linewidth=2,
+            label=f"{history.label} (EMA α={smooth_alpha})",
+        )
     ax.set_xlabel("step")
     ax.set_ylabel("loss")
     ax.set_title(title)

@@ -4,6 +4,7 @@ Mirror of upstream src/einsum_cache.jl. Upstream persists TreeSA-optimized
 paths to disk; XLA path optimization is cheap enough that an in-process
 dict is sufficient for Phase 1.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable

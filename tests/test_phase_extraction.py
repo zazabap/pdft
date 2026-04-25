@@ -1,4 +1,5 @@
 """Tests + parity for phase-extraction helpers."""
+
 from pathlib import Path
 
 import numpy as np
@@ -33,9 +34,7 @@ def test_entangle_phase_extraction_matches_julia():
     extracted = extract_entangle_phases(b.tensors, indices)
 
     # Phases should match Julia bit-exactly (up to round-trip through angle())
-    np.testing.assert_allclose(
-        extracted, [float(x) for x in g["extracted_phases"]], atol=1e-12
-    )
+    np.testing.assert_allclose(extracted, [float(x) for x in g["extracted_phases"]], atol=1e-12)
 
 
 # ---------- TEBD ----------

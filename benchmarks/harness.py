@@ -1,7 +1,11 @@
-"""Single-basis training wrapper for the benchmark harness.
+"""Training wrappers for the benchmark harness.
 
-Wraps pdft.train_basis with timing and optional first-call JIT-warmup tracking.
-Also provides a Julia-float-formatted JSON writer for metrics.json.
+`train_one_basis_batched` is the new entry point: trains one shared basis on
+the full dataset using `pdft.train_basis_batched` (cosine LR, validation
+split, early stopping). Mirrors the pipeline in
+`ParametricDFT-Benchmarks.jl`. The legacy `train_one_basis` (single-target,
+fresh-basis-per-image) is retained for backwards compatibility but is no
+longer used by `run_dataset`.
 """
 
 from __future__ import annotations
@@ -9,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -35,16 +39,104 @@ OPTIMIZER_REGISTRY: dict[str, Callable[..., Any]] = {
 
 @dataclass
 class TrainResult:
+    """Result of training a single shared basis on a dataset.
+
+    `loss_history` is per-step training loss, `val_history` is per-epoch
+    validation loss (empty when validation_split=0).
+    """
+
     basis: Any
     loss_history: list[float]
     time: float  # wall-clock incl. JIT (Julia-compatible)
-    warmup_s: float  # wall-clock for first image (incl. JIT); 0 for subsequent images
+    warmup_s: float  # first-call JIT cost (single-batch run)
+    val_history: list[float] = field(default_factory=list)
+    epochs_completed: int = 0
+    steps: int = 0
 
 
 def _make_optimizer(name: str, lr: float):
     if name not in OPTIMIZER_REGISTRY:
         raise KeyError(f"unknown optimizer {name!r}; choices: {sorted(OPTIMIZER_REGISTRY)}")
     return OPTIMIZER_REGISTRY[name](lr=lr)
+
+
+def train_one_basis_batched(
+    basis_factory: Callable[[], Any],
+    train_imgs: np.ndarray | list,
+    preset: Preset,
+    *,
+    device: jax.Device,
+) -> TrainResult:
+    """Train one shared basis on the whole training set using
+    `pdft.train_basis_batched`. Pins device via `jax.default_device(device)`
+    and blocks on the resulting tensors so timing is honest on GPU.
+
+    The first batch's wall-clock is reported as `warmup_s` (it dominates
+    JIT-compile time); the total wall-clock is in `time`.
+    """
+    target_dataset = [jnp.asarray(np.asarray(img), dtype=jnp.complex128) for img in train_imgs]
+
+    with jax.default_device(device):
+        basis = basis_factory()
+
+        t_warm = time.perf_counter()
+        # Single-batch warmup pass to trigger JIT — pdft itself caches the
+        # compiled einsum, so subsequent batches are fast. We use
+        # `train_basis_batched(epochs=1, batch_size=1)` for the first image.
+        if target_dataset:
+            warmup_res = pdft.train_basis_batched(
+                basis,
+                dataset=target_dataset[:1],
+                loss=pdft.L1Norm(),
+                epochs=1,
+                batch_size=1,
+                optimizer=preset.optimizer,
+                validation_split=0.0,
+                early_stopping_patience=1,
+                warmup_frac=preset.warmup_frac,
+                lr_peak=preset.lr_peak,
+                lr_final=preset.lr_final,
+                max_grad_norm=preset.max_grad_norm,
+                shuffle=False,
+                seed=preset.seed,
+            )
+            for t in warmup_res.basis.tensors:
+                jax.block_until_ready(t)
+        warmup_s = time.perf_counter() - t_warm
+
+        t0 = time.perf_counter()
+        # Full run starts from a fresh factory-init basis (we do NOT keep the
+        # warmup basis — its single-step drift would skew the schedule).
+        basis = basis_factory()
+        result = pdft.train_basis_batched(
+            basis,
+            dataset=target_dataset,
+            loss=pdft.L1Norm(),
+            epochs=preset.epochs,
+            batch_size=preset.batch_size,
+            optimizer=preset.optimizer,
+            validation_split=preset.validation_split,
+            early_stopping_patience=preset.early_stopping_patience,
+            warmup_frac=preset.warmup_frac,
+            lr_peak=preset.lr_peak,
+            lr_final=preset.lr_final,
+            max_grad_norm=preset.max_grad_norm,
+            shuffle=True,
+            seed=preset.seed,
+        )
+        for t in result.basis.tensors:
+            jax.block_until_ready(t)
+        elapsed = time.perf_counter() - t0
+
+    return TrainResult(
+        basis=result.basis,
+        loss_history=list(result.loss_history),
+        time=elapsed,
+        warmup_s=warmup_s,
+        val_history=list(result.val_history),
+        epochs_completed=result.epochs_completed,
+        steps=result.steps,
+    )
 
 
 def train_one_basis(
@@ -55,17 +147,21 @@ def train_one_basis(
     device: jax.Device,
     is_first_image: bool = False,
 ) -> TrainResult:
-    """Train a fresh basis from `basis_factory()` on `target` for preset.epochs steps.
+    """Legacy single-target trainer (fresh basis per image).
 
-    Pins device via `jax.default_device(device)`. Calls `jax.block_until_ready`
-    on the trained tensors before stopping the clock for honest GPU timing.
+    Retained for the optimizer-comparison demo at `examples/optimizer_benchmark.py`
+    and any caller that still wants P-pairing behaviour. New code should use
+    `train_one_basis_batched`.
     """
-    optimizer = _make_optimizer(preset.optimizer, preset.lr)
+    optimizer = _make_optimizer(preset.optimizer, preset.lr_peak)
     target_jnp = jnp.asarray(target, dtype=jnp.complex128)
 
     with jax.default_device(device):
         basis = basis_factory()
         t0 = time.perf_counter()
+        # Use n_train * epochs as effective step count for back-compat. The
+        # legacy harness only ran one image at a time so `epochs` here meant
+        # gradient steps on that image.
         result = pdft.train_basis(
             basis,
             target=target_jnp,
@@ -74,14 +170,11 @@ def train_one_basis(
             steps=preset.epochs,
             seed=preset.seed,
         )
-        # Force completion of any in-flight async dispatch before stopping the clock.
         for t in result.basis.tensors:
             jax.block_until_ready(t)
         elapsed = time.perf_counter() - t0
 
     warmup = elapsed if is_first_image else 0.0
-    # pdft.train_basis returns initial_loss + one entry per step (steps+1 total).
-    # TrainResult exposes only the per-step losses so len(loss_history) == preset.epochs.
     raw_history = list(result.loss_history)
     loss_history = raw_history[1:] if len(raw_history) > preset.epochs else raw_history
     return TrainResult(

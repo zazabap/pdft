@@ -5,6 +5,7 @@ lines). Renders a left-to-right wire diagram with H gates as boxes and
 CP gates as vertical links. Not intended to be publication-quality; use
 upstream for that. Requires the `plot` extra.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -74,7 +75,7 @@ def plot_circuit(
     ax.set_xlabel("gate order")
     ax.set_ylabel("qubit")
     ax.set_yticks(range(n_qubits))
-    ax.set_yticklabels([f"q{q+1}" for q in range(n_qubits)])
+    ax.set_yticklabels([f"q{q + 1}" for q in range(n_qubits)])
     if title is None:
         title = f"{type(basis).__name__}(m={basis.m}, n={basis.n}): {info['n_hadamards']} H + {info['n_cps']} CP"
     ax.set_title(title)

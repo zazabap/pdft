@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 
@@ -153,9 +153,23 @@ def _write_summary(
     out_path.write_text("\n".join(lines) + "\n")
 
 
+def _resolve_basis(host_bases_entry, image_idx: int):
+    """Return the basis to use for image `image_idx`.
+
+    `host_bases_entry` is either a single shared basis (new pipeline, returned
+    by `train_one_basis_batched`) or a list of per-image bases (legacy P-pair
+    pipeline). The shared form is preferred; lists are kept for back-compat.
+    """
+    if isinstance(host_bases_entry, list):
+        if image_idx >= len(host_bases_entry):
+            return None
+        return host_bases_entry[image_idx]
+    return host_bases_entry
+
+
 def analyze_reconstructions(
     test_images: np.ndarray,
-    host_bases: dict[str, list],
+    host_bases: dict[str, Any],
     baseline_fns: dict[str, Callable[[np.ndarray, float], np.ndarray]],
     keep_ratios: Sequence[float],
     out_dir: Path,
@@ -164,9 +178,9 @@ def analyze_reconstructions(
 ) -> None:
     """Produce per-image reconstruction PDFs + summaries.
 
-    `host_bases[name][i]` is the per-image basis for test image `i` (P pairing).
-    Bases that have fewer entries than `len(test_images)` are silently
-    truncated to their available length.
+    `host_bases[name]` may be either a single shared basis (new pipeline) or
+    a list of per-image bases (legacy P-pair pipeline). Either way the basis
+    must already be host-resident.
     """
     n = len(test_images) if max_images is None else min(len(test_images), max_images)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -176,11 +190,11 @@ def analyze_reconstructions(
         img = test_images[i]
         recoveries: dict[str, dict[float, np.ndarray]] = {}
 
-        for basis_name, basis_list in host_bases.items():
-            if i >= len(basis_list):
+        for basis_name, basis_entry in host_bases.items():
+            basis = _resolve_basis(basis_entry, i)
+            if basis is None:
                 recoveries[basis_name] = {kr: None for kr in keep_ratios}
                 continue
-            basis = basis_list[i]
             per_kr: dict[float, np.ndarray] = {}
             for kr in keep_ratios:
                 try:

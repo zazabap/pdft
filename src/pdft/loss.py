@@ -3,6 +3,7 @@
 Mirror of upstream src/loss.jl. Single-image path only; batched loss
 dispatch is deferred to a later phase.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,12 +18,14 @@ Array = jax.Array
 @runtime_checkable
 class AbstractLoss(Protocol):
     """Marker protocol for loss types. No behavior; dispatch is functional."""
+
     ...
 
 
 @dataclass(frozen=True)
 class L1Norm:
     """L1 norm loss: minimizes `sum(|T(x)|)` to encourage sparsity."""
+
     pass
 
 
@@ -36,6 +39,7 @@ class MSELoss:
         Number of coefficients to keep after top-k magnitude truncation.
         Must be positive.
     """
+
     k: int
 
     def __post_init__(self):
@@ -94,13 +98,18 @@ def _apply_circuit(tensors: list[Array], code, m: int, n: int, pic: Array) -> Ar
     dims = (2,) * (m + n)
     reshaped = pic.reshape(dims)
     out = code(*tensors, reshaped)
-    return out.reshape(2 ** m, 2 ** n)
+    return out.reshape(2**m, 2**n)
 
 
-def _scalar_loss(pred: Array, target: Array, loss: AbstractLoss,
-                 tensors: list[Array] | None = None,
-                 m: int | None = None, n: int | None = None,
-                 inverse_code=None) -> Array:
+def _scalar_loss(
+    pred: Array,
+    target: Array,
+    loss: AbstractLoss,
+    tensors: list[Array] | None = None,
+    m: int | None = None,
+    n: int | None = None,
+    inverse_code=None,
+) -> Array:
     """Loss from already-computed forward output. Dispatches on loss type."""
     if isinstance(loss, L1Norm):
         return jnp.sum(jnp.abs(pred))
@@ -143,9 +152,7 @@ def loss_function(
     inverse_code : callable, optional
         Required for MSELoss; the inverse einsum closure.
     """
-    if pic.shape != (2 ** m, 2 ** n):
-        raise ValueError(
-            f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}"
-        )
+    if pic.shape != (2**m, 2**n):
+        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
     pred = _apply_circuit(tensors, code, m, n, pic)
     return _scalar_loss(pred, pic, loss, tensors, m, n, inverse_code)

@@ -4,6 +4,7 @@ Mirror of upstream src/tebd.jl. Layer 1: Hadamard on all m+n qubits.
 Layer 2: two rings of controlled-phase gates (row ring has m gates
 including the wrap-around; col ring has n gates).
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -96,9 +97,7 @@ def tebd_code(
         gate_idx += 1
     # Wrap-around: CP(m, 1)
     phi = phases_list[gate_idx]
-    gates.append(
-        Gate(kind="CP", qubits=(m, 1), tensor=controlled_phase_diag(phi), phase=phi)
-    )
+    gates.append(Gate(kind="CP", qubits=(m, 1), tensor=controlled_phase_diag(phi), phase=phi))
     gate_idx += 1
 
     # Layer 2b: Col ring — CP(m+i, m+i+1) for i=1..n-1

@@ -3,6 +3,7 @@
 Mirror of upstream src/optimizers.jl. Phase 1 implements RiemannianGD with
 Armijo backtracking line search only; RiemannianAdam is Phase 2.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -145,8 +146,8 @@ def _adam_step(
     `adam_state` in place.
     """
     beta1, beta2 = opt.beta1, opt.beta2
-    bc1 = 1.0 - beta1 ** iter_1_based
-    bc2 = 1.0 - beta2 ** iter_1_based
+    bc1 = 1.0 - beta1**iter_1_based
+    bc2 = 1.0 - beta2**iter_1_based
 
     for manifold, _indices in state.manifold_groups.items():
         rg = rg_batches[manifold]
@@ -186,9 +187,7 @@ def _armijo_step(
     Returns the accepted candidate loss, or NaN if line search exhausted.
     Mutates `state.point_batches` and `state.current_tensors` in place.
     """
-    current_loss = (
-        float(loss_fn(state.current_tensors)) if jnp.isnan(cached_loss) else cached_loss
-    )
+    current_loss = float(loss_fn(state.current_tensors)) if jnp.isnan(cached_loss) else cached_loss
     alpha = opt.lr
     last_cands: dict = {}
 
@@ -251,9 +250,7 @@ def optimize(
 
     for iter_0 in range(max_iter):
         for manifold, indices in state.manifold_groups.items():
-            unstack_tensors(
-                state.point_batches[manifold], indices, into=state.current_tensors
-            )
+            unstack_tensors(state.point_batches[manifold], indices, into=state.current_tensors)
 
         raw_grads = grad_fn(state.current_tensors)
         # JAX and Julia's Zygote use opposite Wirtinger conventions for gradients
@@ -273,15 +270,13 @@ def optimize(
         if opt.max_grad_norm is not None and float(grad_norm) > opt.max_grad_norm:
             clip = opt.max_grad_norm / float(grad_norm)
             rg_batches = {m: b * clip for m, b in rg_batches.items()}
-            grad_norm_sq = opt.max_grad_norm ** 2
+            grad_norm_sq = opt.max_grad_norm**2
 
         if float(grad_norm) < tol:
             break
 
         if isinstance(opt, RiemannianGD):
-            cached_loss = _armijo_step(
-                opt, state, rg_batches, loss_fn, grad_norm_sq, cached_loss
-            )
+            cached_loss = _armijo_step(opt, state, rg_batches, loss_fn, grad_norm_sq, cached_loss)
             if record_loss:
                 if jnp.isnan(cached_loss):
                     for manifold, indices in state.manifold_groups.items():
@@ -308,8 +303,6 @@ def optimize(
             raise TypeError(f"unsupported optimizer type: {type(opt).__name__}")
 
     for manifold, indices in state.manifold_groups.items():
-        unstack_tensors(
-            state.point_batches[manifold], indices, into=state.current_tensors
-        )
+        unstack_tensors(state.point_batches[manifold], indices, into=state.current_tensors)
 
     return state.current_tensors, trace

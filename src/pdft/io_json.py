@@ -19,6 +19,7 @@ iteration. `basis_hash` likewise iterates column-major. Without this,
 the hash and JSON byte-layout would differ from Julia's output even
 for identical tensor values.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -102,7 +103,9 @@ def basis_hash(basis: QFTBasis) -> str:
     for t in basis.tensors:
         arr = np.asarray(t)
         for val in _iter_column_major(arr):
-            parts.append(f"{_format_float_julia_like(val.real)},{_format_float_julia_like(val.imag)};")
+            parts.append(
+                f"{_format_float_julia_like(val.real)},{_format_float_julia_like(val.imag)};"
+            )
     canonical = "".join(parts)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -134,10 +137,13 @@ def dict_to_basis(d: dict) -> QFTBasis:
     Mirror of upstream src/serialization.jl:569 / 285-323.
     """
     if d.get("type") != "QFTBasis":
-        raise ValueError(f"Unknown basis type: {d.get('type')!r}. Only QFTBasis is supported in Phase 2.")
+        raise ValueError(
+            f"Unknown basis type: {d.get('type')!r}. Only QFTBasis is supported in Phase 2."
+        )
     version = d.get("version", _VERSION)
     if version != _VERSION:
         import warnings
+
         warnings.warn(
             f"Basis version {version!r} may not be fully compatible with current version {_VERSION!r}",
             stacklevel=2,
@@ -147,6 +153,7 @@ def dict_to_basis(d: dict) -> QFTBasis:
 
     # Rebuild the circuit to get template tensor shapes.
     from .qft import qft_code
+
     _code, template_tensors = qft_code(m, n)
 
     serialized = d["tensors"]
@@ -179,6 +186,7 @@ def dict_to_basis(d: dict) -> QFTBasis:
         computed = basis_hash(basis)
         if computed != expected_hash:
             import warnings
+
             warnings.warn(
                 f"Basis hash mismatch. File hash: {expected_hash}, computed: {computed}. "
                 "Basis may have been corrupted or written by a non-canonical serializer.",

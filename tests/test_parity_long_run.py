@@ -4,6 +4,7 @@ If GD bit-exactness held over 50 steps (Phase 2), it should continue to
 hold over 200 — verify there is no compounding FP drift after the
 Wirtinger-conjugation fix.
 """
+
 from pathlib import Path
 
 import jax.numpy as jnp

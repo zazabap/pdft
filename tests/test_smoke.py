@@ -7,4 +7,5 @@ def test_version_string():
 
 def test_x64_enabled():
     import jax.numpy as jnp
+
     assert jnp.zeros(1, dtype=jnp.float64).dtype == jnp.float64

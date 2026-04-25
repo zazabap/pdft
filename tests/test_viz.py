@@ -1,4 +1,5 @@
 """Smoke tests for matplotlib-based viz (plot is optional extra)."""
+
 import matplotlib
 
 matplotlib.use("Agg")  # headless
