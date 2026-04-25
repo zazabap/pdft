@@ -47,8 +47,9 @@ coverage.xml
 .DS_Store
 *.swp
 
-# Claude Code
-.claude/
+# Claude Code — track CLAUDE.md, ignore everything else
+.claude/*
+!.claude/CLAUDE.md
 
 # Example outputs
 out/
