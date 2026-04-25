@@ -57,7 +57,7 @@ from .io_json import (  # noqa: E402
 )
 from .optimizers import RiemannianAdam, RiemannianGD, optimize  # noqa: E402
 from .qft import ft_mat, ift_mat, qft_code  # noqa: E402
-from .training import TrainingResult, train_basis  # noqa: E402
+from .training import TrainingResult, train_basis, train_basis_batched  # noqa: E402
 
 __all__ = [
     "AbstractLoss",
@@ -103,4 +103,5 @@ __all__ = [
     "tebd_code",
     "topk_truncate",
     "train_basis",
+    "train_basis_batched",
 ]
