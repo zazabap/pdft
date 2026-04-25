@@ -112,34 +112,129 @@ def _cumulative_energy(magnitude: np.ndarray) -> np.ndarray:
     return c / c[-1] if c[-1] > 0 else c
 
 
+def _peak_normalized_log(
+    method_magnitudes: dict[str, np.ndarray], floor: float = 1e-6
+) -> tuple[dict[str, np.ndarray], float, float]:
+    """Per-method peak-normalised log10 magnitude with shared (zmin, zmax).
+
+    Mirror of `analyze_frequency_space.jl::norm_mag` + `logmags` block (line 195-199):
+    every method's spectrum has its own peak driven to log10(1)=0, and a fixed
+    log10 floor at log10(1e-6) = -6. The shared zmin/zmax range makes panels
+    directly comparable as heatmaps and 3D surfaces.
+    """
+    out: dict[str, np.ndarray] = {}
+    for name, mag in method_magnitudes.items():
+        peak = max(float(np.max(mag)), 1e-300)
+        normed = mag / peak
+        out[name] = np.log10(normed + floor)
+    zmin = float(min(np.min(v) for v in out.values()))
+    zmax = 0.0
+    return out, zmin, zmax
+
+
 def _draw_frequency_spectra(
     image: np.ndarray, image_idx: int,
     method_magnitudes: dict[str, np.ndarray],
     out_pdf: Path,
 ) -> None:
-    """Log-magnitude frequency representation, one panel per method."""
+    """2D frequency spectra: peak-normalised log|F| per method, shared colorbar.
+
+    Mirror of `analyze_frequency_space.jl` (A) panel: one column per method,
+    same colormap and colorrange across all methods. Rotation 90° matches
+    Julia's `rotr90` orientation convention.
+    """
     methods = list(method_magnitudes.keys())
-    n = 1 + len(methods)
-    cols = min(4, n)
-    rows = (n + cols - 1) // cols
+    logmags, zmin, zmax = _peak_normalized_log(method_magnitudes)
+
+    n_panels = 1 + len(methods)
+    cols = min(5, n_panels)
+    rows = (n_panels + cols - 1) // cols
     fig, axes = plt.subplots(rows, cols, figsize=(3.0 * cols, 3.0 * rows), squeeze=False)
     flat = axes.ravel()
+    # Original (linear gray) for reference.
     flat[0].imshow(image, cmap="gray", vmin=0.0, vmax=1.0)
-    flat[0].set_title("original", fontsize=8)
-    flat[0].set_xticks([]); flat[0].set_yticks([])
+    flat[0].set_title("original", fontsize=9)
+    flat[0].set_xticks([])
+    flat[0].set_yticks([])
+
+    im = None
     for ax, name in zip(flat[1:], methods):
-        mag = method_magnitudes[name]
-        log_mag = np.log10(mag + 1e-12)
-        ax.imshow(log_mag, cmap="viridis")
-        ax.set_title(f"{name} (log|F|)", fontsize=8)
-        ax.set_xticks([]); ax.set_yticks([])
-    for ax in flat[n:]:
+        lm = np.rot90(logmags[name], k=1)  # match Julia's rotr90
+        im = ax.imshow(lm, cmap="inferno", vmin=zmin, vmax=zmax)
+        ax.set_title(name, fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    for ax in flat[n_panels:]:
         ax.set_axis_off()
-    fig.suptitle(f"Frequency spectra — test image #{image_idx}", fontsize=10)
+    if im is not None:
+        cbar = fig.colorbar(im, ax=flat[1:n_panels].tolist(), shrink=0.85, location="right")
+        cbar.set_label(r"log$_{10}\,|F|/\max|F|$", fontsize=9)
+    fig.suptitle(
+        f"Frequency-domain magnitude (peak-normalised log10) — test image #{image_idx}",
+        fontsize=10, fontweight="bold",
+    )
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _draw_frequency_spectra_3d(
+    image_idx: int,
+    method_magnitudes: dict[str, np.ndarray],
+    out_pdf: Path,
+) -> None:
+    """3D surface view of peak-normalised log|F|, downsampled for render.
+
+    Mirror of `analyze_frequency_space.jl` (A2) panel. Downsamples to ~128 per
+    axis so the rendered surface stays tractable on 1024×1024 images.
+    """
+    methods = list(method_magnitudes.keys())
+    logmags, zmin, zmax = _peak_normalized_log(method_magnitudes)
+    h, w = next(iter(method_magnitudes.values())).shape
+    ds = max(1, h // 128)
+
+    n = len(methods)
+    cols = min(4, n)
+    rows = (n + cols - 1) // cols
+    fig = plt.figure(figsize=(4.0 * cols, 3.5 * rows))
+    fig.suptitle(
+        f"3D frequency spectra (peak-normalised log10) — test image #{image_idx}",
+        fontsize=10, fontweight="bold",
+    )
+    for k, name in enumerate(methods):
+        ax = fig.add_subplot(rows, cols, k + 1, projection="3d")
+        z = logmags[name][::ds, ::ds]
+        xs = np.arange(z.shape[1])
+        ys = np.arange(z.shape[0])
+        X, Y = np.meshgrid(xs, ys)
+        ax.plot_surface(X, Y, z, cmap="inferno", vmin=zmin, vmax=zmax,
+                        rstride=1, cstride=1, linewidth=0, antialiased=False)
+        ax.set_title(name, fontsize=9)
+        ax.set_xlabel("col idx", fontsize=7)
+        ax.set_ylabel("row idx", fontsize=7)
+        ax.set_zlabel(r"log$_{10}\,|F|/\max$", fontsize=7)
+        ax.set_zlim(zmin, zmax)
+        ax.view_init(elev=22, azim=117)  # ≈ Julia's azimuth=0.65π, elevation=0.22π
+        ax.tick_params(labelsize=6)
     fig.tight_layout()
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_pdf, format="pdf", bbox_inches="tight")
     plt.close(fig)
+
+
+def _energy_captured(magnitude: np.ndarray, keep_ratio: float) -> float:
+    """Fraction of total L2 energy retained when keeping top-k% by magnitude.
+
+    Mirror of `e_fft / e_dct / e_bdct / e_qft` per-ratio fields in
+    `analyze_frequency_space.jl::analyze_image`.
+    """
+    e = magnitude.flatten() ** 2
+    total = float(np.sum(e))
+    if total <= 0:
+        return 0.0
+    k = max(1, int(np.floor(e.size * keep_ratio)))
+    top_e = np.sort(e)[::-1][:k]
+    return float(np.sum(top_e)) / total
 
 
 def _draw_cumulative_energy(
@@ -148,21 +243,29 @@ def _draw_cumulative_energy(
     keep_ratios: Sequence[float],
     out_pdf: Path,
 ) -> None:
-    """Cumulative captured-energy curve vs fraction of coefficients kept."""
-    fig, ax = plt.subplots(figsize=(7, 5))
+    """Cumulative captured-energy curve vs fraction of coefficients kept.
+
+    Log-scale x-axis matches `analyze_frequency_space.jl::ax_cum.xscale=log10`.
+    Vertical dashed lines mark the four headline keep_ratios.
+    """
+    fig, ax = plt.subplots(figsize=(8.5, 5))
     n_total = next(iter(method_magnitudes.values())).size
     xs = np.arange(1, n_total + 1) / n_total
     for name, mag in method_magnitudes.items():
         ce = _cumulative_energy(mag)
-        ax.plot(xs, ce, label=name, linewidth=1.0, alpha=0.9)
+        ax.plot(xs, ce, label=name, linewidth=1.5, alpha=0.95)
     for kr in keep_ratios:
-        ax.axvline(kr, color="grey", linestyle=":", alpha=0.6, linewidth=0.8)
+        ax.axvline(kr, color="grey", linestyle="--", alpha=0.6, linewidth=1.0)
     ax.set_xlabel("Fraction of coefficients kept (sorted by magnitude)")
-    ax.set_ylabel("Cumulative captured energy")
-    ax.set_title(f"Cumulative energy — test image #{image_idx}")
-    ax.set_xlim(0, max(keep_ratios) * 1.5)
+    ax.set_ylabel("Fraction of total L2 energy")
+    ax.set_title(
+        f"Energy captured vs. fraction kept — test image #{image_idx}",
+        fontsize=11, fontweight="bold",
+    )
+    ax.set_xscale("log")
+    ax.set_xlim(1.0 / n_total, 1.0)
     ax.set_ylim(0, 1.05)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, which="both", alpha=0.3)
     ax.legend(loc="lower right", fontsize=8)
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_pdf, format="pdf", bbox_inches="tight")
@@ -193,7 +296,8 @@ def _draw_kept_coefficient_masks(
                 axes[i][j].set_title(f"keep={kr:g}", fontsize=8)
             if j == 0:
                 axes[i][j].set_ylabel(name, fontsize=8, rotation=0, ha="right", va="center")
-            axes[i][j].set_xticks([]); axes[i][j].set_yticks([])
+            axes[i][j].set_xticks([])
+            axes[i][j].set_yticks([])
     fig.suptitle(f"Kept-coefficient masks — test image #{image_idx}", fontsize=10)
     fig.tight_layout()
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -246,15 +350,25 @@ def _draw_grid(
             else:
                 ax.imshow(rec, cmap="gray", vmin=0.0, vmax=1.0)
                 psnr = _psnr_clamped(image, rec)
+                # SSIM via skimage. Caption mirrors Julia's analyze_frequency_space.jl
+                # `caption = "X% kept — PSNR Y dB, SSIM Z"`.
+                try:
+                    from skimage.metrics import structural_similarity
+
+                    rec_clipped = np.clip(np.real(rec), 0.0, 1.0)
+                    ssim = float(structural_similarity(image, rec_clipped, data_range=1.0))
+                except Exception:
+                    ssim = float("nan")
                 psnr_str = f"{psnr:5.2f} dB" if np.isfinite(psnr) else "inf"
+                ssim_str = f"{ssim:.3f}" if np.isfinite(ssim) else "n/a"
                 ax.text(
                     0.02,
                     0.98,
-                    psnr_str,
+                    f"{psnr_str}\nSSIM {ssim_str}",
                     transform=ax.transAxes,
                     ha="left",
                     va="top",
-                    fontsize=7,
+                    fontsize=6,
                     color="white",
                     bbox=dict(facecolor="black", alpha=0.6, pad=1.5, edgecolor="none"),
                 )
@@ -276,11 +390,21 @@ def _write_summary(
     method_recoveries: dict[str, dict[float, np.ndarray]],
     keep_ratios: Sequence[float],
     out_path: Path,
+    method_magnitudes: dict[str, np.ndarray] | None = None,
 ) -> None:
+    """Plain-text summary mirror of `analyze_frequency_space.jl::analyze_image`'s
+    return: per-(method, keep_ratio) PSNR, SSIM, and energy fraction.
+    """
+    try:
+        from skimage.metrics import structural_similarity
+    except Exception:
+        structural_similarity = None  # type: ignore[assignment]
+
     lines = [
         f"Reconstruction summary — test image #{image_idx}",
         f"Shape: {image.shape}, range: [{image.min():.3f}, {image.max():.3f}]",
         "",
+        "PSNR (dB):",
         "method            " + "  ".join(f"keep={kr:5g}" for kr in keep_ratios),
     ]
     for method, by_kr in method_recoveries.items():
@@ -293,6 +417,35 @@ def _write_summary(
                 psnr = _psnr_clamped(image, rec)
                 cells.append(f"{psnr:7.2f}" if np.isfinite(psnr) else "    inf")
         lines.append(f"{method:18s}" + "  ".join(cells))
+
+    lines.extend(["", "SSIM:", "method            " + "  ".join(f"keep={kr:5g}" for kr in keep_ratios)])
+    for method, by_kr in method_recoveries.items():
+        cells = []
+        for kr in keep_ratios:
+            rec = by_kr.get(kr)
+            if rec is None or structural_similarity is None:
+                cells.append("    n/a")
+            else:
+                rec_clipped = np.clip(np.real(rec), 0.0, 1.0)
+                try:
+                    ssim = float(structural_similarity(image, rec_clipped, data_range=1.0))
+                    cells.append(f"{ssim:7.3f}")
+                except Exception:
+                    cells.append("    n/a")
+        lines.append(f"{method:18s}" + "  ".join(cells))
+
+    if method_magnitudes:
+        lines.extend([
+            "",
+            "Fraction of L2 energy captured by top-k% (Parseval-equivalent):",
+            "method            " + "  ".join(f"keep={kr:5g}" for kr in keep_ratios),
+        ])
+        for method, mag in method_magnitudes.items():
+            cells = []
+            for kr in keep_ratios:
+                cells.append(f"{_energy_captured(mag, kr):7.4f}")
+            lines.append(f"{method:18s}" + "  ".join(cells))
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines) + "\n")
 
@@ -373,11 +526,10 @@ def analyze_reconstructions(
 
         per_image_dir = out_dir / f"{i:04d}"
         _draw_grid(img, i, recoveries, keep_ratios, per_image_dir / "reconstructions.pdf")
-        _write_summary(img, i, recoveries, keep_ratios, per_image_dir / "summary.txt")
 
         # Frequency-domain analysis (mirrors Julia's analyze_frequency_space.jl).
+        method_magnitudes: dict[str, np.ndarray] = {}
         try:
-            method_magnitudes: dict[str, np.ndarray] = {}
             for basis_name, basis_entry in host_bases.items():
                 basis = _resolve_basis(basis_entry, i)
                 if basis is None:
@@ -393,6 +545,9 @@ def analyze_reconstructions(
                 _draw_frequency_spectra(
                     img, i, method_magnitudes, per_image_dir / "frequency_spectra.pdf"
                 )
+                _draw_frequency_spectra_3d(
+                    i, method_magnitudes, per_image_dir / "frequency_spectra_3d.pdf"
+                )
                 _draw_cumulative_energy(
                     i, method_magnitudes, keep_ratios, per_image_dir / "cumulative_energy.pdf"
                 )
@@ -402,5 +557,12 @@ def analyze_reconstructions(
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning("analyze: frequency-domain plots failed for img=%d: %s", i, e)
+
+        # Summary writer last so it includes Parseval-energy fractions if magnitudes are available.
+        _write_summary(
+            img, i, recoveries, keep_ratios,
+            per_image_dir / "summary.txt",
+            method_magnitudes=method_magnitudes if method_magnitudes else None,
+        )
 
     logger.info("analysis: wrote %d per-image analysis bundles under %s", n, out_dir)
