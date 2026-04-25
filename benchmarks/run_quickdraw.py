@@ -172,21 +172,44 @@ def _record_failure(
 # ----------------------------------------------------------------------------
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
-    preset = get_preset(DATASET_NAME, args.preset)
+def run_dataset(
+    *,
+    dataset_name: str,
+    m: int,
+    n: int,
+    basis_factories: dict,
+    loader_fn,
+    args: argparse.Namespace,
+) -> int:
+    """Core benchmark runner — dataset-agnostic.
+
+    Parameters
+    ----------
+    dataset_name:
+        Short identifier used for logging and directory naming (e.g. "quickdraw").
+    m, n:
+        Row / column qubit counts.
+    basis_factories:
+        Mapping of basis name -> zero-argument factory callable.
+    loader_fn:
+        Callable(preset) -> (train_imgs, test_imgs).  Receives the resolved
+        Preset so it can read n_train / n_test / seed without re-parsing args.
+    args:
+        Parsed CLI namespace (from _parse_args).
+    """
+    preset = get_preset(dataset_name, args.preset)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     if args.out is not None:
         results_dir = args.out
     else:
-        results_dir = Path("benchmarks/results") / f"{DATASET_NAME}_{args.preset}_{timestamp}"
+        results_dir = Path("benchmarks/results") / f"{dataset_name}_{args.preset}_{timestamp}"
     results_dir.mkdir(parents=True, exist_ok=True)
     failures_dir = results_dir / "failures"
 
     log_path = results_dir / "run.log" if args.log_file else None
     _setup_logging(args.verbose, log_path)
-    logger = logging.getLogger("run_quickdraw")
+    logger = logging.getLogger(f"run_{dataset_name}")
 
     device = _select_device(args.gpu, args.allow_cpu)
     logger.info("device=%s preset=%s out=%s", device, preset.name, results_dir)
@@ -215,15 +238,15 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     # ----- data
-    logger.info("loading %s (n_train=%d, n_test=%d)", DATASET_NAME, preset.n_train, preset.n_test)
-    train_imgs, test_imgs = load_quickdraw(preset.n_train, preset.n_test, seed=preset.seed)
+    logger.info("loading %s (n_train=%d, n_test=%d)", dataset_name, preset.n_train, preset.n_test)
+    train_imgs, test_imgs = loader_fn(preset)
 
     metrics_payload: dict = {}
 
     # ----- bases
-    for basis_name, factory in BASIS_FACTORIES.items():
-        if basis_name == "mera" and not _is_power_of_two(M + N):
-            logger.info("skipping %s — m+n=%d not a power of 2", basis_name, M + N)
+    for basis_name, factory in basis_factories.items():
+        if basis_name == "mera" and not _is_power_of_two(m + n):
+            logger.info("skipping %s — m+n=%d not a power of 2", basis_name, m + n)
             metrics_payload[basis_name] = {"skipped": "incompatible_qubits"}
             continue
 
@@ -338,6 +361,18 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info("done — results in %s", results_dir)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    return run_dataset(
+        dataset_name=DATASET_NAME,
+        m=M,
+        n=N,
+        basis_factories=BASIS_FACTORIES,
+        loader_fn=lambda preset: load_quickdraw(preset.n_train, preset.n_test, seed=preset.seed),
+        args=args,
+    )
 
 
 if __name__ == "__main__":
