@@ -62,7 +62,8 @@ CPU smoke for sanity (no GPU required):
 python benchmarks/run_quickdraw.py smoke --allow-cpu
 ```
 
-Presets: `smoke` (≤60 s on CPU), `light`, `moderate`, `heavy`. See
+Presets: `smoke` (≤60 s on CPU sanity), `moderate` (Julia-parity, 10 epochs ×
+20 imgs), `generalized` (60 epochs × 500 imgs, the deepest config). See
 `benchmarks/config.py` for exact parameters.
 
 ## Datasets
