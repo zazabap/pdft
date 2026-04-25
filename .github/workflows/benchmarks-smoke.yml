@@ -1,0 +1,35 @@
+name: benchmarks-smoke
+
+on:
+  pull_request:
+    paths:
+      - "benchmarks/**"
+      - "pyproject.toml"
+      - ".github/workflows/benchmarks-smoke.yml"
+  push:
+    branches: [main]
+    paths:
+      - "benchmarks/**"
+
+jobs:
+  layer-a:
+    name: Layer A (no GPU, no datasets)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[bench,dev]"
+      - name: Lint
+        run: ruff check benchmarks/
+      - name: Test
+        run: pytest benchmarks/tests/ -m 'not integration' --no-cov -v
