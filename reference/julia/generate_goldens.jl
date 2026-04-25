@@ -245,6 +245,65 @@ let
                   "basis_hash_chars" => collect(UInt8, compressed.basis_hash)))
 end
 
+# ---------- Case: train_trajectory_4x4_long (200 GD steps on L1) ----------
+let
+    Random.seed!(0)
+    m, n = 2, 2
+    code_fwd, tensors_init_raw = qft_code(m, n)
+    tensors_init = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_init_raw]
+    target = Complex{Float64}.(rand(2^m, 2^n))
+
+    loss_fn(ts) = ParametricDFT.loss_function(ts, m, n, code_fwd, target, L1Norm())
+    grad_fn(ts) = Zygote.gradient(loss_fn, ts)[1]
+
+    loss_trace = Float64[]
+    push!(loss_trace, Float64(loss_fn(tensors_init)))
+
+    optimize!(RiemannianGD(lr=0.01), copy(tensors_init), loss_fn, grad_fn;
+              max_iter=200, tol=1e-12, loss_trace=loss_trace)
+    npzwrite(joinpath(OUT_DIR, "train_trajectory_4x4_long.npz"),
+             Dict("target" => target, "loss_history" => loss_trace,
+                  "config_lr" => [0.01], "config_steps" => [200], "config_seed" => [0]))
+end
+
+# ---------- Case: qft_code_16x16 (m=n=4 scale parity) ----------
+let
+    code, tensors_raw = qft_code(4, 4)
+    tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_raw]
+    Random.seed!(31)
+    pic = Complex{Float64}.(rand(2^4, 2^4))
+    fwd = ft_mat(tensors, code, 4, 4, pic)
+    kw = Dict{String, Any}("pic" => pic, "fwd" => fwd, "n_tensors" => length(tensors))
+    for (i, t) in enumerate(tensors)
+        kw["tensor_$(i-1)"] = collect(t)
+    end
+    npzwrite(joinpath(OUT_DIR, "qft_code_16x16.npz"), kw)
+end
+
+# ---------- Case: phase_extraction_round_trip ----------
+# Train an EntangledQFTBasis with known phases via a Julia roundtrip:
+# build the basis, extract its phases, save (basis, phases) so Python can
+# verify its extractor returns the same values.
+let
+    m, n = 3, 3
+    entangle_phases = [0.123, 0.456, 0.789]
+    code, tensors_raw, n_ent = entangled_qft_code(m, n; entangle_phases=entangle_phases)
+    tensors = Matrix{ComplexF64}[Matrix{ComplexF64}(t) for t in tensors_raw]
+    indices_jl = ParametricDFT.get_entangle_tensor_indices(tensors, n_ent)
+    extracted_phases_jl = ParametricDFT.extract_entangle_phases(tensors, indices_jl)
+    kw = Dict{String, Any}(
+        "input_phases" => entangle_phases,
+        "extracted_phases" => extracted_phases_jl,
+        "extracted_indices_1based" => indices_jl,
+        "n_entangle" => [n_ent],
+        "n_tensors" => length(tensors),
+    )
+    for (i, t) in enumerate(tensors)
+        kw["tensor_$(i-1)"] = collect(t)
+    end
+    npzwrite(joinpath(OUT_DIR, "phase_extraction_3x3.npz"), kw)
+end
+
 # ---------- Manifest ----------
 function file_sha256(path)
     open(path, "r") do io
