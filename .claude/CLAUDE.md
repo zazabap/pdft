@@ -63,6 +63,14 @@ Julia's `qft_code` does `perm_vec = sortperm(tn.tensors, by=x -> !(x ≈ mat(H))
 
 Python's `repr(5e-7)` gives `"5e-07"`; Julia's `string(5e-7)` gives `"5.0e-7"`. `io_json._format_float_julia_like` post-processes `repr()` to match Julia. Use it (not `repr` or `str`) for any value that participates in a cross-language hash or JSON byte-comparison.
 
+### 8. L1-cusp horizon for trajectory parity
+
+GD on L1 loss is bit-exact for ~50 steps and stays within `atol=1e-3` over 200 steps. Beyond that, FP accumulation eventually pushes Python and Julia across the same loss cusp at slightly different alphas in Armijo line search. Both still converge to the same loss basin. Don't tighten `tests/test_parity_long_run.py` to `atol=1e-10` over 200 steps — this is mathematically expected on non-smooth losses, not a bug. Smooth losses (MSE without truncation) don't have this problem.
+
+### 9. Phase extractors classify by tensor shape, not gate-list metadata
+
+`get_*_gate_indices` walks the tensor list and tags any 2×2 tensor whose four entries have unit-modulus magnitudes (within `atol=0.15`) as a CP gate, then returns the LAST `n_gates` such positions. After training, individual entries can drift slightly off the unit circle; the moderate tolerance accommodates that. If you tighten the tolerance, do so in tandem with a regression test on a trained basis.
+
 ## Repo layout
 
 ```
@@ -72,7 +80,7 @@ src/pdft/
 ├── loss.py            L1Norm, MSELoss, topk_truncate, loss_function
 ├── manifolds.py       UnitaryManifold, PhaseManifold, batched (d,d,n) ops
 ├── qft.py             QFTBasis circuit
-├── entangled_qft.py   EntangledQFT (only :back position; :front/:middle are open work in #2)
+├── entangled_qft.py   EntangledQFT (:back and :front; :middle still open in #2)
 ├── tebd.py            TEBD with row+col rings
 ├── mera.py            MERA hierarchical (powers of 2 only)
 ├── basis.py           AbstractSparseBasis + 4 concrete bases (all JAX pytrees)

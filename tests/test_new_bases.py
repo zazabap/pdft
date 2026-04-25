@@ -23,6 +23,36 @@ def test_entangled_qft_basis_init_and_shape():
     assert b.image_size == (4, 4)
 
 
+def test_entangled_qft_basis_front_position_zero_phases_matches_qft():
+    eb = EntangledQFTBasis(
+        m=2, n=2, entangle_phases=[0.0, 0.0], entangle_position="front"
+    )
+    qb = QFTBasis(m=2, n=2)
+    pic = _random_pic(2, 2, key_seed=11)
+    assert jnp.allclose(eb.forward_transform(pic), qb.forward_transform(pic), atol=1e-10)
+
+
+def test_entangled_qft_basis_front_and_back_differ_for_nonzero_phases():
+    pic = _random_pic(2, 2, key_seed=12)
+    front = EntangledQFTBasis(
+        m=2, n=2, entangle_phases=[0.5, 1.2], entangle_position="front"
+    )
+    back = EntangledQFTBasis(
+        m=2, n=2, entangle_phases=[0.5, 1.2], entangle_position="back"
+    )
+    out_f = front.forward_transform(pic)
+    out_b = back.forward_transform(pic)
+    # The two positions are mathematically distinct because the entangle layer
+    # doesn't commute with the QFT layer (they share qubits but are diagonal
+    # in different bases).
+    assert not jnp.allclose(out_f, out_b, atol=1e-6)
+
+
+def test_entangled_qft_basis_rejects_unknown_position():
+    with pytest.raises(ValueError, match="entangle_position"):
+        EntangledQFTBasis(m=2, n=2, entangle_position="middle")
+
+
 def test_entangled_qft_basis_zero_phases_matches_standard_qft():
     # When all entangle_phases are zero, the entanglement gates are identity
     # → the circuit reduces to standard 2D QFT.

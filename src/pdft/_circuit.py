@@ -167,3 +167,48 @@ def apply_circuit(
     reshaped = pic.astype(jnp.complex128).reshape((2,) * (m + n))
     out = code(*tensors, reshaped)
     return out.reshape(2 ** m, 2 ** n)
+
+
+# ---------------------------------------------------------------------------
+# Phase extraction helpers (shared across entangled_qft / tebd / mera)
+# ---------------------------------------------------------------------------
+
+
+def is_compact_cp(tensor: Array, atol: float = 0.15) -> bool:
+    """True if `tensor` looks like a compact 2x2 CP gate `[[1, 1], [1, e^iφ]]`.
+
+    All four entries should have unit magnitude (within `atol`). Mirror of
+    upstream src/tebd.jl:124-132 / src/mera.jl:190-198.
+    """
+    import numpy as np
+
+    arr = np.asarray(tensor)
+    if arr.shape != (2, 2):
+        return False
+    return all(abs(abs(arr[i, j]) - 1.0) <= atol for i in range(2) for j in range(2))
+
+
+def extract_phase_from_cp(tensor: Array) -> float:
+    """Extract `φ` from a compact 2x2 CP tensor `[[1, 1], [1, e^iφ]]`.
+
+    Mirror of upstream `extract_*_phases` (uses `angle(tensors[idx][2, 2])`
+    in Julia 1-based indexing = `tensor[1, 1]` in Python).
+    """
+    import numpy as np
+
+    arr = np.asarray(tensor)
+    return float(np.angle(arr[1, 1]))
+
+
+def select_last_n_cp_indices(tensors: list[Array], n_gates: int) -> list[int]:
+    """Return indices of the LAST `n_gates` compact-CP tensors in `tensors`.
+
+    Mirror of upstream `get_*_gate_indices`. Sorts by position in the list,
+    then takes the last `n_gates` such indices. After training tensors may
+    drift slightly from the exact pattern; the unit-modulus check uses a
+    moderate tolerance to absorb that.
+    """
+    cp_indices = [i for i, t in enumerate(tensors) if is_compact_cp(t)]
+    if len(cp_indices) >= n_gates:
+        return cp_indices[-n_gates:]
+    return cp_indices

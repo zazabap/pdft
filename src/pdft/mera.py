@@ -22,7 +22,25 @@ from ._circuit import (
 Array = jax.Array
 
 
-__all__ = ["mera_code"]
+__all__ = [
+    "mera_code",
+    "get_mera_gate_indices",
+    "extract_mera_phases",
+]
+
+
+def get_mera_gate_indices(tensors: list[Array], n_gates: int) -> list[int]:
+    """Indices of MERA gate tensors. Mirror of upstream src/mera.jl:190-206."""
+    from ._circuit import select_last_n_cp_indices
+
+    return select_last_n_cp_indices(tensors, n_gates)
+
+
+def extract_mera_phases(tensors: list[Array], gate_indices: list[int]) -> list[float]:
+    """Mirror of upstream src/mera.jl:220-226."""
+    from ._circuit import extract_phase_from_cp
+
+    return [extract_phase_from_cp(tensors[idx]) for idx in gate_indices]
 
 
 def _is_pow2(n: int) -> bool:

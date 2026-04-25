@@ -20,7 +20,25 @@ from ._circuit import (
 Array = jax.Array
 
 
-__all__ = ["tebd_code"]
+__all__ = [
+    "tebd_code",
+    "get_tebd_gate_indices",
+    "extract_tebd_phases",
+]
+
+
+def get_tebd_gate_indices(tensors: list[Array], n_gates: int) -> list[int]:
+    """Indices of TEBD gate tensors. Mirror of upstream src/tebd.jl:124-140."""
+    from ._circuit import select_last_n_cp_indices
+
+    return select_last_n_cp_indices(tensors, n_gates)
+
+
+def extract_tebd_phases(tensors: list[Array], gate_indices: list[int]) -> list[float]:
+    """Mirror of upstream src/tebd.jl:154-160."""
+    from ._circuit import extract_phase_from_cp
+
+    return [extract_phase_from_cp(tensors[idx]) for idx in gate_indices]
 
 
 def tebd_code(

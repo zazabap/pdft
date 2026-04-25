@@ -2,20 +2,23 @@
     "julia_version": "1.12.5",
     "files": {
         "basis_roundtrip_hash.txt": "c8f0187251324ec674631ac4127fe2cf21d09c362f4ffab27ccd74cda214c1b2",
-        "entangled_qft_4x4.npz": "f2ded77c07653ee8bab2302931f48ac029ee630d861084e7075fe14bb748724b",
+        "entangled_qft_4x4.npz": "c6c9333f01f893a4dead04aa9d350d5196a09c3f932f659d45affb13dab3bd69",
         "qft_basis_trained.json": "ef76d7e0c8df397ef129591dc72fd2450b6d13007254e3f09175162c12cb2aa2",
-        "ft_mat_roundtrip.npz": "7cf0e29163eb5c84601bb69b1e99bc4593e32cd691a5dfb940e5e5aa0c433041",
-        "adam_trajectory_4x4.npz": "0ffbafdc92fc021803f70fe0f4bc8da983107b1bfcaa759e98106f77e57c9589",
-        "loss_values.npz": "0faa60274f20eb0484c2dba1e0312a42fbdfc43523c106b7072aab230713c9b8",
-        "manifest.json": "4f6dc7401fb256df0d95ebd3bfcf64414c82c47f03d27fc1f97099adeaba011e",
-        "train_trajectory_4x4.npz": "1352c0d0335029f2533940f5b278e6eb1486ba32f36294385da3b4117cfd6aa0",
-        "qft_code_4x4.npz": "ace0e993a65993e7e37574e1fb45fa0e7a784ded61faa1037d0a6ed91230d6a3",
-        "tebd_4x4.npz": "92d70acffe8c387a0ad6fa9c92117953f346fbf985e12fad67d6ad96a6f582e6",
-        "manifold_project_retract.npz": "1ac59f8d413c18dcb91ffaf18760c321215ebfa10d267ed3185e7260b38e3f77",
-        "compression_roundtrip_4x4.npz": "d439dc15848e605390c882c1ce83a684f6191c2e3c2398cf4ac61ff74feaec5f",
-        "mera_4x4.npz": "1c283942cc734cee42a1c53b3473118b315dac61620372f2a426115ef18f9fea",
-        "basis_roundtrip.npz": "38b4b53c0bef901b318029f5ea18ae9567e84efadcf0ce1e1d3f92c727595f7d"
+        "qft_code_16x16.npz": "bce2e2b583e405b0ba5f47f6ba69466523e74262e452ac5ba9a9030cb3d6f598",
+        "ft_mat_roundtrip.npz": "af145c8e00e0913c0f173f6bb89b887a217b021bbedfd7a76d8c64d681fa6964",
+        "phase_extraction_3x3.npz": "789abfbc5b4b3aacec7c0499f2aeff71fb36e29a21ef5fd99d7605deb59ca2bc",
+        "train_trajectory_4x4_long.npz": "9af2e9f8e49029f5005be89dd9b7e921e1563b5fc13f45f01459a4e9715f8360",
+        "adam_trajectory_4x4.npz": "2cf86c376774cfb89dca1ada5f26678602cf40316868dd54d1bc2e842f89f339",
+        "loss_values.npz": "1048a5ecd3480d199c5b8fb2adf548e69641057d6cdb7981ee5c85b595469cba",
+        "manifest.json": "e77018f4b03fc5f7571cda9fad7f859fb1ed4bfb7a4e524b8c8285d334dce67a",
+        "train_trajectory_4x4.npz": "4536a7b54e8f99755e6a7521a2df70e0ac1befc136a5f0286db4b68564cc5c6e",
+        "qft_code_4x4.npz": "09e41b796be2729383f2d67804ba72691af5c016d65dc2a369f92f40c6877364",
+        "tebd_4x4.npz": "705227676270358d41114932c2b2b59bd45b7893ec7e552a734bb953dd369d37",
+        "manifold_project_retract.npz": "6cbdf5b576d5f59b395b60145f413fbb6fcc7527074af2b9b1d49ea10080f413",
+        "compression_roundtrip_4x4.npz": "bf5d0d56c69d84d539a89ebcc1e08f0758f3c2d2badbb88a8bca3166b8bf9dc7",
+        "mera_4x4.npz": "c42cdf7b271bc8ab489e42f97738fda7820a61c610015a1262b366511717dc28",
+        "basis_roundtrip.npz": "0ed01b1a0e841167513ff658205e28bce3ce9a6ebdd2c7c3c36dd180882e665d"
     },
     "upstream_sha": "a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef",
-    "generated_at": "2026-04-24T17:18:51.684"
+    "generated_at": "2026-04-25T01:49:07.330"
 }

@@ -176,6 +176,7 @@ class EntangledQFTBasis:
         tensors: Sequence[Array] | None = None,
         inv_tensors: Sequence[Array] | None = None,
         entangle_phases: Sequence[float] | None = None,
+        entangle_position: str = "back",
         code: object | None = None,
         inv_code: object | None = None,
     ):
@@ -186,10 +187,10 @@ class EntangledQFTBasis:
         self.m = m
         self.n = n
         _code, init_tensors, self.n_entangle = entangled_qft_code(
-            m, n, entangle_phases=entangle_phases
+            m, n, entangle_phases=entangle_phases, entangle_position=entangle_position
         )
         _inv_code, init_inv_tensors, _ = entangled_qft_code(
-            m, n, entangle_phases=entangle_phases, inverse=True
+            m, n, entangle_phases=entangle_phases, entangle_position=entangle_position, inverse=True
         )
         self.tensors = list(tensors) if tensors is not None else init_tensors
         self.inv_tensors = list(inv_tensors) if inv_tensors is not None else init_inv_tensors
