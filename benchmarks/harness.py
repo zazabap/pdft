@@ -13,14 +13,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 
+# Importing pdft enables JAX x64 mode globally (per CLAUDE.md §5).
+# It MUST come before any `import jax` / `import jax.numpy` so that
+# x64 is set before JAX caches its dtype defaults.
 import pdft
 from pdft.io_json import _format_float_julia_like
 
-from config import Preset
+import jax  # noqa: E402
+import jax.numpy as jnp  # noqa: E402
+
+from config import Preset  # noqa: E402
 
 
 OPTIMIZER_REGISTRY: dict[str, Callable[..., Any]] = {
@@ -34,7 +38,7 @@ class TrainResult:
     basis: Any
     loss_history: list[float]
     time: float  # wall-clock incl. JIT (Julia-compatible)
-    warmup_s: float  # first-call JIT only; 0 unless is_first_image=True
+    warmup_s: float  # wall-clock for first image (incl. JIT); 0 for subsequent images
 
 
 def _make_optimizer(name: str, lr: float):
