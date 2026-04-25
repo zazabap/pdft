@@ -270,22 +270,39 @@ def train_basis_batched(
     code = basis.code
     inv_code = basis.inv_code
 
+    def _per_image_loss(tensors: list[Array], img: Array) -> Array:
+        """Single-image loss closure. Used as the body for the vmap."""
+        return loss_function(tensors, m, n, code, img, loss, inverse_code=inv_code)
+
+    # Vectorise over the leading batch axis. Mirrors Julia's
+    # `make_batched_code(optcode, n_gates)` + `optimize_batched_code(...)`
+    # pattern in ParametricDFT.jl/src/training.jl: the entire batch passes
+    # through one fused circuit application instead of a Python loop. This is
+    # what closes the per-step optimisation gap with Julia (the loss
+    # mathematics is identical to the loop version, but the gradient
+    # numerical accumulation is more stable and the kernel-launch count drops
+    # from O(batch_size) to O(1)).
+    _batched_loss = jax.vmap(_per_image_loss, in_axes=(None, 0))
+
     def _make_batch_loss_fn(batch_imgs: list[Array]):
+        # Stack the batch along a new leading axis; the vmap spreads it.
+        stacked = jnp.stack(batch_imgs, axis=0)
+
         def loss_fn(tensors: list[Array]) -> Array:
-            total = jnp.zeros((), dtype=jnp.float64)
-            for img in batch_imgs:
-                total = total + loss_function(tensors, m, n, code, img, loss, inverse_code=inv_code)
-            return total / len(batch_imgs)
+            return jnp.mean(_batched_loss(tensors, stacked))
 
         return loss_fn
 
+    # Validation: also vectorised, but only forward (no optimiser step).
+    if val_imgs:
+        _val_stacked = jnp.stack(val_imgs, axis=0)
+    else:
+        _val_stacked = None
+
     def _val_loss(tensors: list[Array]) -> float:
-        if not val_imgs:
+        if _val_stacked is None:
             return float("inf")
-        total = 0.0
-        for img in val_imgs:
-            total += float(loss_function(tensors, m, n, code, img, loss, inverse_code=inv_code))
-        return total / len(val_imgs)
+        return float(jnp.mean(_batched_loss(tensors, _val_stacked)))
 
     current_tensors = [jnp.asarray(t) for t in basis.tensors]
     best_tensors = [jnp.asarray(t) for t in current_tensors]
