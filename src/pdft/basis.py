@@ -179,13 +179,29 @@ class EntangledQFTBasis:
         entangle_position: str = "back",
         code: object | None = None,
         inv_code: object | None = None,
+        seed: int | None = None,
     ):
+        """Init mirrors `_init_circuit(::Type{EntangledQFTBasis}, ...)` from
+        ParametricDFT.jl/src/training.jl. When `seed` is provided AND
+        `entangle_phases` is None, draws phases from
+        `np.random.default_rng(seed).normal(0, 0.1, n_entangle)` — Julia's
+        `randn(n_gates) * 0.1` convention. This breaks the symmetry-collapse
+        where `EntangledQFTBasis` initialises identically to `QFTBasis` when
+        all entanglement phases are zero.
+        """
+        import numpy as np
+
         from .entangled_qft import entangled_qft_code
 
         if m < 1 or n < 1:
             raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
         self.m = m
         self.n = n
+        n_entangle = min(m, n)
+        if entangle_phases is None and seed is not None:
+            entangle_phases = list(
+                np.random.default_rng(seed).normal(0.0, 0.1, n_entangle)
+            )
         _code, init_tensors, self.n_entangle = entangled_qft_code(
             m, n, entangle_phases=entangle_phases, entangle_position=entangle_position
         )
@@ -277,13 +293,23 @@ class TEBDBasis:
         phases: Sequence[float] | None = None,
         code: object | None = None,
         inv_code: object | None = None,
+        seed: int | None = None,
     ):
+        """When `seed` is provided AND `phases` is None, draws phases from
+        `np.random.default_rng(seed).normal(0, 0.1, n_row_gates + n_col_gates)`
+        — Julia's `randn(n_gates) * 0.1` convention from
+        `ParametricDFT.jl/src/training.jl::_init_circuit`.
+        """
+        import numpy as np
+
         from .tebd import tebd_code
 
         if m < 1 or n < 1:
             raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
         self.m = m
         self.n = n
+        if phases is None and seed is not None:
+            phases = list(np.random.default_rng(seed).normal(0.0, 0.1, m + n))
         _code, init_tensors, self.n_row_gates, self.n_col_gates = tebd_code(m, n, phases=phases)
         _inv_code, init_inv_tensors, _, _ = tebd_code(m, n, phases=phases, inverse=True)
         self.tensors = list(tensors) if tensors is not None else init_tensors
@@ -370,13 +396,25 @@ class MERABasis:
         phases: Sequence[float] | None = None,
         code: object | None = None,
         inv_code: object | None = None,
+        seed: int | None = None,
     ):
-        from .mera import mera_code
+        """When `seed` is provided AND `phases` is None, draws phases from
+        `np.random.default_rng(seed).normal(0, 0.1, n_gates)` — Julia's
+        `randn(n_gates) * 0.1` convention from
+        `ParametricDFT.jl/src/training.jl::_init_circuit`.
+        """
+        import numpy as np
+
+        from .mera import _n_mera_gates, mera_code
 
         if m < 1 or n < 1:
             raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
         self.m = m
         self.n = n
+        if phases is None and seed is not None:
+            n_row = _n_mera_gates(m) if m >= 2 else 0
+            n_col = _n_mera_gates(n) if n >= 2 else 0
+            phases = list(np.random.default_rng(seed).normal(0.0, 0.1, n_row + n_col))
         _code, init_tensors, self.n_row_gates, self.n_col_gates = mera_code(m, n, phases=phases)
         _inv_code, init_inv_tensors, _, _ = mera_code(m, n, phases=phases, inverse=True)
         self.tensors = list(tensors) if tensors is not None else init_tensors
