@@ -28,6 +28,7 @@ import numpy as np
 # Importing pdft sets jax_enable_x64; must come before any other jax math.
 import pdft
 
+from analyze import analyze_reconstructions
 from baselines import (
     block_dct_compress,
     block_fft_compress,
@@ -242,6 +243,7 @@ def run_dataset(
     train_imgs, test_imgs = loader_fn(preset)
 
     metrics_payload: dict = {}
+    host_bases_for_analysis: dict[str, list] = {}
 
     # ----- bases
     for basis_name, factory in basis_factories.items():
@@ -307,25 +309,33 @@ def run_dataset(
             arr = []
             for b in trained:
                 host_tensors = [jax.device_get(t) for t in b.tensors]
-                arr.append({
-                    "type": type(b).__name__,
-                    "m": int(b.m),
-                    "n": int(b.n),
-                    "tensors": [
-                        [[float(v.real), float(v.imag)] for v in np.asarray(t).flatten(order="F")]
-                        for t in host_tensors
-                    ],
-                })
+                arr.append(
+                    {
+                        "type": type(b).__name__,
+                        "m": int(b.m),
+                        "n": int(b.n),
+                        "tensors": [
+                            [
+                                [float(v.real), float(v.imag)]
+                                for v in np.asarray(t).flatten(order="F")
+                            ]
+                            for t in host_tensors
+                        ],
+                    }
+                )
             (results_dir / f"trained_{basis_name}.json").write_text(json.dumps(arr, indent=2))
         except Exception as e:  # noqa: BLE001
             logger.warning("could not save trained bases for %s: %s", basis_name, e)
 
         # Per-image evaluation (P pairing). Truncate trained / test to same length
-        # in case some images failed.
+        # in case some images failed. Bases are moved to host once and reused
+        # for the post-eval reconstruction analysis.
         n_eval = min(len(trained), len(test_imgs))
+        host_bases = [jax.tree_util.tree_map(jax.device_get, b) for b in trained[:n_eval]]
+        host_bases_for_analysis[basis_name] = host_bases
         try:
             kr_metrics, nan_counts = evaluate_basis_per_image(
-                trained[:n_eval],
+                host_bases,
                 test_imgs[:n_eval],
                 preset.keep_ratios,
             )
@@ -368,6 +378,22 @@ def run_dataset(
             e,
             results_dir,
         )
+
+    # ----- per-image reconstruction analysis (mirrors Julia analyze_frequency_space).
+    # Capped at 5 images so the PDF count stays reasonable on heavy presets.
+    try:
+        if host_bases_for_analysis:
+            logger.info("rendering reconstruction PDFs for up to 5 test images")
+            analyze_reconstructions(
+                test_imgs,
+                host_bases_for_analysis,
+                BASELINE_FACTORIES,
+                preset.keep_ratios,
+                results_dir / "analysis",
+                max_images=5,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.error("reconstruction analysis failed: %s", e)
 
     logger.info("done — results in %s", results_dir)
     return 0
