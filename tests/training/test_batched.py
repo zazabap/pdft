@@ -31,9 +31,7 @@ def test_cosine_warmup_at_zero():
 
 def test_cosine_warmup_at_peak():
     """Right after warmup ends, lr should be at lr_peak."""
-    lr = cosine_with_warmup(
-        step=10, total_steps=100, warmup_frac=0.1, lr_peak=0.01, lr_final=0.001
-    )
+    lr = cosine_with_warmup(step=10, total_steps=100, warmup_frac=0.1, lr_peak=0.01, lr_final=0.001)
     assert lr == pytest.approx(0.01)
 
 

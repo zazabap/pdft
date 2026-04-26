@@ -315,9 +315,7 @@ class Orthogonal2qManifold:
         return M.reshape(2, 2, 2, 2, n)
 
     def project(self, T: Array, G: Array) -> Array:
-        return self._from_mat(
-            OrthogonalManifold(d=4).project(self._to_mat(T), self._to_mat(G))
-        )
+        return self._from_mat(OrthogonalManifold(d=4).project(self._to_mat(T), self._to_mat(G)))
 
     def retract(self, T: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
         out_mat = OrthogonalManifold(d=4).retract(

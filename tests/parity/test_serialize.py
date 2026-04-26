@@ -14,7 +14,7 @@ from pdft.bases.base import QFTBasis, bases_allclose
 from pdft.io.serialize import basis_hash, basis_to_dict, load_basis
 from pdft.bases.circuit.qft import ft_mat, qft_code
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
 def test_python_loads_julia_saved_basis_and_hashes_match():

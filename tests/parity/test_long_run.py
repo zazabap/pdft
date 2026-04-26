@@ -9,13 +9,16 @@ from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from pdft.bases.base import QFTBasis
 from pdft.loss import L1Norm
 from pdft.optimizers import RiemannianGD
 from pdft.training import train_basis
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+pytestmark = pytest.mark.slow
+
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
 def test_train_trajectory_matches_julia_4x4_200_steps():
@@ -56,7 +59,7 @@ def test_train_trajectory_matches_julia_4x4_200_steps():
     # (2) Whole 200-step trajectory: within 0.1% (catches gross drift).
     np.testing.assert_allclose(py, jl, atol=1e-3, rtol=1e-3)
     # (3) Both reach the same basin.
-    assert abs(py[-1] - jl[-1]) < 1e-4
+    assert py[-1] == pytest.approx(jl[-1], abs=1e-4)
     # (4) Both made substantive progress.
     assert py[-1] < py[0] - 1.0
     assert jl[-1] < jl[0] - 1.0

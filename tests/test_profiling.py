@@ -178,7 +178,12 @@ def test_report_to_csv_handles_none_loss(tmp_path: Path):
     """StepRecord.loss=None should round-trip through to_csv as empty string."""
     out = tmp_path / "x.csv"
     rep = ProfileReport(
-        basis_class="X", m=1, n=1, batch_size=1, n_steps=1, device="cpu:0",
+        basis_class="X",
+        m=1,
+        n=1,
+        batch_size=1,
+        n_steps=1,
+        device="cpu:0",
     )
     rep.records = [StepRecord(step=0, phase="warm", wall_s=0.1, loss=None)]
     rep.to_csv(out)

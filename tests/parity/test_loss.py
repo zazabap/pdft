@@ -5,7 +5,7 @@ import numpy as np
 
 from pdft.loss import topk_truncate
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
 def test_topk_truncate_matches_julia():

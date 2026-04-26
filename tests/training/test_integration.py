@@ -1,7 +1,10 @@
 import jax
 import jax.numpy as jnp
+import pytest
 
 import pdft
+
+pytestmark = pytest.mark.slow
 
 
 def test_full_training_loop_no_nan():

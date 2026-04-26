@@ -7,7 +7,7 @@ import numpy as np
 
 from pdft.bases.circuit.qft import ft_mat, ift_mat, qft_code
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
 def _load(name: str):

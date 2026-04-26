@@ -3,11 +3,12 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from pdft.bases.base import QFTBasis
 from pdft.io.compression import compress_with_k, recover
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
 def test_compress_with_k_values_match_julia_where_indices_overlap():
@@ -34,7 +35,7 @@ def test_compress_with_k_values_match_julia_where_indices_overlap():
     overlap = set(py_map) & set(jl_map)
     assert len(overlap) >= k - 2, f"only {len(overlap)} indices overlap, expected >= {k - 2}"
     for idx in overlap:
-        assert abs(py_map[idx] - jl_map[idx]) < 1e-10
+        assert py_map[idx] == pytest.approx(jl_map[idx], abs=1e-10)
 
 
 def test_recover_matches_julia_pixelwise():

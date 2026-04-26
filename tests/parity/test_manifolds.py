@@ -5,7 +5,7 @@ import numpy as np
 
 from pdft.manifolds import UnitaryManifold
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
 def test_unitary_project_retract_match_julia():

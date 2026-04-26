@@ -5,20 +5,20 @@ import numpy as np
 
 from pdft.bases.base import QFTBasis
 from pdft.loss import L1Norm
-from pdft.optimizers import RiemannianGD
+from pdft.optimizers import RiemannianAdam
 from pdft.training import train_basis
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
-def test_train_trajectory_matches_julia_4x4():
-    """Full 50-step GD trajectory matches Julia bit-exactly.
+def test_adam_trajectory_matches_julia_4x4():
+    """Full 50-step Adam trajectory matches Julia to atol=1e-6.
 
-    With gradient conjugation applied (Wirtinger convention alignment between
-    JAX and Zygote), Python and Julia produce identical trajectories on L1
-    loss + QFT + RiemannianGD + Armijo through all 50 steps.
+    After the JAX/Zygote gradient conjugation fix (Wirtinger convention
+    alignment), Adam trajectories agree within floating-point noise of
+    moment-update accumulation (~2e-8 over 50 steps in practice).
     """
-    g = np.load(GOLDENS / "train_trajectory_4x4.npz")
+    g = np.load(GOLDENS / "adam_trajectory_4x4.npz")
     target = jnp.asarray(g["target"])
     steps = int(g["config_steps"][0])
     lr = float(g["config_lr"][0])
@@ -29,13 +29,13 @@ def test_train_trajectory_matches_julia_4x4():
         basis,
         target=target,
         loss=L1Norm(),
-        optimizer=RiemannianGD(lr=lr),
+        optimizer=RiemannianAdam(lr=lr),
         steps=steps,
         seed=seed,
     )
     np.testing.assert_allclose(
         np.asarray(result.loss_history),
         g["loss_history"],
-        atol=1e-10,
-        rtol=1e-10,
+        atol=1e-6,
+        rtol=1e-6,
     )

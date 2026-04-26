@@ -9,7 +9,7 @@ from pdft.bases.circuit.entangled_qft import entangled_qft_code
 from pdft.bases.circuit.mera import mera_code
 from pdft.bases.circuit.tebd import tebd_code
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
 def _load(name):
