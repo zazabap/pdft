@@ -133,6 +133,7 @@ PRESETS_DIV2K_10Q: dict[str, Preset] = {
 _DATASETS = {
     "quickdraw": PRESETS_QUICKDRAW,
     "div2k_8q": PRESETS_DIV2K,
+    "div2k_8q_blocked": PRESETS_DIV2K,  # uses same presets — outer image (256×256) unchanged
     "div2k_10q": PRESETS_DIV2K_10Q,
 }
 

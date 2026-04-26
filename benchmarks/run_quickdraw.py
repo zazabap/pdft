@@ -208,6 +208,7 @@ def run_dataset(
     basis_factories: dict,
     loader_fn,
     args: argparse.Namespace,
+    baselines: dict | None = None,
 ) -> int:
     """Core benchmark runner — dataset-agnostic.
 
@@ -224,6 +225,11 @@ def run_dataset(
         Preset so it can read n_train / n_test / seed without re-parsing args.
     args:
         Parsed CLI namespace (from _parse_args).
+    baselines:
+        Optional override for the baseline factory dict (default: BASELINE_FACTORIES,
+        which has BlockDCT/BlockFFT at fixed block=8). Pass a custom dict to
+        compare against matched-size baselines (e.g. BlockDCT at the same block
+        size as the learned blocked basis).
     """
     preset = get_preset(dataset_name, args.preset)
     if args.batch_size is not None:
@@ -286,13 +292,18 @@ def run_dataset(
     # EntangledQFT/TEBD/MERA get deterministic random init. We rebuild factories
     # using the dataset's m, n (NOT the QuickDraw module-level M, N) — earlier
     # code mistakenly pulled QuickDraw-shaped factories for DIV2K runs.
-    seeded_factories = {
+    # For names not in this canonical map (e.g. BlockedBasis variants from
+    # run_div2k_8q_blocked.py), fall back to the caller-provided factory.
+    canonical_seeded = {
         "qft": lambda: pdft.QFTBasis(m=m, n=n),
         "entangled_qft": lambda: pdft.EntangledQFTBasis(m=m, n=n, seed=preset.seed),
         "tebd": lambda: pdft.TEBDBasis(m=m, n=n, seed=preset.seed),
         "mera": lambda: pdft.MERABasis(m=m, n=n, seed=preset.seed),
     }
-    seeded_factories = {k: seeded_factories[k] for k in basis_factories if k in seeded_factories}
+    seeded_factories = {
+        k: (canonical_seeded[k] if k in canonical_seeded else basis_factories[k])
+        for k in basis_factories
+    }
 
     # Optional --bases filter (e.g. for splitting work across multiple GPUs).
     if args.bases is not None:
@@ -404,7 +415,8 @@ def run_dataset(
             }
 
     # ----- baselines
-    for name, fn in BASELINE_FACTORIES.items():
+    active_baselines = baselines if baselines is not None else BASELINE_FACTORIES
+    for name, fn in active_baselines.items():
         logger.info("running baseline %s", name)
         kr_metrics, elapsed = evaluate_baseline(fn, test_imgs, preset.keep_ratios)
         metrics_payload[name] = {"metrics": kr_metrics, "time": elapsed}
