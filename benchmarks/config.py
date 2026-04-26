@@ -9,6 +9,7 @@ optimizer steps with a cosine-with-warmup learning-rate schedule.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class Preset:
     early_stopping_patience: int
     seed: int = 42
     keep_ratios: tuple[float, ...] = field(default_factory=lambda: (0.05, 0.10, 0.15, 0.20))
+    val_every_k_epochs: int = 1
 
 
 # Mirrors ParametricDFT-Benchmarks.jl/config.jl::TRAINING_PRESETS.
@@ -89,38 +91,35 @@ PRESETS_QUICKDRAW: dict[str, Preset] = dict(_BASE_PRESETS)
 PRESETS_DIV2K: dict[str, Preset] = dict(_BASE_PRESETS)
 
 
-# Helper to clone a Preset with an overridden batch_size — used by the
-# DIV2K-10q table below, where the base presets' bs values (16/50) overflow
-# 24 GB at m=n=10 due to the (2,)*20 × batch einsum intermediates.
-def _override_bs(p: Preset, bs: int) -> Preset:
-    return Preset(
-        name=p.name,
-        epochs=p.epochs,
-        n_train=p.n_train,
-        n_test=p.n_test,
-        optimizer=p.optimizer,
-        batch_size=bs,
-        warmup_frac=p.warmup_frac,
-        lr_peak=p.lr_peak,
-        lr_final=p.lr_final,
-        max_grad_norm=p.max_grad_norm,
-        validation_split=p.validation_split,
-        early_stopping_patience=p.early_stopping_patience,
-        seed=p.seed,
-        keep_ratios=p.keep_ratios,
-    )
+# Helper to clone a Preset with overridden batch_size and (optionally)
+# val_every_k_epochs — used by the DIV2K-10q table below, where the base
+# presets' bs values (16/50) overflow 24 GB at m=n=10 due to the (2,)*20
+# × batch einsum intermediates, and val passes are expensive enough that
+# evaluating every-other-epoch is a meaningful speedup.
+def _override_bs(p: Preset, bs: int, val_every_k_epochs: int | None = None) -> Preset:
+    from dataclasses import replace
+
+    fields: dict[str, Any] = {"batch_size": bs}
+    if val_every_k_epochs is not None:
+        fields["val_every_k_epochs"] = val_every_k_epochs
+    return replace(p, **fields)
 
 
 # DIV2K-10q (m=n=10) batch_size — empirically measured on RTX 3090 (24 GB):
 #   bs=2  → peak ~3.5 GB,  baseline throughput
 #   bs=4  → peak ~7.0 GB,  1.7× throughput per image
-#   bs=8  → peak ~14 GB,   2.9× throughput, but only 8-10 GB headroom once
-#                          the train+val sets (~10 GB) are also resident.
-# bs=4 is the safe default. Use --batch-size 8 on run_quickdraw.py to push
-# further when running a single basis at a time. MERA at m=n=10 is silently
-# skipped (m+n=20 is not a power of 2).
+#   bs=8  → peak ~14 GB,   2.9× throughput per image (the new default)
+# At bs=8 the per-step einsum eats ~14 GB; train+val sets resident on GPU
+# add ~10 GB more. Total expected peak ~22-24 GB on the heaviest preset
+# (`generalized`, n_train=500, val_split=0.15) — within margin but tight.
+# Drop to --batch-size 4 if you see OOM on `generalized`.
+#
+# val_every_k_epochs=2 halves the validation cost per epoch (each val pass
+# at m=n=10 with 75 images is ~60s). Early-stopping patience now counts
+# in evaluations, so 5 evals × 2 epochs = 10 epochs without improvement.
+# MERA at m=n=10 is silently skipped (m+n=20 is not a power of 2).
 PRESETS_DIV2K_10Q: dict[str, Preset] = {
-    name: _override_bs(p, bs=4) for name, p in _BASE_PRESETS.items()
+    name: _override_bs(p, bs=8, val_every_k_epochs=2) for name, p in _BASE_PRESETS.items()
 }
 
 

@@ -318,6 +318,7 @@ def train_basis_batched(
     max_grad_norm: float | None = None,
     shuffle: bool = True,
     seed: int = 0,
+    val_every_k_epochs: int = 1,
 ) -> TrainingResult:
     """Multi-image, multi-epoch trainer with cosine LR schedule.
 
@@ -356,10 +357,19 @@ def train_basis_batched(
     seed :
         Seeds train/val split and per-epoch shuffles. Use the same seed for
         reproducible runs.
+    val_every_k_epochs :
+        Run validation eval (and check early-stopping) every K epochs. Default
+        1 = match Julia (every epoch). Setting K=2 halves the validation cost
+        on heavy configs (e.g. m=n=10 where val pass is ~60s per epoch).
+        early_stopping_patience now counts in *evaluations*, not epochs:
+        K=2, patience=5 means 10 epochs without improvement triggers stop.
+        The final epoch is always evaluated so best_tensors is always fresh.
     """
     _validate_batched_args(
         dataset, epochs, batch_size, validation_split, early_stopping_patience, warmup_frac
     )
+    if val_every_k_epochs < 1:
+        raise ValueError(f"val_every_k_epochs must be >= 1, got {val_every_k_epochs}")
 
     expected_size = basis.image_size
     images = []
@@ -499,10 +509,14 @@ def train_basis_batched(
             loss_history.extend(float(L) for L in epoch_loss_arrs)
 
             epochs_completed = epoch + 1
-            val_loss = _val_loss(current_tensors) if val_imgs else float("nan")
+            # Run validation only on the K-th epoch (and always on the last
+            # epoch so best_tensors is fresh). Epochs without an eval still
+            # advance the loop but skip the patience check.
+            do_eval = val_imgs and ((epoch + 1) % val_every_k_epochs == 0 or epoch + 1 == epochs)
+            val_loss = _val_loss(current_tensors) if do_eval else float("nan")
             val_history.append(val_loss)
 
-            if val_imgs:
+            if val_imgs and do_eval:
                 if val_loss < best_val:
                     best_val = val_loss
                     best_tensors = [jnp.asarray(t) for t in current_tensors]
@@ -511,7 +525,7 @@ def train_basis_batched(
                     patience += 1
                     if patience >= early_stopping_patience and epoch > 0:
                         break
-            else:
+            elif not val_imgs:
                 best_tensors = [jnp.asarray(t) for t in current_tensors]
 
         elapsed = time.perf_counter() - t0
@@ -565,10 +579,11 @@ def train_basis_batched(
                 global_step += 1
 
             epochs_completed = epoch + 1
-            val_loss = _val_loss(current_tensors) if val_imgs else float("nan")
+            do_eval = val_imgs and ((epoch + 1) % val_every_k_epochs == 0 or epoch + 1 == epochs)
+            val_loss = _val_loss(current_tensors) if do_eval else float("nan")
             val_history.append(val_loss)
 
-            if val_imgs:
+            if val_imgs and do_eval:
                 if val_loss < best_val:
                     best_val = val_loss
                     best_tensors = [jnp.asarray(t) for t in current_tensors]
@@ -577,7 +592,7 @@ def train_basis_batched(
                     patience += 1
                     if patience >= early_stopping_patience and epoch > 0:
                         break
-            else:
+            elif not val_imgs:
                 best_tensors = [jnp.asarray(t) for t in current_tensors]
 
         elapsed = time.perf_counter() - t0

@@ -128,6 +128,7 @@ def train_one_basis_batched(
             max_grad_norm=preset.max_grad_norm,
             shuffle=True,
             seed=preset.seed,
+            val_every_k_epochs=preset.val_every_k_epochs,
         )
         for t in result.basis.tensors:
             jax.block_until_ready(t)
