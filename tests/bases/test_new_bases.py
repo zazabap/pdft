@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from pdft.basis import EntangledQFTBasis, MERABasis, QFTBasis, TEBDBasis, bases_allclose
+from pdft.bases.base import EntangledQFTBasis, MERABasis, QFTBasis, TEBDBasis, bases_allclose
 
 
 def _random_pic(m: int, n: int, key_seed: int = 0):

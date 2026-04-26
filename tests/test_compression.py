@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from pdft.basis import QFTBasis
+from pdft.bases.base import QFTBasis
 from pdft.compression import (
     compress,
     compress_with_k,

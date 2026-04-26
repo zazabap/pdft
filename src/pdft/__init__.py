@@ -39,7 +39,7 @@ if not _os.environ.get("PDFT_DISABLE_COMPILE_CACHE"):
 __version__ = "0.0.0"
 __upstream_ref__ = "nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef"
 
-from .basis import (  # noqa: E402
+from .bases.base import (  # noqa: E402
     AbstractSparseBasis,
     EntangledQFTBasis,
     MERABasis,
@@ -47,10 +47,9 @@ from .basis import (  # noqa: E402
     TEBDBasis,
     bases_allclose,
 )
-from .block_basis import BlockedBasis  # noqa: E402
-from .dct_basis import DCTBasis  # noqa: E402
-from .real_rich_basis import RealRichBasis  # noqa: E402
-from .rich_basis import RichBasis, fit_to_dct  # noqa: E402
+from .bases.block.block import BlockedBasis  # noqa: E402
+from .bases.block.real_rich import RealRichBasis  # noqa: E402
+from .bases.block.rich import RichBasis, fit_to_dct  # noqa: E402
 from .compression import (  # noqa: E402
     CompressedImage,
     compress,
@@ -62,9 +61,9 @@ from .compression import (  # noqa: E402
     recover,
     save_compressed,
 )
-from .entangled_qft import entangled_qft_code  # noqa: E402
-from .mera import mera_code  # noqa: E402
-from .tebd import tebd_code  # noqa: E402
+from .bases.circuit.entangled_qft import entangled_qft_code  # noqa: E402
+from .bases.circuit.mera import mera_code  # noqa: E402
+from .bases.circuit.tebd import tebd_code  # noqa: E402
 from .loss import (  # noqa: E402
     AbstractLoss,
     L1Norm,
@@ -88,7 +87,7 @@ from .io_json import (  # noqa: E402
 )
 from .optimizers import RiemannianAdam, RiemannianGD, optimize  # noqa: E402
 from .profiling import ProfileReport, profile_training  # noqa: E402
-from .qft import ft_mat, ift_mat, qft_code  # noqa: E402
+from .bases.circuit.qft import ft_mat, ift_mat, qft_code  # noqa: E402
 from .training import TrainingResult, train_basis, train_basis_batched  # noqa: E402
 
 __all__ = [
@@ -97,7 +96,6 @@ __all__ = [
     "AbstractSparseBasis",
     "BlockedBasis",
     "CompressedImage",
-    "DCTBasis",
     "EntangledQFTBasis",
     "L1Norm",
     "MERABasis",

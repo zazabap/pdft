@@ -21,7 +21,7 @@ Inner topology selected via --basis-class:
             better than DCT for natural images.
 
 CLI extras:
-  --basis-class {rich,real,dct}
+  --basis-class {rich,real}
   --epochs N
   --lr-final F
 
@@ -62,8 +62,6 @@ def _make_inner(basis_class: str):
         return pdft.RichBasis(m=M_INNER, n=N_INNER)
     if basis_class == "real":
         return pdft.RealRichBasis(m=M_INNER, n=N_INNER)
-    if basis_class == "dct":
-        return pdft.DCTBasis(m=M_INNER, n=N_INNER, init_dct=True)
     raise ValueError(f"unknown --basis-class {basis_class!r}")
 
 
@@ -95,7 +93,7 @@ def _parse_rich_args(argv: list[str] | None) -> argparse.Namespace:
     extra = argparse.ArgumentParser(add_help=False)
     extra.add_argument(
         "--basis-class",
-        choices=["rich", "real", "dct"],
+        choices=["rich", "real"],
         default="rich",
         help="within-block parametric circuit topology (default: rich)",
     )

@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 
-from pdft.basis import QFTBasis
+from pdft.bases.base import QFTBasis
 from pdft.loss import L1Norm
 from pdft.optimizers import RiemannianGD
 from pdft.training import TrainingResult, train_basis

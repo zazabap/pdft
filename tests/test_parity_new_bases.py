@@ -5,9 +5,9 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 
-from pdft.entangled_qft import entangled_qft_code
-from pdft.mera import mera_code
-from pdft.tebd import tebd_code
+from pdft.bases.circuit.entangled_qft import entangled_qft_code
+from pdft.bases.circuit.mera import mera_code
+from pdft.bases.circuit.tebd import tebd_code
 
 GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
 

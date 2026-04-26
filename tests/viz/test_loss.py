@@ -5,7 +5,7 @@ import matplotlib
 matplotlib.use("Agg")  # headless
 
 
-from pdft.basis import QFTBasis  # noqa: E402
+from pdft.bases.base import QFTBasis  # noqa: E402
 from pdft.viz import TrainingHistory, ema_smooth, plot_training_comparison, plot_training_loss  # noqa: E402
 
 

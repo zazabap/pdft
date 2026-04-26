@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pdft.basis import QFTBasis
+from pdft.bases.base import QFTBasis
 from pdft.compression import compress_with_k, recover
 
 GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"

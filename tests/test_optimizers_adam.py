@@ -46,7 +46,7 @@ def test_adam_preserves_unitarity_across_iters():
 def test_adam_reduces_loss_on_training():
     import numpy as np
 
-    from pdft.basis import QFTBasis
+    from pdft.bases.base import QFTBasis
     from pdft.loss import L1Norm
     from pdft.training import train_basis
 

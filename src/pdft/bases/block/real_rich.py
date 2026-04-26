@@ -34,7 +34,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import tree_util
 
-from .circuit.builder import HADAMARD, Gate, compile_circuit
+from ...circuit.builder import HADAMARD, Gate, compile_circuit
 
 Array = jax.Array
 
@@ -130,12 +130,12 @@ class RealRichBasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from .loss import _apply_circuit
+        from ...loss import _apply_circuit
 
         return _apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from .loss import _apply_circuit
+        from ...loss import _apply_circuit
 
         return _apply_circuit(
             [jnp.conj(t) for t in self.tensors],

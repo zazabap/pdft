@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from pdft.basis import QFTBasis, bases_allclose
+from pdft.bases.base import QFTBasis, bases_allclose
 
 
 def test_qftbasis_constructor_initializes_tensors():

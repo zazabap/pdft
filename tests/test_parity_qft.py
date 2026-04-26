@@ -5,7 +5,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 
-from pdft.qft import ft_mat, ift_mat, qft_code
+from pdft.bases.circuit.qft import ft_mat, ift_mat, qft_code
 
 GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
 
@@ -24,7 +24,7 @@ def test_qft_tensors_element_wise_match_julia_4x4():
     g = _load("qft_code_4x4.npz")
     n_tensors = int(g["n_tensors"])
 
-    from pdft.qft import qft_code
+    from pdft.bases.circuit.qft import qft_code
 
     _code, tensors = qft_code(2, 2)
     assert len(tensors) == n_tensors

@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 from jax import tree_util
 
-from .qft import qft_code
+from .circuit.qft import qft_code
 
 Array = jax.Array
 
@@ -91,12 +91,12 @@ class QFTBasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from .qft import ft_mat
+        from .circuit.qft import ft_mat
 
         return ft_mat(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from .qft import ift_mat
+        from .circuit.qft import ift_mat
 
         return ift_mat(
             [jnp.conj(t) for t in self.tensors],
@@ -192,7 +192,7 @@ class EntangledQFTBasis:
         """
         import numpy as np
 
-        from .entangled_qft import entangled_qft_code
+        from .circuit.entangled_qft import entangled_qft_code
 
         if m < 1 or n < 1:
             raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
@@ -224,12 +224,12 @@ class EntangledQFTBasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from .circuit.builder import apply_circuit
+        from ..circuit.builder import apply_circuit
 
         return apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from .circuit.builder import apply_circuit
+        from ..circuit.builder import apply_circuit
 
         return apply_circuit(
             [jnp.conj(t) for t in self.tensors],
@@ -299,7 +299,7 @@ class TEBDBasis:
         """
         import numpy as np
 
-        from .tebd import tebd_code
+        from .circuit.tebd import tebd_code
 
         if m < 1 or n < 1:
             raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
@@ -326,12 +326,12 @@ class TEBDBasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from .circuit.builder import apply_circuit
+        from ..circuit.builder import apply_circuit
 
         return apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from .circuit.builder import apply_circuit
+        from ..circuit.builder import apply_circuit
 
         return apply_circuit(
             [jnp.conj(t) for t in self.tensors],
@@ -402,7 +402,7 @@ class MERABasis:
         """
         import numpy as np
 
-        from .mera import _n_mera_gates, mera_code
+        from .circuit.mera import _n_mera_gates, mera_code
 
         if m < 1 or n < 1:
             raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
@@ -431,12 +431,12 @@ class MERABasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from .circuit.builder import apply_circuit
+        from ..circuit.builder import apply_circuit
 
         return apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from .circuit.builder import apply_circuit
+        from ..circuit.builder import apply_circuit
 
         return apply_circuit(
             [jnp.conj(t) for t in self.tensors],

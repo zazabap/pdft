@@ -210,12 +210,12 @@ class BlockedBasis:
         return (2**self.inner.m, 2**self.inner.n)
 
     def forward_transform(self, pic: Array) -> Array:
-        from .loss import _apply_circuit
+        from ...loss import _apply_circuit
 
         return _apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from .loss import _apply_circuit
+        from ...loss import _apply_circuit
 
         return _apply_circuit(
             [jnp.conj(t) for t in self.tensors],

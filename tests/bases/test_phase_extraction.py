@@ -4,12 +4,12 @@ from pathlib import Path
 
 import numpy as np
 
-from pdft.basis import EntangledQFTBasis, MERABasis, TEBDBasis
-from pdft.entangled_qft import extract_entangle_phases, get_entangle_tensor_indices
-from pdft.mera import extract_mera_phases, get_mera_gate_indices
-from pdft.tebd import extract_tebd_phases, get_tebd_gate_indices
+from pdft.bases.base import EntangledQFTBasis, MERABasis, TEBDBasis
+from pdft.bases.circuit.entangled_qft import extract_entangle_phases, get_entangle_tensor_indices
+from pdft.bases.circuit.mera import extract_mera_phases, get_mera_gate_indices
+from pdft.bases.circuit.tebd import extract_tebd_phases, get_tebd_gate_indices
 
-GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
+GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 
 
 # ---------- EntangledQFT ----------

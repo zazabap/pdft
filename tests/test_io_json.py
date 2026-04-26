@@ -4,7 +4,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import pytest
 
-from pdft.basis import QFTBasis, bases_allclose
+from pdft.bases.base import QFTBasis, bases_allclose
 from pdft.io_json import basis_hash, basis_to_dict, dict_to_basis, load_basis, save_basis
 
 

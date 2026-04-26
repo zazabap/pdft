@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 
-from pdft.qft import (
+from pdft.bases.circuit.qft import (
     HADAMARD,
     _qft_gates_1d,
     controlled_phase_diag,

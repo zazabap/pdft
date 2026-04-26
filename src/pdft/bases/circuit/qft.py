@@ -20,7 +20,7 @@ from collections.abc import Callable
 import jax
 import jax.numpy as jnp
 
-from .circuit.builder import (
+from ...circuit.builder import (
     HADAMARD,
     Gate,
     apply_circuit,

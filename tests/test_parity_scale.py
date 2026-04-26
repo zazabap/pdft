@@ -5,7 +5,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 
-from pdft.qft import ft_mat, qft_code
+from pdft.bases.circuit.qft import ft_mat, qft_code
 
 GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
 

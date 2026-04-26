@@ -32,7 +32,7 @@ import jax
 import jax.numpy as jnp
 from jax import tree_util
 
-from .circuit.builder import HADAMARD, Gate, compile_circuit, u4_from_phase
+from ...circuit.builder import HADAMARD, Gate, compile_circuit, u4_from_phase
 
 Array = jax.Array
 
@@ -128,12 +128,12 @@ class RichBasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from .loss import _apply_circuit
+        from ...loss import _apply_circuit
 
         return _apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from .loss import _apply_circuit
+        from ...loss import _apply_circuit
 
         return _apply_circuit(
             [jnp.conj(t) for t in self.tensors],
@@ -198,7 +198,7 @@ def fit_to_dct(
     """
     import time as _time
 
-    from .manifolds import group_by_manifold, stack_tensors
+    from ...manifolds import group_by_manifold, stack_tensors
 
     basis = basis_factory()
     m, n = basis.m, basis.n
