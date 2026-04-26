@@ -41,7 +41,7 @@ def test_profile_training_returns_populated_report():
     loss = pdft.MSELoss(k=2)
     imgs = _synthetic_imgs(6)
 
-    report = pdft.profile_training(
+    report = pdft.profiling.profile_training(
         basis,
         dataset=imgs,
         loss=loss,
@@ -72,7 +72,7 @@ def test_profile_training_with_val_eval_interleaves_records():
     imgs = _synthetic_imgs(8)
     val_imgs = _synthetic_imgs(2, seed=1)
 
-    report = pdft.profile_training(
+    report = pdft.profiling.profile_training(
         basis,
         dataset=imgs,
         loss=loss,
@@ -97,7 +97,7 @@ def test_profile_training_cycles_short_dataset():
     loss = pdft.MSELoss(k=2)
     imgs = _synthetic_imgs(2)  # only 2 images for 6 needed
 
-    report = pdft.profile_training(
+    report = pdft.profiling.profile_training(
         basis, dataset=imgs, loss=loss, n_steps=3, batch_size=2, trace_dir=None
     )
     assert len(report.records) == 3
@@ -108,7 +108,7 @@ def test_profile_training_rejects_non_adam():
     loss = pdft.MSELoss(k=2)
     imgs = _synthetic_imgs(2)
     with pytest.raises(NotImplementedError, match="adam"):
-        pdft.profile_training(
+        pdft.profiling.profile_training(
             basis, dataset=imgs, loss=loss, n_steps=2, batch_size=1, optimizer="gd"
         )
 
@@ -117,14 +117,14 @@ def test_profile_training_rejects_empty_dataset():
     basis = pdft.QFTBasis(m=M, n=N)
     loss = pdft.MSELoss(k=2)
     with pytest.raises(ValueError, match="non-empty"):
-        pdft.profile_training(basis, dataset=[], loss=loss, n_steps=2, batch_size=1)
+        pdft.profiling.profile_training(basis, dataset=[], loss=loss, n_steps=2, batch_size=1)
 
 
 def test_report_summary_contains_key_fields():
     basis = pdft.QFTBasis(m=M, n=N)
     loss = pdft.MSELoss(k=2)
     imgs = _synthetic_imgs(4)
-    report = pdft.profile_training(
+    report = pdft.profiling.profile_training(
         basis, dataset=imgs, loss=loss, n_steps=2, batch_size=2, trace_dir=None
     )
     summary = report.summary()
@@ -155,7 +155,7 @@ def test_report_to_csv_roundtrip(tmp_path: Path):
     basis = pdft.QFTBasis(m=M, n=N)
     loss = pdft.MSELoss(k=2)
     imgs = _synthetic_imgs(4)
-    report = pdft.profile_training(
+    report = pdft.profiling.profile_training(
         basis, dataset=imgs, loss=loss, n_steps=2, batch_size=2, trace_dir=None
     )
     out = tmp_path / "step_times.csv"

@@ -118,10 +118,10 @@ def evaluate_basis_shared(
         per_image: list[dict[str, float]] = []
         for img in test_images:
             try:
-                compressed = pdft.compress(
+                compressed = pdft.io.compress(
                     cpu_basis, np.asarray(img, dtype=np.float64), ratio=discard_ratio
                 )
-                recovered = pdft.recover(cpu_basis, compressed)
+                recovered = pdft.io.recover(cpu_basis, compressed)
                 per_image.append(compute_metrics(img, recovered))
             except Exception as e:  # noqa: BLE001
                 logger.warning("compress/recover failed on (kr=%s): %s", kr, e)
@@ -167,10 +167,10 @@ def evaluate_basis_per_image(
         per_image: list[dict[str, float]] = []
         for img, basis in zip(test_images, cpu_bases):
             try:
-                compressed = pdft.compress(
+                compressed = pdft.io.compress(
                     basis, np.asarray(img, dtype=np.float64), ratio=discard_ratio
                 )
-                recovered = pdft.recover(basis, compressed)
+                recovered = pdft.io.recover(basis, compressed)
                 per_image.append(compute_metrics(img, recovered))
             except Exception as e:  # noqa: BLE001
                 logger.warning("compress/recover failed on (kr=%s): %s", kr, e)

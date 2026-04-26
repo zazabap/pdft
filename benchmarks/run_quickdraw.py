@@ -352,7 +352,7 @@ def run_dataset(
 
         # Save loss history (per-step train losses + per-epoch val losses) and
         # the trained basis. trained_<basis>.json captures actual class name
-        # because pdft.save_basis is QFT-only (issue #5 sub-thread).
+        # because pdft.io.save_basis is QFT-only (issue #5 sub-thread).
         try:
             (results_dir / "loss_history").mkdir(parents=True, exist_ok=True)
             (results_dir / "loss_history" / f"{basis_name}_loss.json").write_text(

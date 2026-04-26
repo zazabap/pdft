@@ -9,6 +9,17 @@ Also enables a persistent JAX compilation cache by default, so the
 ~20-second JIT-compile cost of the Adam step is paid once per basis
 shape across all runs. Override the cache dir with JAX_COMPILATION_CACHE_DIR
 or disable entirely by setting PDFT_DISABLE_COMPILE_CACHE=1.
+
+Public API: import from subpackages directly, e.g.
+
+    from pdft.bases.circuit import QFTBasis
+    from pdft.training import train_basis, train_basis_batched
+    from pdft.optimizers import RiemannianGD, RiemannianAdam
+    from pdft.loss import L1Norm, MSELoss
+    from pdft.io import save_basis, load_basis, compress
+
+The names re-exported at the package root below are kept only for the
+small set most commonly used in interactive sessions and notebooks.
 """
 
 import os as _os
@@ -18,9 +29,6 @@ import jax as _jax
 
 _jax.config.update("jax_enable_x64", True)
 
-# Persistent compile cache. Cuts ~20s JIT cost per fresh process. Honors
-# JAX_COMPILATION_CACHE_DIR if set, else uses XDG_CACHE_HOME or ~/.cache.
-# Opt out with PDFT_DISABLE_COMPILE_CACHE=1.
 if not _os.environ.get("PDFT_DISABLE_COMPILE_CACHE"):
     _cache_dir = _os.environ.get("JAX_COMPILATION_CACHE_DIR")
     if not _cache_dir:
@@ -29,79 +37,38 @@ if not _os.environ.get("PDFT_DISABLE_COMPILE_CACHE"):
     try:
         _Path(_cache_dir).mkdir(parents=True, exist_ok=True)
         _jax.config.update("jax_compilation_cache_dir", _cache_dir)
-        # Cache miss penalty thresholds — cache anything that took >0s to compile,
-        # and require at least 1 use of the executable before eviction.
         _jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
     except OSError:
-        # Filesystem read-only or unwritable — silently skip caching.
         pass
 
 __version__ = "0.0.0"
 __upstream_ref__ = "nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef"
 
-from .bases.base import (  # noqa: E402
+# Slim public re-export hub: most-used names only. Anything else: import
+# from the relevant subpackage directly.
+from .bases import (  # noqa: E402
     AbstractSparseBasis,
+    BlockedBasis,
     EntangledQFTBasis,
     MERABasis,
     QFTBasis,
+    RealRichBasis,
+    RichBasis,
     TEBDBasis,
     bases_allclose,
 )
-from .bases.block.block import BlockedBasis  # noqa: E402
-from .bases.block.real_rich import RealRichBasis  # noqa: E402
-from .bases.block.rich import RichBasis, fit_to_dct  # noqa: E402
-from .io.compression import (  # noqa: E402
-    CompressedImage,
-    compress,
-    compress_with_k,
-    compressed_to_dict,
-    compression_stats,
-    dict_to_compressed,
-    load_compressed,
-    recover,
-    save_compressed,
-)
-from .bases.circuit.entangled_qft import entangled_qft_code  # noqa: E402
-from .bases.circuit.mera import mera_code  # noqa: E402
-from .bases.circuit.tebd import tebd_code  # noqa: E402
-from .loss import (  # noqa: E402
-    AbstractLoss,
-    L1Norm,
-    MSELoss,
-    loss_function,
-    topk_truncate,
-)
-from .manifolds import (  # noqa: E402
-    AbstractRiemannianManifold,
-    PhaseManifold,
-    UnitaryManifold,
-    classify_manifold,
-    group_by_manifold,
-)
-from .io.serialize import (  # noqa: E402
-    basis_hash,
-    basis_to_dict,
-    dict_to_basis,
-    load_basis,
-    save_basis,
-)
+from .loss import AbstractLoss, L1Norm, MSELoss, loss_function  # noqa: E402
 from .optimizers import RiemannianAdam, RiemannianGD, optimize  # noqa: E402
-from .profiling import ProfileReport, profile_training  # noqa: E402
-from .bases.circuit.qft import ft_mat, ift_mat, qft_code  # noqa: E402
 from .training import TrainingResult, train_basis, train_basis_batched  # noqa: E402
 
 __all__ = [
     "AbstractLoss",
-    "AbstractRiemannianManifold",
     "AbstractSparseBasis",
     "BlockedBasis",
-    "CompressedImage",
     "EntangledQFTBasis",
     "L1Norm",
     "MERABasis",
     "MSELoss",
-    "PhaseManifold",
-    "ProfileReport",
     "QFTBasis",
     "RealRichBasis",
     "RichBasis",
@@ -109,36 +76,11 @@ __all__ = [
     "RiemannianGD",
     "TEBDBasis",
     "TrainingResult",
-    "UnitaryManifold",
     "__upstream_ref__",
     "__version__",
     "bases_allclose",
-    "basis_hash",
-    "basis_to_dict",
-    "classify_manifold",
-    "compress",
-    "compress_with_k",
-    "compressed_to_dict",
-    "compression_stats",
-    "dict_to_basis",
-    "dict_to_compressed",
-    "entangled_qft_code",
-    "fit_to_dct",
-    "ft_mat",
-    "group_by_manifold",
-    "ift_mat",
-    "load_basis",
-    "load_compressed",
     "loss_function",
-    "mera_code",
     "optimize",
-    "profile_training",
-    "qft_code",
-    "recover",
-    "save_basis",
-    "save_compressed",
-    "tebd_code",
-    "topk_truncate",
     "train_basis",
     "train_basis_batched",
 ]

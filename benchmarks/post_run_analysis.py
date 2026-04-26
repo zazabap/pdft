@@ -183,8 +183,8 @@ def _ssim(orig: np.ndarray, rec: np.ndarray) -> float:
 
 def _recover_basis(basis, image: np.ndarray, kr: float) -> np.ndarray:
     discard = 1.0 - kr
-    compressed = pdft.compress(basis, np.asarray(image, dtype=np.float64), ratio=discard)
-    rec = pdft.recover(basis, compressed)
+    compressed = pdft.io.compress(basis, np.asarray(image, dtype=np.float64), ratio=discard)
+    rec = pdft.io.recover(basis, compressed)
     return np.clip(np.real(rec), 0.0, 1.0)
 
 

@@ -75,27 +75,32 @@ GD on L1 loss is bit-exact for ~50 steps and stays within `atol=1e-3` over 200 s
 
 ```
 src/pdft/
-├── _circuit.py        Shared circuit-to-einsum builder (used by all 4 bases)
-├── einsum_cache.py    jnp.einsum_path + jax.jit closure cache
-├── loss.py            L1Norm, MSELoss, topk_truncate, loss_function
-├── manifolds.py       UnitaryManifold, PhaseManifold, batched (d,d,n) ops
-├── qft.py             QFTBasis circuit
-├── entangled_qft.py   EntangledQFT (:back and :front; :middle still open in #2)
-├── tebd.py            TEBD with row+col rings
-├── mera.py            MERA hierarchical (powers of 2 only)
-├── basis.py           AbstractSparseBasis + 4 concrete bases (all JAX pytrees)
-├── optimizers.py      RiemannianGD (Armijo) + RiemannianAdam
-├── training.py        train_basis (single-target; pytree-generic)
-├── io_json.py         save_basis / load_basis / basis_hash
-├── compression.py     CompressedImage + compress / recover
-├── viz.py             matplotlib loss plots (plot extra)
-└── circuit_viz.py     matplotlib circuit schematic (plot extra)
+├── manifolds.py            Mathematical core (UnitaryManifold, PhaseManifold, batched ops)
+├── loss.py                 L1Norm, MSELoss, topk_truncate, loss_function (public)
+├── profiling.py            Cross-cutting profiling helpers
+├── bases/
+│   ├── base.py             AbstractSparseBasis + bases_allclose + 4 basis dataclasses
+│   ├── circuit/            QFT, EntangledQFT, TEBD, MERA (full circuit topologies)
+│   └── block/              Blocked, Rich, RealRich (parameter-efficient)
+├── circuit/                Einsum builder (builder.py) + JIT closure cache (cache.py)
+├── optimizers/             core, gd (RiemannianGD + Armijo), adam (RiemannianAdam), loop
+├── training/               schedules, single (train_basis), batched, adam_step, eval_loop
+├── io/                     serialize (JSON), compression
+└── viz/                    loss (matplotlib loss plots), circuit (schematic)
 
-reference/julia/       Julia harness — needed only to regenerate goldens
-reference/goldens/     Committed .npz + .json files (<200 KB total)
-examples/              3 runnable demos, each <10s
-tests/                 pytest; one file per src/ module + parity tests
+reference/julia/            Julia harness — needed only to regenerate goldens
+reference/goldens/          Committed .npz + .json files (<200 KB total)
+examples/                   3 runnable demos, each <10s
+tests/                      pytest; mirrors src/pdft/ layout (tests/bases/, tests/optimizers/, ...)
+benchmarks/                 GPU benchmark harness (manual; not in CI)
 ```
+
+`DCTBasis` was removed during the modular-src refactor (PR #11). Use a parametric basis (`RichBasis` / `RealRichBasis`) for similar use cases.
+
+`pdft/__init__.py` re-exports a small set of most-used names (basis classes,
+trainer, optimizer, loss). Less-public names live in their subpackages —
+e.g. `pdft.io.save_basis`, `pdft.manifolds.UnitaryManifold`,
+`pdft.profiling.profile_training`, `pdft.bases.circuit.qft_code`.
 
 `AbstractRiemannianOptimizer` is `RiemannianGD | RiemannianAdam` — a structural union, not a Protocol. Adding a third optimizer means extending that union *and* adding an `isinstance` branch in `optimize()`.
 
