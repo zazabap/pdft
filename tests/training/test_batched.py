@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.training import _cosine_with_warmup, train_basis_batched
+from pdft.training import cosine_with_warmup, train_basis_batched
 
 
 # ---------------------------------------------------------------------------
@@ -24,14 +24,14 @@ from pdft.training import _cosine_with_warmup, train_basis_batched
 
 def test_cosine_warmup_at_zero():
     """Step 0 (or 1, depending on convention) is at the start of warmup → tiny lr."""
-    lr = _cosine_with_warmup(step=0, total_steps=100, warmup_frac=0.1, lr_peak=0.01, lr_final=0.001)
+    lr = cosine_with_warmup(step=0, total_steps=100, warmup_frac=0.1, lr_peak=0.01, lr_final=0.001)
     # Warmup is `max(1, round(0.1 * 100))` = 10. lr at step 0 = lr_peak * 0/10 = 0.
     assert lr == pytest.approx(0.0)
 
 
 def test_cosine_warmup_at_peak():
     """Right after warmup ends, lr should be at lr_peak."""
-    lr = _cosine_with_warmup(
+    lr = cosine_with_warmup(
         step=10, total_steps=100, warmup_frac=0.1, lr_peak=0.01, lr_final=0.001
     )
     assert lr == pytest.approx(0.01)
@@ -39,7 +39,7 @@ def test_cosine_warmup_at_peak():
 
 def test_cosine_warmup_at_final():
     """At the very last step, lr should be at lr_final."""
-    lr = _cosine_with_warmup(
+    lr = cosine_with_warmup(
         step=100, total_steps=100, warmup_frac=0.1, lr_peak=0.01, lr_final=0.001
     )
     assert lr == pytest.approx(0.001, abs=1e-9)
@@ -48,7 +48,7 @@ def test_cosine_warmup_at_final():
 def test_cosine_warmup_monotone_decrease_after_peak():
     """After warmup, lr monotonically decreases through cosine."""
     lrs = [
-        _cosine_with_warmup(s, 100, warmup_frac=0.1, lr_peak=0.01, lr_final=0.001)
+        cosine_with_warmup(s, 100, warmup_frac=0.1, lr_peak=0.01, lr_final=0.001)
         for s in range(11, 101)
     ]
     for a, b in zip(lrs, lrs[1:]):
@@ -64,7 +64,7 @@ def test_cosine_warmup_matches_julia_formula():
     lr_final = 0.001
     warmup_steps = max(1, round(warmup_frac * total))
     for step in range(0, total + 1):
-        py = _cosine_with_warmup(
+        py = cosine_with_warmup(
             step, total, warmup_frac=warmup_frac, lr_peak=lr_peak, lr_final=lr_final
         )
         if step <= warmup_steps:
