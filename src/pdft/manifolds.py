@@ -108,24 +108,64 @@ def is_unitary_general(t: Array, atol: float = 1e-6) -> bool:
 # just names them textually and they're resolved when called.
 
 
-def classify_manifold(t: Array) -> AbstractRiemannianManifold:
-    """Return `UnitaryManifold()` if unitary, else `PhaseManifold()`.
+def _matrix_dim_of(t: Array) -> int | None:
+    """Return the matrix dimension of a tensor (rank-2 → t.shape[0]; rank-2k
+    → product of first k axes, where 2k matches the storage convention for a
+    2-qubit gate stored as (2, 2, 2, 2)). Returns None if not classifiable.
 
-    Mirror of upstream src/manifolds.jl:225-231.
+    Used by classify_manifold so that U(2) and U(4) gates bucket separately,
+    enabling stack_tensors to operate on homogeneous-shape batches.
     """
-    return UnitaryManifold() if is_unitary_general(t) else PhaseManifold()
+    if t.ndim == 2 and t.shape[0] == t.shape[1]:
+        return t.shape[0]
+    if t.ndim == 4 and t.shape == (2, 2, 2, 2):
+        return 4
+    return None
+
+
+def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
+    """True for a (2, 2, 2, 2) tensor whose 4x4 reshape is unitary.
+
+    The (2, 2, 2, 2) layout is the canonical storage of a 2-qubit gate
+    (axes: out_ctrl, out_tgt, in_ctrl, in_tgt). We reshape to 4x4 and apply
+    the standard unitarity check.
+    """
+    if t.ndim != 4 or t.shape != (2, 2, 2, 2):
+        return False
+    M = jnp.reshape(t, (4, 4))
+    I_mat = jnp.eye(4, dtype=t.dtype)
+    return bool(jnp.allclose(M @ jnp.conj(M).T, I_mat, atol=atol))
+
+
+def classify_manifold(t: Array) -> AbstractRiemannianManifold:
+    """Return the manifold appropriate to ``t`` based on its shape and value.
+
+    - rank-2 unitary (d × d) → ``UnitaryManifold(d=d)`` (so U(2) and U(4)
+      tensors bucket into separate groups for batched stacking)
+    - (2, 2, 2, 2) tensor whose 4×4 reshape is unitary → ``Unitary2qManifold``
+      (a thin wrapper that reshapes for project/retract/transport)
+    - otherwise → ``PhaseManifold``
+
+    Mirror of upstream src/manifolds.jl:225-231 with size-aware bucketing.
+    """
+    if is_unitary_general(t):
+        return UnitaryManifold(d=t.shape[0])
+    if is_unitary_2qubit(t):
+        return Unitary2qManifold()
+    return PhaseManifold()
 
 
 def group_by_manifold(tensors: list[Array]) -> dict:
     """`{manifold: [indices]}` bucket map.
 
-    Mirror of upstream src/manifolds.jl:113-119. Dedup on manifold *type*
-    (so two PhaseManifold() instances collapse to one bucket).
+    Mirror of upstream src/manifolds.jl:113-119, with size-aware bucketing
+    (U(2) and U(4) go to separate buckets because UnitaryManifold has a
+    `d` field that participates in equality).
     """
     groups: dict[AbstractRiemannianManifold, list[int]] = {}
     for i, t in enumerate(tensors):
         m = classify_manifold(t)
-        existing = next((k for k in groups if type(k) is type(m)), None)
+        existing = next((k for k in groups if k == m), None)
         if existing is None:
             groups[m] = [i]
         else:
@@ -140,10 +180,17 @@ def group_by_manifold(tensors: list[Array]) -> dict:
 
 @dataclass(frozen=True)
 class UnitaryManifold:
-    """U(n) unitary group manifold; tensors are n x n unitary matrices.
+    """U(d) unitary group manifold; tensors are d × d unitary matrices.
+
+    The ``d`` field defaults to 2 for backward compatibility with all
+    pre-RichBasis call sites. Setting ``d`` is what makes U(2) and U(4)
+    bucket into separate groups in ``group_by_manifold`` (without it,
+    ``stack_tensors`` would try to stack mismatched shapes).
 
     Mirror of upstream src/manifolds.jl:161-196.
     """
+
+    d: int = 2
 
     def project(self, U: Array, G: Array) -> Array:
         """`U * skew(U^H G)` on `(d, d, n)`."""
@@ -170,6 +217,47 @@ class UnitaryManifold:
     def transport(self, U_old: Array, U_new: Array, v: Array) -> Array:
         """Parallel transport via re-projection. Upstream src/manifolds.jl:196."""
         return self.project(U_new, v)
+
+
+# ---------------------------------------------------------------------------
+# Unitary2qManifold — U(4) for 2-qubit gates stored as (2, 2, 2, 2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Unitary2qManifold:
+    """U(4) manifold for 2-qubit gates stored in (2, 2, 2, 2) tensor form.
+
+    Storage convention: axes (out_ctrl, out_tgt, in_ctrl, in_tgt). This is
+    the canonical form for a 2-qubit gate as it appears in the einsum
+    builder (rank-4 to match 4 qubit-axis subscripts). All Riemannian
+    operations reshape to (4, 4, n) internally and reuse the U(d=4) math.
+    """
+
+    def _to_mat(self, T: Array) -> Array:
+        """(2, 2, 2, 2, n) -> (4, 4, n)."""
+        n = T.shape[-1]
+        return T.reshape(4, 4, n)
+
+    def _from_mat(self, M: Array) -> Array:
+        """(4, 4, n) -> (2, 2, 2, 2, n)."""
+        n = M.shape[-1]
+        return M.reshape(2, 2, 2, 2, n)
+
+    def project(self, T: Array, G: Array) -> Array:
+        return self._from_mat(UnitaryManifold(d=4).project(self._to_mat(T), self._to_mat(G)))
+
+    def retract(self, T: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
+        # Caller's pre-allocated I_batch (if any) was sized for the storage
+        # shape; UnitaryManifold(d=4) builds its own (4,4,n) identity, so
+        # we just discard the passed-in I_batch here.
+        out_mat = UnitaryManifold(d=4).retract(
+            self._to_mat(T), self._to_mat(Xi), alpha, I_batch=None
+        )
+        return self._from_mat(out_mat)
+
+    def transport(self, T_old: Array, T_new: Array, v: Array) -> Array:
+        return self.project(T_new, v)
 
 
 # ---------------------------------------------------------------------------

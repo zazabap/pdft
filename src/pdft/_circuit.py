@@ -43,10 +43,22 @@ def controlled_phase_diag(phi: float) -> Array:
 
 
 class Gate(TypedDict):
-    kind: str  # "H" or "CP"
+    kind: str  # "H", "CP", or "U4"
     qubits: tuple[int, ...]
     tensor: Array
     phase: float
+
+
+def u4_from_phase(phi: float) -> Array:
+    """Return the 2-qubit (2, 2, 2, 2)-shaped tensor matching the 4×4 controlled-
+    phase gate diag(1, 1, 1, exp(iφ)).
+
+    This is the strict warm-start for a learnable U(4) gate that should
+    behave initially like a fixed CP. Axis order: (out_ctrl, out_tgt,
+    in_ctrl, in_tgt).
+    """
+    diag = jnp.array([1.0 + 0j, 1.0 + 0j, 1.0 + 0j, jnp.exp(1j * phi)], dtype=jnp.complex128)
+    return jnp.diag(diag).reshape(2, 2, 2, 2)
 
 
 def build_circuit_einsum(
@@ -102,6 +114,20 @@ def build_circuit_einsum(
             tensor_subscripts.append(ctrl_lbl + tgt_lbl)
             tensor_list.append(g["tensor"])
             tensor_shapes.append((2, 2))
+        elif g["kind"] == "U4":
+            # General 2-qubit unitary stored as (out_c, out_t, in_c, in_t).
+            # Unlike CP this is NOT diagonal; it INTRODUCES new wire labels
+            # for both qubits' outputs.
+            q_ctrl, q_tgt = g["qubits"]
+            in_c = wire_state[q_ctrl]
+            in_t = wire_state[q_tgt]
+            out_c = fresh()
+            out_t = fresh()
+            tensor_subscripts.append(out_c + out_t + in_c + in_t)
+            tensor_list.append(g["tensor"])
+            tensor_shapes.append((2, 2, 2, 2))
+            wire_state[q_ctrl] = out_c
+            wire_state[q_tgt] = out_t
         else:
             raise AssertionError(f"unknown gate kind: {g['kind']}")
 
@@ -109,7 +135,12 @@ def build_circuit_einsum(
     import numpy as _np
 
     H_np = _np.asarray(HADAMARD)
-    is_not_hadamard = [not _np.allclose(_np.asarray(t), H_np, atol=1e-12) for t in tensor_list]
+
+    def _is_hadamard(t):
+        a = _np.asarray(t)
+        return a.shape == (2, 2) and _np.allclose(a, H_np, atol=1e-12)
+
+    is_not_hadamard = [not _is_hadamard(t) for t in tensor_list]
     perm = sorted(range(len(tensor_list)), key=lambda i: is_not_hadamard[i])
     tensor_list = [tensor_list[i] for i in perm]
     tensor_subscripts = [tensor_subscripts[i] for i in perm]

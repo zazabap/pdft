@@ -273,7 +273,10 @@ def _build_jit_adam_step(
             new_m_list.append(new_m)
             new_v_list.append(new_v)
             for k2, idx in enumerate(idxs):
-                new_tensors[idx] = new_pb[:, :, k2]
+                # Use ellipsis so this works for any tensor storage shape:
+                # (2, 2, n) for 2x2 unitaries, (2, 2, 2, 2, n) for 2-qubit
+                # (Unitary2qManifold) gates, etc.
+                new_tensors[idx] = new_pb[..., k2]
 
         return new_tensors, new_m_list, new_v_list, loss_val
 

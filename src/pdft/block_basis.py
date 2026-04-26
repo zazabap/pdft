@@ -232,43 +232,20 @@ class BlockedBasis:
 
 
 def _blockedbasis_flatten(b: BlockedBasis):
-    leaves = tuple(b.inner.tensors)
-    aux = (
-        type(b.inner),
-        b.inner.m,
-        b.inner.n,
-        b.inner.code,
-        b.inner.inv_code,
-        len(leaves),
-        b.block_log_m,
-        b.block_log_n,
-        b.code,
-        b.inv_code,
-    )
-    return leaves, aux
+    """Flatten by recursing into inner via JAX's pytree machinery.
+
+    This delegates inner reconstruction to JAX's tree_unflatten, which
+    works for ANY pytree-registered inner — including nested wrappers
+    like StackedBasis whose constructor doesn't take (m, n, tensors, ...).
+    """
+    inner_leaves, inner_treedef = jax.tree_util.tree_flatten(b.inner)
+    aux = (inner_treedef, b.block_log_m, b.block_log_n, b.code, b.inv_code)
+    return tuple(inner_leaves), aux
 
 
 def _blockedbasis_unflatten(aux, leaves) -> BlockedBasis:
-    (
-        inner_class,
-        inner_m,
-        inner_n,
-        inner_code,
-        inner_inv_code,
-        n_fwd,
-        block_log_m,
-        block_log_n,
-        code,
-        inv_code,
-    ) = aux
-    assert len(leaves) == n_fwd
-    inner = inner_class(
-        m=inner_m,
-        n=inner_n,
-        tensors=list(leaves),
-        code=inner_code,
-        inv_code=inner_inv_code,
-    )
+    inner_treedef, block_log_m, block_log_n, code, inv_code = aux
+    inner = jax.tree_util.tree_unflatten(inner_treedef, list(leaves))
     return BlockedBasis(
         inner=inner,
         block_log_m=block_log_m,

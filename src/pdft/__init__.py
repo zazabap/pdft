@@ -48,6 +48,7 @@ from .basis import (  # noqa: E402
     bases_allclose,
 )
 from .block_basis import BlockedBasis  # noqa: E402
+from .rich_basis import RichBasis  # noqa: E402
 from .compression import (  # noqa: E402
     CompressedImage,
     compress,
@@ -101,6 +102,7 @@ __all__ = [
     "PhaseManifold",
     "ProfileReport",
     "QFTBasis",
+    "RichBasis",
     "RiemannianAdam",
     "RiemannianGD",
     "TEBDBasis",
