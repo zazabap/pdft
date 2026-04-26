@@ -45,7 +45,7 @@ def _iter_column_major(arr: np.ndarray):
     return np.asarray(arr).flatten(order="F")
 
 
-def _format_float_julia_like(x) -> str:
+def format_float_julia_like(x) -> str:
     """Format a Python float the way Julia's `string(x::Float64)` does.
 
     Python and Julia agree on decimal forms ("1.0", "3.14", "-0.0") and on
@@ -58,7 +58,9 @@ def _format_float_julia_like(x) -> str:
         1e+20          1.0e20         ← Julia drops '+' from positive exponent
         1.5e-07        1.5e-7         ← Julia drops leading zero in exponent
 
-    We produce Julia's form by post-processing Python's `repr`.
+    We produce Julia's form by post-processing Python's `repr`. Used by
+    JSON serialization (basis_to_dict) and by external benchmark code that
+    needs to write Julia-byte-compatible numeric strings.
     """
     # np.float64 reprs as 'np.float64(1.5)'; cast to Python float so repr
     # yields the bare decimal form that Julia uses too.
@@ -104,7 +106,7 @@ def basis_hash(basis: QFTBasis) -> str:
         arr = np.asarray(t)
         for val in _iter_column_major(arr):
             parts.append(
-                f"{_format_float_julia_like(val.real)},{_format_float_julia_like(val.imag)};"
+                f"{format_float_julia_like(val.real)},{format_float_julia_like(val.imag)};"
             )
     canonical = "".join(parts)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -211,3 +213,8 @@ def load_basis(path: str | Path) -> QFTBasis:
     with p.open("r") as f:
         d: dict[str, Any] = json.load(f)
     return dict_to_basis(d)
+
+
+# Deprecated private alias kept for one release so external code (notably
+# benchmarks/) does not break atomically. Remove in v0.2.0.
+_format_float_julia_like = format_float_julia_like
