@@ -92,8 +92,9 @@ reference/julia/            Julia harness — needed only to regenerate goldens
 reference/goldens/          Committed .npz + .json files (<200 KB total)
 examples/                   3 runnable demos, each <10s
 tests/                      pytest; mirrors src/pdft/ layout (tests/bases/, tests/optimizers/, ...)
-benchmarks/                 GPU benchmark harness (manual; not in CI)
 ```
+
+Benchmarks live in a separate repo: https://github.com/zazabap/pdft-benchmarks (split from this repo at pdft v0.2.0; pinned via its `pyproject.toml`).
 
 `DCTBasis` was removed during the modular-src refactor (PR #11). Use a parametric basis (`RichBasis` / `RealRichBasis`) for similar use cases.
 
