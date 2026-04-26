@@ -15,6 +15,7 @@ from .serialize import (
     basis_hash,
     basis_to_dict,
     dict_to_basis,
+    format_float_julia_like,
     load_basis,
     save_basis,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "compression_stats",
     "dict_to_basis",
     "dict_to_compressed",
+    "format_float_julia_like",
     "load_basis",
     "load_compressed",
     "recover",
