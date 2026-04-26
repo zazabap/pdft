@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 
 from pdft.bases.base import QFTBasis, bases_allclose
-from pdft.io_json import basis_hash, basis_to_dict, dict_to_basis, load_basis, save_basis
+from pdft.io.serialize import basis_hash, basis_to_dict, dict_to_basis, load_basis, save_basis
 
 
 def test_basis_hash_deterministic():
@@ -27,7 +27,7 @@ def test_basis_hash_is_64_hex_chars():
 
 def test_basis_hash_format_matches_spec():
     """Canonical string is 'QFTBasis:m=M:n=N:<re>,<im>;...' and sha256 of it matches."""
-    from pdft.io_json import _format_float_julia_like as f
+    from pdft.io.serialize import _format_float_julia_like as f
 
     b = QFTBasis(m=1, n=1)
     h = 1.0 / float(jnp.sqrt(2.0))

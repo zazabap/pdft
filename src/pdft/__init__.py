@@ -50,7 +50,7 @@ from .bases.base import (  # noqa: E402
 from .bases.block.block import BlockedBasis  # noqa: E402
 from .bases.block.real_rich import RealRichBasis  # noqa: E402
 from .bases.block.rich import RichBasis, fit_to_dct  # noqa: E402
-from .compression import (  # noqa: E402
+from .io.compression import (  # noqa: E402
     CompressedImage,
     compress,
     compress_with_k,
@@ -78,7 +78,7 @@ from .manifolds import (  # noqa: E402
     classify_manifold,
     group_by_manifold,
 )
-from .io_json import (  # noqa: E402
+from .io.serialize import (  # noqa: E402
     basis_hash,
     basis_to_dict,
     dict_to_basis,

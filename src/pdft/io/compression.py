@@ -16,7 +16,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 
-from .io_json import basis_hash
+from .serialize import basis_hash
 
 _VERSION = "1.0"
 

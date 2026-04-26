@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from pdft.bases.base import QFTBasis
-from pdft.compression import (
+from pdft.io.compression import (
     compress,
     compress_with_k,
     compression_stats,

@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from pdft.bases.base import QFTBasis, bases_allclose
-from pdft.io_json import basis_hash, basis_to_dict, load_basis
+from pdft.io.serialize import basis_hash, basis_to_dict, load_basis
 from pdft.bases.circuit.qft import ft_mat, qft_code
 
 GOLDENS = Path(__file__).parent.parent / "reference" / "goldens"
@@ -43,7 +43,7 @@ def test_roundtrip_python_to_python_preserves_tensors():
     # Sanity: even just the Python side must round-trip losslessly.
     b = QFTBasis(m=2, n=2)
     d = basis_to_dict(b)
-    from pdft.io_json import dict_to_basis
+    from pdft.io.serialize import dict_to_basis
 
     reloaded = dict_to_basis(d)
     assert bases_allclose(b, reloaded, atol=1e-14)

@@ -142,7 +142,7 @@ def evaluate_basis_per_image(
     Moves each basis to host via jax.tree_util.tree_map(jax.device_get, ...).
     This sidesteps the GPU scalar-indexing path that compress/recover hit when
     tensors are still CuArrays (same intent as evaluation.jl:55-57). We avoid
-    pdft.io_json save_basis/load_basis here because that path is hardcoded to
+    pdft.io.serialize save_basis/load_basis here because that path is hardcoded to
     QFTBasis (Phase 2 of the upstream port); the pytree map preserves the
     actual basis class for QFT/EntangledQFT/TEBD/MERA alike.
 

@@ -30,7 +30,7 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
-from .bases.base import QFTBasis
+from ..bases.base import QFTBasis
 
 _VERSION = "1.0"
 
@@ -152,7 +152,7 @@ def dict_to_basis(d: dict) -> QFTBasis:
     m, n = int(d["m"]), int(d["n"])
 
     # Rebuild the circuit to get template tensor shapes.
-    from .bases.circuit.qft import qft_code
+    from ..bases.circuit.qft import qft_code
 
     _code, template_tensors = qft_code(m, n)
 
