@@ -47,6 +47,7 @@ from .basis import (  # noqa: E402
     TEBDBasis,
     bases_allclose,
 )
+from .block_basis import BlockedBasis  # noqa: E402
 from .compression import (  # noqa: E402
     CompressedImage,
     compress,
@@ -91,6 +92,7 @@ __all__ = [
     "AbstractLoss",
     "AbstractRiemannianManifold",
     "AbstractSparseBasis",
+    "BlockedBasis",
     "CompressedImage",
     "EntangledQFTBasis",
     "L1Norm",
