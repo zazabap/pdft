@@ -87,7 +87,7 @@ def topk_truncate(x: Array, k: int) -> Array:
     strict_mask = flat > threshold
     n_strict = jnp.sum(strict_mask.astype(jnp.int32))
     needed_from_ties = jnp.int32(k2) - n_strict
-    tie_mask = (flat == threshold)
+    tie_mask = flat == threshold
     tie_cumsum = jnp.cumsum(tie_mask.astype(jnp.int32))
     keep_tie = tie_mask & (tie_cumsum <= needed_from_ties)
     final_flat_mask = strict_mask | keep_tie

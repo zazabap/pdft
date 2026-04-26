@@ -23,7 +23,7 @@ import numpy as np
 # It MUST come before any `import jax` / `import jax.numpy` so that
 # x64 is set before JAX caches its dtype defaults.
 import pdft
-from pdft.io_json import _format_float_julia_like
+from pdft.io.serialize import _format_float_julia_like
 
 import jax  # noqa: E402
 

@@ -52,8 +52,8 @@ def _recover_basis(basis, image: np.ndarray, keep_ratio: float) -> np.ndarray:
     import pdft
 
     discard_ratio = 1.0 - keep_ratio
-    compressed = pdft.compress(basis, np.asarray(image, dtype=np.float64), ratio=discard_ratio)
-    recovered = pdft.recover(basis, compressed)
+    compressed = pdft.io.compress(basis, np.asarray(image, dtype=np.float64), ratio=discard_ratio)
+    recovered = pdft.io.recover(basis, compressed)
     return np.clip(np.real(recovered), 0.0, 1.0)
 
 

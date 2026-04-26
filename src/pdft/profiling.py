@@ -46,7 +46,8 @@ import numpy as np
 
 from .loss import AbstractLoss
 from .manifolds import group_by_manifold
-from .training import _build_jit_adam_step, _cosine_with_warmup
+from .training.adam_step import _build_jit_adam_step
+from .training.schedules import cosine_with_warmup as _cosine_with_warmup
 
 
 @dataclass

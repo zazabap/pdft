@@ -118,10 +118,10 @@ def evaluate_basis_shared(
         per_image: list[dict[str, float]] = []
         for img in test_images:
             try:
-                compressed = pdft.compress(
+                compressed = pdft.io.compress(
                     cpu_basis, np.asarray(img, dtype=np.float64), ratio=discard_ratio
                 )
-                recovered = pdft.recover(cpu_basis, compressed)
+                recovered = pdft.io.recover(cpu_basis, compressed)
                 per_image.append(compute_metrics(img, recovered))
             except Exception as e:  # noqa: BLE001
                 logger.warning("compress/recover failed on (kr=%s): %s", kr, e)
@@ -142,7 +142,7 @@ def evaluate_basis_per_image(
     Moves each basis to host via jax.tree_util.tree_map(jax.device_get, ...).
     This sidesteps the GPU scalar-indexing path that compress/recover hit when
     tensors are still CuArrays (same intent as evaluation.jl:55-57). We avoid
-    pdft.io_json save_basis/load_basis here because that path is hardcoded to
+    pdft.io.serialize save_basis/load_basis here because that path is hardcoded to
     QFTBasis (Phase 2 of the upstream port); the pytree map preserves the
     actual basis class for QFT/EntangledQFT/TEBD/MERA alike.
 
@@ -167,10 +167,10 @@ def evaluate_basis_per_image(
         per_image: list[dict[str, float]] = []
         for img, basis in zip(test_images, cpu_bases):
             try:
-                compressed = pdft.compress(
+                compressed = pdft.io.compress(
                     basis, np.asarray(img, dtype=np.float64), ratio=discard_ratio
                 )
-                recovered = pdft.recover(basis, compressed)
+                recovered = pdft.io.recover(basis, compressed)
                 per_image.append(compute_metrics(img, recovered))
             except Exception as e:  # noqa: BLE001
                 logger.warning("compress/recover failed on (kr=%s): %s", kr, e)
