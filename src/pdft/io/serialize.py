@@ -215,6 +215,7 @@ def load_basis(path: str | Path) -> QFTBasis:
     return dict_to_basis(d)
 
 
-# Deprecated private alias kept for one release so external code (notably
-# benchmarks/) does not break atomically. Remove in v0.2.0.
+# Deprecated private alias for the now-public format_float_julia_like.
+# Kept for one release so external code (notably the pdft-benchmarks repo)
+# does not break atomically. Remove in v0.3.0.
 _format_float_julia_like = format_float_julia_like

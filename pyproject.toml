@@ -37,12 +37,6 @@ dev = [
 ]
 plot = ["matplotlib>=3.8"]
 gpu = ["jax[cuda12]>=0.10.0"]
-bench = [
-    "pillow>=10",
-    "scikit-image>=0.22",
-    "scipy>=1.11",
-    "matplotlib>=3.8",
-]
 
 [project.urls]
 Homepage = "https://github.com/zazabap/pdft"
@@ -64,7 +58,6 @@ filterwarnings = [
     "ignore::DeprecationWarning:jax.*",
 ]
 markers = [
-    "integration: GPU/dataset-dependent benchmark tests (deselect with -m 'not integration')",
     "parity: byte-compare against Julia-generated goldens (slower; deselect with -m 'not parity')",
     "slow: long-running tests (>30s); deselect with -m 'not slow' for fast iteration",
 ]
