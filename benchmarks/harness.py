@@ -26,7 +26,6 @@ import pdft
 from pdft.io_json import _format_float_julia_like
 
 import jax  # noqa: E402
-import jax.numpy as jnp  # noqa: E402
 
 from config import Preset  # noqa: E402
 
@@ -74,9 +73,15 @@ def train_one_basis_batched(
     The first batch's wall-clock is reported as `warmup_s` (it dominates
     JIT-compile time); the total wall-clock is in `time`.
     """
-    target_dataset = [jnp.asarray(np.asarray(img), dtype=jnp.complex128) for img in train_imgs]
-
     with jax.default_device(device):
+        # Materialize images on the requested device. Doing this BEFORE
+        # entering `with jax.default_device(device)` would put arrays on
+        # whichever device JAX picked at process start (typically gpu 0),
+        # making every batch a cross-device copy on `--gpu 1` runs.
+        target_dataset = [
+            jax.device_put(np.asarray(img).astype(np.complex128), device) for img in train_imgs
+        ]
+
         basis = basis_factory()
 
         t_warm = time.perf_counter()
@@ -154,9 +159,9 @@ def train_one_basis(
     `train_one_basis_batched`.
     """
     optimizer = _make_optimizer(preset.optimizer, preset.lr_peak)
-    target_jnp = jnp.asarray(target, dtype=jnp.complex128)
 
     with jax.default_device(device):
+        target_jnp = jax.device_put(np.asarray(target).astype(np.complex128), device)
         basis = basis_factory()
         t0 = time.perf_counter()
         # Use n_train * epochs as effective step count for back-compat. The

@@ -88,29 +88,39 @@ _BASE_PRESETS: dict[str, Preset] = {
 PRESETS_QUICKDRAW: dict[str, Preset] = dict(_BASE_PRESETS)
 PRESETS_DIV2K: dict[str, Preset] = dict(_BASE_PRESETS)
 
-# DIV2K-10q (m=n=10, 1024×1024) needs smaller batch_size — at batch=16 the
-# einsum intermediate tensors (20-D shape (2,)*20 × batch) overflow 24 GB GPU.
-# We override batch_size=1 across all presets; total optimizer-step count
-# becomes epochs × n_train (one image per step) which still converges fast.
+
+# Helper to clone a Preset with an overridden batch_size — used by the
+# DIV2K-10q table below, where the base presets' bs values (16/50) overflow
+# 24 GB at m=n=10 due to the (2,)*20 × batch einsum intermediates.
 def _override_bs(p: Preset, bs: int) -> Preset:
     return Preset(
-        name=p.name, epochs=p.epochs, n_train=p.n_train, n_test=p.n_test,
-        optimizer=p.optimizer, batch_size=bs,
-        warmup_frac=p.warmup_frac, lr_peak=p.lr_peak, lr_final=p.lr_final,
+        name=p.name,
+        epochs=p.epochs,
+        n_train=p.n_train,
+        n_test=p.n_test,
+        optimizer=p.optimizer,
+        batch_size=bs,
+        warmup_frac=p.warmup_frac,
+        lr_peak=p.lr_peak,
+        lr_final=p.lr_final,
         max_grad_norm=p.max_grad_norm,
         validation_split=p.validation_split,
         early_stopping_patience=p.early_stopping_patience,
-        seed=p.seed, keep_ratios=p.keep_ratios,
+        seed=p.seed,
+        keep_ratios=p.keep_ratios,
     )
 
 
-# EntangledQFT at m=n=10 has 40 gates (QFT 30 + 10 entangle), 33% larger einsum
-# than plain QFT, and OOMs at bs=4 on a 24 GB RTX 3090. bs=2 fits all four
-# basis classes (TEBD/MERA included) and produces 80 optimizer steps per
-# basis (epochs=10 × ceil(16/2) = 80) — strictly more training than the
-# bs=4 path's 40 steps, so no loss in quality.
+# DIV2K-10q (m=n=10) batch_size — empirically measured on RTX 3090 (24 GB):
+#   bs=2  → peak ~3.5 GB,  baseline throughput
+#   bs=4  → peak ~7.0 GB,  1.7× throughput per image
+#   bs=8  → peak ~14 GB,   2.9× throughput, but only 8-10 GB headroom once
+#                          the train+val sets (~10 GB) are also resident.
+# bs=4 is the safe default. Use --batch-size 8 on run_quickdraw.py to push
+# further when running a single basis at a time. MERA at m=n=10 is silently
+# skipped (m+n=20 is not a power of 2).
 PRESETS_DIV2K_10Q: dict[str, Preset] = {
-    name: _override_bs(p, bs=2) for name, p in _BASE_PRESETS.items()
+    name: _override_bs(p, bs=4) for name, p in _BASE_PRESETS.items()
 }
 
 

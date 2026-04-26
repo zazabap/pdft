@@ -100,6 +100,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Default: all four.",
     )
     p.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="override preset batch_size (e.g. 8 on 10q for a single basis run).",
+    )
+    p.add_argument(
         "--allow-cpu",
         action="store_true",
         help="permit CPU run (smoke tests only; not Julia-comparable)",
@@ -220,6 +226,10 @@ def run_dataset(
         Parsed CLI namespace (from _parse_args).
     """
     preset = get_preset(dataset_name, args.preset)
+    if args.batch_size is not None:
+        from dataclasses import replace
+
+        preset = replace(preset, batch_size=args.batch_size)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     if args.out is not None:
@@ -290,8 +300,7 @@ def run_dataset(
         unknown = [b for b in wanted if b not in seeded_factories]
         if unknown:
             raise SystemExit(
-                f"unknown basis name(s) in --bases: {unknown}; "
-                f"available: {list(seeded_factories)}"
+                f"unknown basis name(s) in --bases: {unknown}; available: {list(seeded_factories)}"
             )
         seeded_factories = {k: seeded_factories[k] for k in wanted}
         logger.info("--bases filter active: training only %s", list(seeded_factories))
