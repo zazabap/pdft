@@ -138,15 +138,19 @@ def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
 
 
 def classify_manifold(t: Array) -> AbstractRiemannianManifold:
-    """Return the manifold appropriate to ``t`` based on its shape and value.
+    """Return the manifold appropriate to ``t`` based on its shape and
+    unitarity.
 
-    - rank-2 unitary (d × d) → ``UnitaryManifold(d=d)`` (so U(2) and U(4)
-      tensors bucket into separate groups for batched stacking)
+    - rank-2 unitary (d × d) → ``UnitaryManifold(d=d)``
     - (2, 2, 2, 2) tensor whose 4×4 reshape is unitary → ``Unitary2qManifold``
-      (a thin wrapper that reshapes for project/retract/transport)
     - otherwise → ``PhaseManifold``
 
-    Mirror of upstream src/manifolds.jl:225-231 with size-aware bucketing.
+    Note: ``OrthogonalManifold`` and ``Orthogonal2qManifold`` are defined
+    in this module for clients that want explicit O(d) constraints, but
+    they are NOT auto-selected — selection is the basis class's
+    responsibility. Real-valued tensors going through UnitaryManifold
+    stay real automatically (Cayley retraction with real W preserves
+    real-ness).
     """
     if is_unitary_general(t):
         return UnitaryManifold(d=t.shape[0])
@@ -220,6 +224,39 @@ class UnitaryManifold:
 
 
 # ---------------------------------------------------------------------------
+# Orthogonal manifolds — real subgroups of U(d), used for Approach A
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OrthogonalManifold:
+    """O(d) for real-valued d×d unitaries (subset of UnitaryManifold).
+
+    Implementation: project gradients to the REAL skew-symmetric tangent
+    subspace; Cayley retraction with a real W keeps the tensor real
+    throughout training. Hadamards initialised at canonical form
+    [[1, 1], [1, -1]] / sqrt(2) live in O(2) (det = -1) — the connected
+    component is preserved by retraction, so we stay on the same coset.
+    """
+
+    d: int = 2
+
+    def project(self, U: Array, G: Array) -> Array:
+        # Project to skew-symmetric (real) tangent direction.
+        UhG = batched_matmul(batched_adjoint(U), G)
+        S = (UhG - batched_adjoint(UhG)) / 2
+        S_real = jnp.real(S).astype(U.dtype)
+        return batched_matmul(U, S_real)
+
+    def retract(self, U: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
+        # Reuse Unitary's Cayley retraction; output stays real if inputs are real.
+        return UnitaryManifold(d=self.d).retract(U, Xi, alpha, I_batch=I_batch)
+
+    def transport(self, U_old: Array, U_new: Array, v: Array) -> Array:
+        return self.project(U_new, v)
+
+
+# ---------------------------------------------------------------------------
 # Unitary2qManifold — U(4) for 2-qubit gates stored as (2, 2, 2, 2)
 # ---------------------------------------------------------------------------
 
@@ -252,6 +289,38 @@ class Unitary2qManifold:
         # shape; UnitaryManifold(d=4) builds its own (4,4,n) identity, so
         # we just discard the passed-in I_batch here.
         out_mat = UnitaryManifold(d=4).retract(
+            self._to_mat(T), self._to_mat(Xi), alpha, I_batch=None
+        )
+        return self._from_mat(out_mat)
+
+    def transport(self, T_old: Array, T_new: Array, v: Array) -> Array:
+        return self.project(T_new, v)
+
+
+@dataclass(frozen=True)
+class Orthogonal2qManifold:
+    """O(4) for real-valued 2-qubit gates stored as (2, 2, 2, 2).
+
+    Same reshape-and-delegate strategy as Unitary2qManifold, but projects
+    gradients to the REAL skew-symmetric tangent subspace so the tensor
+    stays in O(4) under Cayley retraction.
+    """
+
+    def _to_mat(self, T: Array) -> Array:
+        n = T.shape[-1]
+        return T.reshape(4, 4, n)
+
+    def _from_mat(self, M: Array) -> Array:
+        n = M.shape[-1]
+        return M.reshape(2, 2, 2, 2, n)
+
+    def project(self, T: Array, G: Array) -> Array:
+        return self._from_mat(
+            OrthogonalManifold(d=4).project(self._to_mat(T), self._to_mat(G))
+        )
+
+    def retract(self, T: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
+        out_mat = OrthogonalManifold(d=4).retract(
             self._to_mat(T), self._to_mat(Xi), alpha, I_batch=None
         )
         return self._from_mat(out_mat)

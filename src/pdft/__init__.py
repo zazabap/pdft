@@ -48,6 +48,8 @@ from .basis import (  # noqa: E402
     bases_allclose,
 )
 from .block_basis import BlockedBasis  # noqa: E402
+from .dct_basis import DCTBasis  # noqa: E402
+from .real_rich_basis import RealRichBasis  # noqa: E402
 from .rich_basis import RichBasis, fit_to_dct  # noqa: E402
 from .compression import (  # noqa: E402
     CompressedImage,
@@ -95,6 +97,7 @@ __all__ = [
     "AbstractSparseBasis",
     "BlockedBasis",
     "CompressedImage",
+    "DCTBasis",
     "EntangledQFTBasis",
     "L1Norm",
     "MERABasis",
@@ -102,6 +105,7 @@ __all__ = [
     "PhaseManifold",
     "ProfileReport",
     "QFTBasis",
+    "RealRichBasis",
     "RichBasis",
     "RiemannianAdam",
     "RiemannianGD",

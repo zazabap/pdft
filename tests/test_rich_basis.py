@@ -30,7 +30,9 @@ def test_rich_basis_image_size_and_param_count():
     b = pdft.RichBasis(m=3, n=3)
     assert b.image_size == (8, 8)
     # 3 H per dim (2x2 each = 4 elements) + 3 U(4) per dim (16 elements each)
-    # total: 2 * (3*4 + 3*16) = 120 elements
+    # total raw elements: 2 * (3*4 + 3*16) = 120
+    # FREE real params (manifold-aware): 2 * (3 * 3 + 3 * 15) = 108 (= 54 per dim)
+    # Below SU(8) dim of 63 — strict submanifold.
     assert b.num_parameters == 2 * (3 * 4 + 3 * 16)
 
 
