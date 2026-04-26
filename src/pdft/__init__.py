@@ -48,7 +48,7 @@ from .basis import (  # noqa: E402
     bases_allclose,
 )
 from .block_basis import BlockedBasis  # noqa: E402
-from .rich_basis import RichBasis  # noqa: E402
+from .rich_basis import RichBasis, fit_to_dct  # noqa: E402
 from .compression import (  # noqa: E402
     CompressedImage,
     compress,
@@ -121,6 +121,7 @@ __all__ = [
     "dict_to_basis",
     "dict_to_compressed",
     "entangled_qft_code",
+    "fit_to_dct",
     "ft_mat",
     "group_by_manifold",
     "ift_mat",
