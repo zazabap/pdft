@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 
 import jax
 
-from ._circuit import (
+from .circuit.builder import (
     HADAMARD,
     Gate,
     compile_circuit,
@@ -30,14 +30,14 @@ __all__ = [
 
 def get_tebd_gate_indices(tensors: list[Array], n_gates: int) -> list[int]:
     """Indices of TEBD gate tensors. Mirror of upstream src/tebd.jl:124-140."""
-    from ._circuit import select_last_n_cp_indices
+    from .circuit.builder import select_last_n_cp_indices
 
     return select_last_n_cp_indices(tensors, n_gates)
 
 
 def extract_tebd_phases(tensors: list[Array], gate_indices: list[int]) -> list[float]:
     """Mirror of upstream src/tebd.jl:154-160."""
-    from ._circuit import extract_phase_from_cp
+    from .circuit.builder import extract_phase_from_cp
 
     return [extract_phase_from_cp(tensors[idx]) for idx in gate_indices]
 

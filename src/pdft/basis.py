@@ -224,12 +224,12 @@ class EntangledQFTBasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from ._circuit import apply_circuit
+        from .circuit.builder import apply_circuit
 
         return apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from ._circuit import apply_circuit
+        from .circuit.builder import apply_circuit
 
         return apply_circuit(
             [jnp.conj(t) for t in self.tensors],
@@ -326,12 +326,12 @@ class TEBDBasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from ._circuit import apply_circuit
+        from .circuit.builder import apply_circuit
 
         return apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from ._circuit import apply_circuit
+        from .circuit.builder import apply_circuit
 
         return apply_circuit(
             [jnp.conj(t) for t in self.tensors],
@@ -431,12 +431,12 @@ class MERABasis:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        from ._circuit import apply_circuit
+        from .circuit.builder import apply_circuit
 
         return apply_circuit(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
-        from ._circuit import apply_circuit
+        from .circuit.builder import apply_circuit
 
         return apply_circuit(
             [jnp.conj(t) for t in self.tensors],

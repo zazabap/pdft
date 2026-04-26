@@ -175,7 +175,7 @@ def compile_circuit(
     inverse: bool,
 ) -> tuple[Callable[..., Array], list[Array]]:
     """High-level entry: build subscripts and jit-compile the einsum."""
-    from .einsum_cache import optimize_code_cached
+    from .cache import optimize_code_cached
 
     subscripts, tensors, shapes = build_circuit_einsum(gates, m, n, inverse=inverse)
     code = optimize_code_cached(subscripts, *shapes)

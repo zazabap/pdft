@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 
 import jax
 
-from ._circuit import (
+from .circuit.builder import (
     HADAMARD,
     Gate,
     compile_circuit,
@@ -32,14 +32,14 @@ __all__ = [
 
 def get_mera_gate_indices(tensors: list[Array], n_gates: int) -> list[int]:
     """Indices of MERA gate tensors. Mirror of upstream src/mera.jl:190-206."""
-    from ._circuit import select_last_n_cp_indices
+    from .circuit.builder import select_last_n_cp_indices
 
     return select_last_n_cp_indices(tensors, n_gates)
 
 
 def extract_mera_phases(tensors: list[Array], gate_indices: list[int]) -> list[float]:
     """Mirror of upstream src/mera.jl:220-226."""
-    from ._circuit import extract_phase_from_cp
+    from .circuit.builder import extract_phase_from_cp
 
     return [extract_phase_from_cp(tensors[idx]) for idx in gate_indices]
 

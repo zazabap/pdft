@@ -32,7 +32,7 @@ import jax
 import jax.numpy as jnp
 from jax import tree_util
 
-from ._circuit import HADAMARD, Gate, compile_circuit, u4_from_phase
+from .circuit.builder import HADAMARD, Gate, compile_circuit, u4_from_phase
 
 Array = jax.Array
 

@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 
 import jax
 
-from ._circuit import (
+from .circuit.builder import (
     Gate,
     compile_circuit,
     controlled_phase_diag,
@@ -37,7 +37,7 @@ def get_entangle_tensor_indices(tensors: list[Array], n_entangle: int) -> list[i
     Mirror of upstream src/entangled_qft.jl:281-313. Entangle gates are the
     last `n_entangle` compact-CP tensors after the Hadamard-first sort.
     """
-    from ._circuit import select_last_n_cp_indices
+    from .circuit.builder import select_last_n_cp_indices
 
     return select_last_n_cp_indices(tensors, n_entangle)
 
@@ -47,7 +47,7 @@ def extract_entangle_phases(tensors: list[Array], entangle_indices: list[int]) -
 
     Mirror of upstream src/entangled_qft.jl:316-326.
     """
-    from ._circuit import extract_phase_from_cp
+    from .circuit.builder import extract_phase_from_cp
 
     return [extract_phase_from_cp(tensors[idx]) for idx in entangle_indices]
 

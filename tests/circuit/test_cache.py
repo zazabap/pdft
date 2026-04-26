@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 
-from pdft.einsum_cache import optimize_code_cached
+from pdft.circuit.cache import optimize_code_cached
 
 
 def test_optimize_code_cached_returns_callable():

@@ -34,7 +34,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import tree_util
 
-from ._circuit import HADAMARD, Gate, compile_circuit
+from .circuit.builder import HADAMARD, Gate, compile_circuit
 
 Array = jax.Array
 

@@ -22,7 +22,7 @@ def _require_matplotlib():
 
 def _topology_from_basis(basis):
     """Return (n_qubits, gates) where gates are (kind, qubits, phase)."""
-    from ._circuit import HADAMARD
+    from .circuit.builder import HADAMARD
     import numpy as np
 
     m, n = basis.m, basis.n
