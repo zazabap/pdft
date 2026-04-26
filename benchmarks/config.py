@@ -9,6 +9,7 @@ optimizer steps with a cosine-with-warmup learning-rate schedule.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class Preset:
     early_stopping_patience: int
     seed: int = 42
     keep_ratios: tuple[float, ...] = field(default_factory=lambda: (0.05, 0.10, 0.15, 0.20))
+    val_every_k_epochs: int = 1
 
 
 # Mirrors ParametricDFT-Benchmarks.jl/config.jl::TRAINING_PRESETS.
@@ -88,29 +90,43 @@ _BASE_PRESETS: dict[str, Preset] = {
 PRESETS_QUICKDRAW: dict[str, Preset] = dict(_BASE_PRESETS)
 PRESETS_DIV2K: dict[str, Preset] = dict(_BASE_PRESETS)
 
-# DIV2K-10q (m=n=10, 1024×1024) needs smaller batch_size — at batch=16 the
-# einsum intermediate tensors (20-D shape (2,)*20 × batch) overflow 24 GB GPU.
-# We override batch_size=1 across all presets; total optimizer-step count
-# becomes epochs × n_train (one image per step) which still converges fast.
-def _override_bs(p: Preset, bs: int) -> Preset:
-    return Preset(
-        name=p.name, epochs=p.epochs, n_train=p.n_train, n_test=p.n_test,
-        optimizer=p.optimizer, batch_size=bs,
-        warmup_frac=p.warmup_frac, lr_peak=p.lr_peak, lr_final=p.lr_final,
-        max_grad_norm=p.max_grad_norm,
-        validation_split=p.validation_split,
-        early_stopping_patience=p.early_stopping_patience,
-        seed=p.seed, keep_ratios=p.keep_ratios,
-    )
+
+# Helper to clone a Preset with overridden batch_size and (optionally)
+# val_every_k_epochs — used by the DIV2K-10q table below, where the base
+# presets' bs values (16/50) overflow 24 GB at m=n=10 due to the (2,)*20
+# × batch einsum intermediates, and val passes are expensive enough that
+# evaluating every-other-epoch is a meaningful speedup.
+def _override_bs(p: Preset, bs: int, val_every_k_epochs: int | None = None) -> Preset:
+    from dataclasses import replace
+
+    fields: dict[str, Any] = {"batch_size": bs}
+    if val_every_k_epochs is not None:
+        fields["val_every_k_epochs"] = val_every_k_epochs
+    return replace(p, **fields)
 
 
-# EntangledQFT at m=n=10 has 40 gates (QFT 30 + 10 entangle), 33% larger einsum
-# than plain QFT, and OOMs at bs=4 on a 24 GB RTX 3090. bs=2 fits all four
-# basis classes (TEBD/MERA included) and produces 80 optimizer steps per
-# basis (epochs=10 × ceil(16/2) = 80) — strictly more training than the
-# bs=4 path's 40 steps, so no loss in quality.
+# DIV2K-10q (m=n=10) batch_size — empirically measured on RTX 3090 (24 GB),
+# steady-state per-image throughput from pdft.profile_training:
+#   bs=1 → 1.6 GB peak, 4.95 imgs/s
+#   bs=2 → 3.6 GB peak, 4.82 imgs/s
+#   bs=4 → 7.2 GB peak, 4.99 imgs/s   ← default
+#   bs=8 → 15.0 GB peak, 5.07 imgs/s
+# Per-image throughput is FLAT across batch size: the QFT/TEBD einsum at
+# m+n=20 is FP64-compute-saturated even at bs=1 on the 3090's limited
+# FP64 unit (1:64 vs FP32 ratio = ~92 GFLOPS effective for complex128).
+# Bigger batch only adds memory pressure for no compute gain. bs=4 is
+# the right balance: small enough to leave headroom for train+val resident
+# on GPU, large enough that Adam's gradient estimates are smooth.
+#
+# val_every_k_epochs=2 halves per-epoch validation cost (each val pass at
+# m=n=10 with 75 images is ~60s). Early-stopping patience counts in
+# evaluations, so 5 evals × 2 epochs = 10 epochs without improvement.
+# MERA at m=n=10 is silently skipped (m+n=20 is not a power of 2).
+#
+# To use both GPUs concurrently, see benchmarks/run_div2k_10q_2gpu.sh
+# which fans out bases across cards.
 PRESETS_DIV2K_10Q: dict[str, Preset] = {
-    name: _override_bs(p, bs=2) for name, p in _BASE_PRESETS.items()
+    name: _override_bs(p, bs=4, val_every_k_epochs=2) for name, p in _BASE_PRESETS.items()
 }
 
 
