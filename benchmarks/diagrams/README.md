@@ -38,5 +38,24 @@ compiles are offline.
 |---|---|
 | QFTBasis | `src/pdft/qft.py::_qft_gates_1d` |
 | RichBasis | `src/pdft/rich_basis.py::_rich_qft_gates_1d` |
-| RichBasis(dense=True) | `src/pdft/rich_basis.py::_dense_qft_gates_1d` |
+| RealRichBasis (Approach A) | `src/pdft/real_rich_basis.py::_real_rich_qft_gates_1d` |
+| DCTBasis (Approach B) | `src/pdft/dct_basis.py` |
 | BlockedBasis wrapper | `src/pdft/block_basis.py` |
+
+## `parameter_efficiency.{typ,pdf}` + `parameter_efficiency_table.tex`
+
+Pareto frontier figure (free-real-parameter count vs PSNR @ kr=0.20) and a
+paper-ready LaTeX `tabular` block summarising the same data. The two
+defensible parameter-efficiency claims are:
+
+1. **Strict Pareto win over BlockFFT $8{\times}8$**: `QFTBasis` (24 free
+   params) beats `BlockFFT` (128 free params) by $+1.47$ dB.
+2. **DCT-comparable PSNR with 25% fewer params**: `RealRichBasis` (42 free
+   params, real-orthogonal) reaches within 0.31 dB of `BlockDCT 8x8` (56
+   free params).
+
+Both use the manifold-aware free-parameter count: $\dim \mathrm{SU}(2) = 3$,
+$\dim \mathrm{SU}(4) = 15$, $\dim \mathrm{O}(8) = 28$.
+
+The `.tex` file is meant to be `\input`'d directly into the paper's main
+table list; it uses the standard `booktabs` + `xcolor` packages.
