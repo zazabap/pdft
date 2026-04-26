@@ -105,21 +105,28 @@ def _override_bs(p: Preset, bs: int, val_every_k_epochs: int | None = None) -> P
     return replace(p, **fields)
 
 
-# DIV2K-10q (m=n=10) batch_size — empirically measured on RTX 3090 (24 GB):
-#   bs=2  → peak ~3.5 GB,  baseline throughput
-#   bs=4  → peak ~7.0 GB,  1.7× throughput per image
-#   bs=8  → peak ~14 GB,   2.9× throughput per image (the new default)
-# At bs=8 the per-step einsum eats ~14 GB; train+val sets resident on GPU
-# add ~10 GB more. Total expected peak ~22-24 GB on the heaviest preset
-# (`generalized`, n_train=500, val_split=0.15) — within margin but tight.
-# Drop to --batch-size 4 if you see OOM on `generalized`.
+# DIV2K-10q (m=n=10) batch_size — empirically measured on RTX 3090 (24 GB),
+# steady-state per-image throughput from pdft.profile_training:
+#   bs=1 → 1.6 GB peak, 4.95 imgs/s
+#   bs=2 → 3.6 GB peak, 4.82 imgs/s
+#   bs=4 → 7.2 GB peak, 4.99 imgs/s   ← default
+#   bs=8 → 15.0 GB peak, 5.07 imgs/s
+# Per-image throughput is FLAT across batch size: the QFT/TEBD einsum at
+# m+n=20 is FP64-compute-saturated even at bs=1 on the 3090's limited
+# FP64 unit (1:64 vs FP32 ratio = ~92 GFLOPS effective for complex128).
+# Bigger batch only adds memory pressure for no compute gain. bs=4 is
+# the right balance: small enough to leave headroom for train+val resident
+# on GPU, large enough that Adam's gradient estimates are smooth.
 #
-# val_every_k_epochs=2 halves the validation cost per epoch (each val pass
-# at m=n=10 with 75 images is ~60s). Early-stopping patience now counts
-# in evaluations, so 5 evals × 2 epochs = 10 epochs without improvement.
+# val_every_k_epochs=2 halves per-epoch validation cost (each val pass at
+# m=n=10 with 75 images is ~60s). Early-stopping patience counts in
+# evaluations, so 5 evals × 2 epochs = 10 epochs without improvement.
 # MERA at m=n=10 is silently skipped (m+n=20 is not a power of 2).
+#
+# To use both GPUs concurrently, see benchmarks/run_div2k_10q_2gpu.sh
+# which fans out bases across cards.
 PRESETS_DIV2K_10Q: dict[str, Preset] = {
-    name: _override_bs(p, bs=8, val_every_k_epochs=2) for name, p in _BASE_PRESETS.items()
+    name: _override_bs(p, bs=4, val_every_k_epochs=2) for name, p in _BASE_PRESETS.items()
 }
 
 
