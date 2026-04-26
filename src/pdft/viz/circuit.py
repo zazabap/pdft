@@ -16,13 +16,13 @@ def _require_matplotlib():
         import matplotlib  # noqa: F401
     except ImportError as e:  # pragma: no cover
         raise ImportError(
-            "matplotlib is required for pdft.circuit_viz. Install with: pip install pdft[plot]"
+            "matplotlib is required for pdft.viz.circuit. Install with: pip install pdft[plot]"
         ) from e
 
 
 def _topology_from_basis(basis):
     """Return (n_qubits, gates) where gates are (kind, qubits, phase)."""
-    from .circuit.builder import HADAMARD
+    from ..circuit.builder import HADAMARD
     import numpy as np
 
     m, n = basis.m, basis.n

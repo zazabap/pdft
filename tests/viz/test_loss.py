@@ -36,7 +36,7 @@ def test_plot_training_comparison_multiple_histories(tmp_path):
 
 
 def test_plot_circuit_renders(tmp_path):
-    from pdft.circuit_viz import plot_circuit
+    from pdft.viz.circuit import plot_circuit
 
     basis = QFTBasis(m=2, n=2)
     p = tmp_path / "circuit.png"
