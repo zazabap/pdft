@@ -1,0 +1,63 @@
+name: publish
+
+# Builds and publishes pdft to PyPI on every v*.*.* tag push.
+#
+# Uses PyPI Trusted Publishers (OIDC) — NO API token stored in GitHub
+# secrets. To activate: on https://pypi.org/manage/project/pdft/settings/publishing/
+# add a Trusted Publisher with:
+#   PyPI Project Name: pdft
+#   Owner:             zazabap
+#   Repository name:   pdft
+#   Workflow name:     publish.yml
+#   Environment name:  pypi
+#
+# After the first successful publish, future releases are:
+#   git tag v0.2.1 && git push --tags
+#
+# Docs: https://docs.pypi.org/trusted-publishers/
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build backend
+        run: python -m pip install --upgrade pip build
+      - name: Verify pyproject version matches the git tag
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          file_ver=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$tag" != "$file_ver" ]; then
+            echo "::error::Tag v$tag does not match pyproject.toml version $file_ver"
+            exit 1
+          fi
+      - name: Build
+        run: python -m build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # mandatory for Trusted Publisher OIDC
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
