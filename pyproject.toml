@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pdft"
-version = "0.0.0"
+version = "0.2.0"
 description = "Python port of ParametricDFT.jl: learning parametric quantum Fourier transforms via manifold optimization."
 readme = "README.md"
 requires-python = ">=3.11"
