@@ -167,6 +167,83 @@ def build_circuit_einsum(
     return subscripts, tensor_list, tensor_shapes
 
 
+def _axis_of_qubit(q: int, m: int, n: int) -> int:
+    """Map a 1-indexed qubit number to its position in the (2,)*N reshape of pic.
+
+    Yao's little-endian convention (matching `build_circuit_einsum`'s
+    `pic_labels` ordering): qubit `m` maps to axis 0, qubit `m-1` to axis 1,
+    …, qubit 1 to axis m-1, qubit `m+n` to axis m, …, qubit `m+1` to axis
+    m+n-1.
+    """
+    if 1 <= q <= m:
+        return m - q
+    if m + 1 <= q <= m + n:
+        return m + (m + n - q)
+    raise ValueError(f"qubit index {q} out of range (1..{m + n})")
+
+
+def _stepped_apply(
+    program: list[tuple[str, tuple[int, ...]]],
+    tensor_index: list[int],
+    operands: tuple,
+    *,
+    m: int,
+    n: int,
+    inverse: bool,
+) -> Array:
+    """Apply gate program to pic via per-gate `jnp.tensordot` calls.
+
+    operands = (*tensors, pic) where pic has shape (2,) * (m+n) and tensors
+    is the operand list passed to the closure (sorted Hadamard-first by
+    `compile_circuit`, matching the convention of the legacy big-einsum
+    path so saved checkpoints load with the same axis order).
+
+    `tensor_index[i]` maps program step i (in temporal order) to its index
+    in the operand `tensors` tuple.
+    """
+    *tensors, pic = operands
+    for i, (kind, qubits) in enumerate(program):
+        T = tensors[tensor_index[i]]
+        if kind == "H":
+            (q,) = qubits
+            ax = _axis_of_qubit(q, m, n)
+            # H[out, in] · pic[..., ax=in, ...] -> pic[..., ax=out, ...]
+            pic = jnp.tensordot(T, pic, axes=[[1], [ax]])
+            pic = jnp.moveaxis(pic, 0, ax)
+        elif kind == "CP":
+            q_ctrl, q_tgt = qubits
+            ax_c = _axis_of_qubit(q_ctrl, m, n)
+            ax_t = _axis_of_qubit(q_tgt, m, n)
+            # T[c, t] is the diagonal of CP. pic *= T broadcast onto (ax_c, ax_t).
+            broadcast_shape = [1] * pic.ndim
+            broadcast_shape[ax_c] = 2
+            broadcast_shape[ax_t] = 2
+            # T's axis 0 should land at ax_c, axis 1 at ax_t. If ax_c < ax_t,
+            # the natural reshape works; if ax_c > ax_t, we transpose first
+            # so the smaller dimension index sees T's first axis.
+            T_oriented = T if ax_c < ax_t else T.T
+            pic = pic * T_oriented.reshape(broadcast_shape)
+        elif kind == "U4":
+            q_ctrl, q_tgt = qubits
+            ax_c = _axis_of_qubit(q_ctrl, m, n)
+            ax_t = _axis_of_qubit(q_tgt, m, n)
+            # Forward: T[oc, ot, ic, it] · pic[..., ax_c=ic, ax_t=it, ...]
+            #          -> pic[..., ax_c=oc, ax_t=ot, ...]
+            # Inverse (transpose, not adjoint): T[oc, ot, ic, it]
+            #          · pic[..., ax_c=oc, ax_t=ot, ...]
+            #          -> pic[..., ax_c=ic, ax_t=it, ...]
+            # The conjugate flip for the true unitary inverse is applied by
+            # the caller (loss._scalar_loss conjugates tensors before
+            # calling the inverse closure), matching the legacy
+            # build_circuit_einsum behaviour.
+            contract_axes = [[0, 1], [ax_c, ax_t]] if inverse else [[2, 3], [ax_c, ax_t]]
+            pic = jnp.tensordot(T, pic, axes=contract_axes)
+            pic = jnp.moveaxis(pic, [0, 1], [ax_c, ax_t])
+        else:
+            raise AssertionError(f"unknown gate kind: {kind}")
+    return pic
+
+
 def compile_circuit(
     gates: list[Gate],
     m: int,
@@ -174,12 +251,61 @@ def compile_circuit(
     *,
     inverse: bool,
 ) -> tuple[Callable[..., Array], list[Array]]:
-    """High-level entry: build subscripts and jit-compile the einsum."""
-    from .cache import optimize_code_cached
+    """Build a JIT-compiled stepped circuit closure.
 
-    subscripts, tensors, shapes = build_circuit_einsum(gates, m, n, inverse=inverse)
-    code = optimize_code_cached(subscripts, *shapes)
-    return code, tensors
+    Returns ``(code, tensors)`` where ``code(*tensors, pic_reshaped)``
+    applies the gates one at a time via :func:`jnp.tensordot`, recycling
+    contraction labels across steps so the 52-character a-zA-Z label pool
+    of the legacy single-einsum path is never reached. Each step consumes
+    at most ~22 wire labels regardless of circuit size.
+
+    The returned ``tensors`` list preserves the Hadamard-first sort applied
+    by the legacy builder, so saved trained checkpoints (which serialize
+    tensors in this order) continue to load consistently.
+    """
+    n_gates = len(gates)
+    program: list[tuple[str, tuple[int, ...]]] = [
+        (g["kind"], g["qubits"]) for g in gates
+    ]
+    tensor_list: list[Array] = [g["tensor"] for g in gates]
+
+    # Hadamard-first sort — preserves the legacy convention for the
+    # returned tensor list. `perm[i]` is the original (temporal) gate index
+    # of the i-th sorted slot, so `sorted_tensors[i] = original[perm[i]]`.
+    import numpy as _np
+
+    H_np = _np.asarray(HADAMARD)
+
+    def _is_hadamard(t):
+        a = _np.asarray(t)
+        return a.shape == (2, 2) and _np.allclose(a, H_np, atol=1e-12)
+
+    is_not_hadamard = [not _is_hadamard(t) for t in tensor_list]
+    perm = sorted(range(n_gates), key=lambda i: is_not_hadamard[i])
+    sorted_tensors = [tensor_list[i] for i in perm]
+
+    # Map temporal gate index → position in the sorted operand tuple.
+    # `temporal_to_sorted[j] = i` such that perm[i] = j.
+    temporal_to_sorted = [0] * n_gates
+    for sorted_pos, original_idx in enumerate(perm):
+        temporal_to_sorted[original_idx] = sorted_pos
+
+    if inverse:
+        # Apply gates in reverse temporal order. tensor_index aligns with
+        # the reversed program: program_step[i] needs the tensor for the
+        # ORIGINAL gate at index (n_gates-1-i).
+        program = list(reversed(program))
+        tensor_index = [temporal_to_sorted[n_gates - 1 - i] for i in range(n_gates)]
+    else:
+        tensor_index = [temporal_to_sorted[i] for i in range(n_gates)]
+
+    @jax.jit
+    def code(*operands):
+        return _stepped_apply(
+            program, tensor_index, operands, m=m, n=n, inverse=inverse,
+        )
+
+    return code, sorted_tensors
 
 
 def apply_circuit(
