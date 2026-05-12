@@ -207,8 +207,17 @@ def _stepped_apply(
         if kind == "H":
             (q,) = qubits
             ax = _axis_of_qubit(q, m, n)
-            # H[out, in] · pic[..., ax=in, ...] -> pic[..., ax=out, ...]
-            pic = jnp.tensordot(T, pic, axes=[[1], [ax]])
+            # Forward: H[out, in] · pic[..., ax=in, ...] -> pic[..., ax=out, ...]
+            #   contract on T's axis 1 (the "in" leg).
+            # Inverse: apply the transpose of T. Combined with the caller's
+            #   conj(T) (loss._scalar_loss conjugates tensors before passing
+            #   them to the inverse closure), this realises the true adjoint
+            #   T† = conj(T.T). For symmetric H this collapses to conj(T),
+            #   but for trained / non-symmetric H tensors the leg-swap is
+            #   essential — without it the round-trip T† T x ≠ x. The U4
+            #   handler below uses the same forward/inverse axis convention.
+            contract_in = 0 if inverse else 1
+            pic = jnp.tensordot(T, pic, axes=[[contract_in], [ax]])
             pic = jnp.moveaxis(pic, 0, ax)
         elif kind == "CP":
             q_ctrl, q_tgt = qubits
