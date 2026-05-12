@@ -120,7 +120,13 @@ def _scalar_loss(
         truncated = topk_truncate(pred, loss.k)
         conj_tensors = [jnp.conj(t) for t in tensors]  # type: ignore[arg-type]
         reconstructed = _apply_circuit(conj_tensors, inverse_code, m, n, truncated)  # type: ignore[arg-type]
-        return jnp.sum(jnp.abs(target - reconstructed) ** 2)
+        base = jnp.sum(jnp.abs(target - reconstructed) ** 2)
+        # Optional hook for MSELoss subclasses that add regularizers or
+        # auxiliary scalar terms while preserving vanilla MSELoss behavior.
+        extra_fn = getattr(loss, "_extra_loss", None)
+        if extra_fn is not None:
+            return base + extra_fn(tensors)
+        return base
     raise TypeError(f"unsupported loss type: {type(loss).__name__}")
 
 
