@@ -13,6 +13,7 @@ The eval+early-stopping bookkeeping is shared via training.eval_loop.
 from __future__ import annotations
 
 import math
+import operator
 import time
 from collections.abc import Sequence
 
@@ -100,8 +101,19 @@ def _validate_frozen_indices(frozen_indices: "list[int] | None", n_tensors: int)
     if frozen_indices is None or len(frozen_indices) == 0:
         return frozenset()
     seen: set[int] = set()
-    for i in frozen_indices:
-        i = int(i)
+    for raw_i in frozen_indices:
+        if isinstance(raw_i, bool):
+            raise ValueError(
+                f"frozen_indices contains non-integer index {raw_i!r}; "
+                "all indices must be integers."
+            )
+        try:
+            i = operator.index(raw_i)
+        except TypeError as exc:
+            raise ValueError(
+                f"frozen_indices contains non-integer index {raw_i!r}; "
+                "all indices must be integers."
+            ) from exc
         if i < 0:
             raise ValueError(
                 f"frozen_indices contains negative index {i}; "
@@ -207,11 +219,6 @@ def train_basis_batched(
         return float(_val_eval(tensors, _val_stacked))
 
     current_tensors = [jnp.asarray(t) for t in basis.tensors]
-    # Snapshot the initial values for frozen indices — used by the GD path
-    # to restore bit-exact initial values after each optimize() call.
-    initial_frozen_tensors: dict[int, Array] = {
-        i: current_tensors[i] for i in frozen_set
-    }
     best_tensors = [jnp.asarray(t) for t in current_tensors]
     best_val = float("inf")
     patience = 0
@@ -355,14 +362,8 @@ def train_basis_batched(
                     max_iter=1,
                     tol=0.0,
                     record_loss=True,
+                    frozen_indices=frozen_set if frozen_set else None,
                 )
-                # GD path: restore frozen tensors to their initial values
-                # (post-step reset — optimize() is a black box so we cannot
-                # easily zero gradients inside it).
-                if initial_frozen_tensors:
-                    current_tensors = list(current_tensors)
-                    for fi, ft in initial_frozen_tensors.items():
-                        current_tensors[fi] = ft
                 loss_history.append(step_trace[-1] if len(step_trace) >= 2 else step_trace[0])
                 global_step += 1
 
