@@ -25,6 +25,7 @@ def _build_jit_adam_step(
     beta2: float,
     eps: float,
     max_grad_norm: float | None,
+    frozen_set: frozenset[int] | None = None,
 ):
     """Build a single JIT'd Adam step for `train_basis_batched`'s fast path.
 
@@ -71,6 +72,17 @@ def _build_jit_adam_step(
         else:
             ibs.append(None)
 
+    # Pre-compute per-manifold-group, per-slot frozen masks (static booleans,
+    # closed over in the JIT'd step_fn — no recompiles because they're Python).
+    # slot_frozen_masks[k] is a tuple of bools, one per slot in manifold group k.
+    if frozen_set:
+        slot_frozen_masks = [
+            tuple(idx in frozen_set for idx in idxs)
+            for idxs in indices_list
+        ]
+    else:
+        slot_frozen_masks = [None] * len(indices_list)
+
     @jax.jit
     def step_fn(tensors_list, m_list, v_list, batch, lr, iter_1based):
         # Forward + backward; loss comes "for free" alongside grads.
@@ -82,9 +94,19 @@ def _build_jit_adam_step(
         # Per-manifold project (fused into the JIT'd graph).
         pb_list = []
         rg_list = []
-        for manifold, idxs in zip(manifold_list, indices_list):
+        for k, (manifold, idxs) in enumerate(zip(manifold_list, indices_list)):
             pb = jnp.stack([tensors_list[i] for i in idxs], axis=-1)
-            gb = jnp.stack([grads[i] for i in idxs], axis=-1)
+            slot_mask = slot_frozen_masks[k]
+            if slot_mask is not None and any(slot_mask):
+                # Zero gradient for frozen slots before projection so Adam's
+                # moment buffers stay zero and the tensors don't move.
+                gb = jnp.stack(
+                    [jnp.zeros_like(grads[i]) if slot_mask[k2] else grads[i]
+                     for k2, i in enumerate(idxs)],
+                    axis=-1,
+                )
+            else:
+                gb = jnp.stack([grads[i] for i in idxs], axis=-1)
             rg = manifold.project(pb, gb)
             pb_list.append(pb)
             rg_list.append(rg)
@@ -120,11 +142,16 @@ def _build_jit_adam_step(
 
             new_m_list.append(new_m)
             new_v_list.append(new_v)
+            slot_mask = slot_frozen_masks[k]
             for k2, idx in enumerate(idxs):
                 # Use ellipsis so this works for any tensor storage shape:
                 # (2, 2, n) for 2x2 unitaries, (2, 2, 2, 2, n) for 2-qubit
                 # (Unitary2qManifold) gates, etc.
-                new_tensors[idx] = new_pb[..., k2]
+                if slot_mask is not None and slot_mask[k2]:
+                    # Frozen: restore the original tensor, bit-exactly.
+                    new_tensors[idx] = tensors_list[idx]
+                else:
+                    new_tensors[idx] = new_pb[..., k2]
 
         return new_tensors, new_m_list, new_v_list, loss_val
 

@@ -25,6 +25,7 @@ def optimize(
     max_iter: int = 100,
     tol: float = 1e-6,
     record_loss: bool = False,
+    frozen_indices: frozenset[int] | None = None,
 ) -> tuple[list[Array], list[float]]:
     """Mirror of upstream src/optimizers.jl:335-412.
 
@@ -61,7 +62,7 @@ def optimize(
                 warnings.warn("Non-finite gradient — optimizer stopping.", stacklevel=2)
                 return state.current_tensors, trace
 
-        rg_batches, grad_norm = _batched_project(state, raw_grads)
+        rg_batches, grad_norm = _batched_project(state, raw_grads, frozen_indices=frozen_indices)
         grad_norm_sq = float(grad_norm) ** 2
 
         if opt.max_grad_norm is not None and float(grad_norm) > opt.max_grad_norm:

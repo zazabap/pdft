@@ -48,13 +48,26 @@ def _common_setup(tensors: list[Array]) -> _OptimizationState:
     )
 
 
-def _batched_project(state: _OptimizationState, euclid_grads: list[Array]):
+def _batched_project(
+    state: _OptimizationState,
+    euclid_grads: list[Array],
+    frozen_indices: frozenset[int] | None = None,
+):
     """Mirror of upstream src/optimizers.jl:129-149."""
     rg_batches: dict[AbstractRiemannianManifold, Array] = {}
     grad_norm_sq = 0.0
     for manifold, indices in state.manifold_groups.items():
         pb = state.point_batches[manifold]
-        gb = stack_tensors(euclid_grads, indices)
+        if frozen_indices:
+            gb = jnp.stack(
+                [
+                    jnp.zeros_like(euclid_grads[i]) if i in frozen_indices else euclid_grads[i]
+                    for i in indices
+                ],
+                axis=-1,
+            )
+        else:
+            gb = stack_tensors(euclid_grads, indices)
         rg = manifold.project(pb, gb)
         rg_batches[manifold] = rg
         grad_norm_sq = grad_norm_sq + float(jnp.real(jnp.sum(jnp.conj(rg) * rg)))

@@ -13,6 +13,7 @@ The eval+early-stopping bookkeeping is shared via training.eval_loop.
 from __future__ import annotations
 
 import math
+import operator
 import time
 from collections.abc import Sequence
 
@@ -91,6 +92,47 @@ def _validate_batched_args(
         raise ValueError(f"warmup_frac must be in [0, 1), got {warmup_frac}")
 
 
+def _validate_frozen_indices(frozen_indices: "list[int] | None", n_tensors: int) -> frozenset:
+    """Validate and normalise ``frozen_indices``.
+
+    Returns a ``frozenset[int]`` of validated frozen indices (empty set means
+    no freezing).  Raises ``ValueError`` on any violation.
+    """
+    if frozen_indices is None or len(frozen_indices) == 0:
+        return frozenset()
+    seen: set[int] = set()
+    for raw_i in frozen_indices:
+        if isinstance(raw_i, bool):
+            raise ValueError(
+                f"frozen_indices contains non-integer index {raw_i!r}; "
+                "all indices must be integers."
+            )
+        try:
+            i = operator.index(raw_i)
+        except TypeError as exc:
+            raise ValueError(
+                f"frozen_indices contains non-integer index {raw_i!r}; "
+                "all indices must be integers."
+            ) from exc
+        if i < 0:
+            raise ValueError(
+                f"frozen_indices contains negative index {i}; "
+                f"all indices must be in [0, {n_tensors - 1}]."
+            )
+        if i >= n_tensors:
+            raise ValueError(
+                f"frozen_indices contains out-of-range index {i}; "
+                f"basis has {n_tensors} tensors (valid range 0..{n_tensors - 1})."
+            )
+        if i in seen:
+            raise ValueError(
+                f"frozen_indices contains duplicate index {i}; "
+                "each index must appear at most once."
+            )
+        seen.add(i)
+    return frozenset(seen)
+
+
 def train_basis_batched(
     basis,
     *,
@@ -108,12 +150,29 @@ def train_basis_batched(
     shuffle: bool = True,
     seed: int = 0,
     val_every_k_epochs: int = 1,
+    frozen_indices: "list[int] | None" = None,
 ) -> TrainingResult:
     """Multi-image, multi-epoch trainer with cosine LR schedule.
 
     Mirror of `ParametricDFT.jl/src/training.jl::_train_basis_core` (main).
     See parameter docs in the original training.py docstring.
+
+    Parameters
+    ----------
+    frozen_indices : list[int] | None, optional
+        List of integer indices into ``basis.tensors``.  Tensors at these
+        indices are NOT updated during training — they stay at their initial
+        values throughout.  Each step computes gradients on all tensors
+        normally; the update is then suppressed for frozen indices BEFORE any
+        optimizer state is mutated (so Adam's moment buffers for frozen indices
+        remain zero).  Useful for experiments that train only a subset of a
+        circuit's gates.
+
+        Validation: all indices must satisfy ``0 <= i < len(basis.tensors)``,
+        no duplicates are allowed, and an empty list is treated as ``None``
+        (no-op).  ``ValueError`` is raised on mis-specification.
     """
+    frozen_set = _validate_frozen_indices(frozen_indices, len(list(basis.tensors)))
     _validate_batched_args(
         dataset, epochs, batch_size, validation_split, early_stopping_patience, warmup_frac
     )
@@ -188,6 +247,7 @@ def train_basis_batched(
             beta2=beta2,
             eps=eps,
             max_grad_norm=mgn_eff,
+            frozen_set=frozen_set if frozen_set else None,
         )
 
         # Initialise Adam moment buffers ONCE — they persist across all steps,
@@ -302,6 +362,7 @@ def train_basis_batched(
                     max_iter=1,
                     tol=0.0,
                     record_loss=True,
+                    frozen_indices=frozen_set if frozen_set else None,
                 )
                 loss_history.append(step_trace[-1] if len(step_trace) >= 2 else step_trace[0])
                 global_step += 1
