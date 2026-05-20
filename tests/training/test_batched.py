@@ -273,3 +273,99 @@ def test_batched_validation_split_too_large_raises():
             lr_peak=0.01,
             lr_final=0.001,
         )
+
+
+def test_train_basis_batched_freezes_specified_indices():
+    """Frozen indices stay bit-exactly at their initial values; non-frozen
+    indices update normally."""
+    import jax.numpy as jnp
+    import numpy as np
+    import pdft
+
+    # Build a small QFTBasis (m=n=2 -> 4 H + 2 CP = 6 tensors).
+    basis = pdft.QFTBasis(m=2, n=2)
+    initial_tensors = [jnp.array(t, copy=True) for t in basis.tensors]
+
+    # Freeze indices [0, 2, 4] — the H@q1, H@q3, and CP(q1,q2) gates.
+    # Indices 1, 3, 5 (H@q2, H@q4, CP(q3,q4)) should still train.
+    frozen = [0, 2, 4]
+    free = [1, 3, 5]
+
+    # Tiny synthetic dataset — random 4x4 complex images.
+    rng = np.random.default_rng(7)
+    train = rng.standard_normal((8, 4, 4)) + 1j * rng.standard_normal((8, 4, 4))
+    train = train.astype(np.complex128)
+
+    result = pdft.train_basis_batched(
+        basis,
+        dataset=train,
+        loss=pdft.MSELoss(k=4),
+        epochs=3,
+        batch_size=4,
+        optimizer="adam",
+        validation_split=0.25,
+        early_stopping_patience=10**9,
+        seed=42,
+        frozen_indices=frozen,
+    )
+
+    # Frozen tensors must be bit-exactly equal to the initial values.
+    for i in frozen:
+        diff = float(jnp.max(jnp.abs(result.basis.tensors[i] - initial_tensors[i])))
+        assert diff == 0.0, (
+            f"frozen index {i} drifted by {diff} (expected 0). "
+            f"frozen_indices semantics are broken."
+        )
+
+    # Non-frozen tensors should have moved (training is non-trivial).
+    moved_any = False
+    for i in free:
+        diff = float(jnp.max(jnp.abs(result.basis.tensors[i] - initial_tensors[i])))
+        if diff > 1e-6:
+            moved_any = True
+    assert moved_any, (
+        "no non-frozen tensors moved — training appears not to have run, "
+        "or the freezing is over-aggressive."
+    )
+
+
+def test_train_basis_batched_frozen_indices_validation():
+    """frozen_indices validation: out-of-range index, negative, duplicate."""
+    import pytest
+    import pdft
+
+    basis = pdft.QFTBasis(m=2, n=2)
+    n_tensors = len(basis.tensors)  # 6
+
+    # Out-of-range positive.
+    with pytest.raises(ValueError):
+        pdft.train_basis_batched(
+            basis,
+            dataset=[],
+            loss=pdft.MSELoss(k=4),
+            epochs=1,
+            batch_size=1,
+            frozen_indices=[n_tensors],  # one past the end
+        )
+
+    # Negative.
+    with pytest.raises(ValueError):
+        pdft.train_basis_batched(
+            basis,
+            dataset=[],
+            loss=pdft.MSELoss(k=4),
+            epochs=1,
+            batch_size=1,
+            frozen_indices=[-1],
+        )
+
+    # Duplicate.
+    with pytest.raises(ValueError):
+        pdft.train_basis_batched(
+            basis,
+            dataset=[],
+            loss=pdft.MSELoss(k=4),
+            epochs=1,
+            batch_size=1,
+            frozen_indices=[0, 0],
+        )
