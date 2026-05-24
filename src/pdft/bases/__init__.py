@@ -3,8 +3,8 @@
 Two families:
 - bases.circuit  — full circuit topologies (QFT, EntangledQFT, TEBD, MERA),
                    comparable to FFT/DCT.
-- bases.block    — parameter-efficient block-structured bases (Blocked,
-                   Rich, RealRich) over arbitrary block partitions.
+- bases.block    — BlockedBasis over arbitrary block partitions (Rich/RealRich
+                   are re-exported here for back-compat; they live in circuit).
 
 The abstract base class and bases_allclose helper live in bases.base.
 """
@@ -17,8 +17,18 @@ from .base import (
     TEBDBasis,
     bases_allclose,
 )
-from .block import BlockedBasis, RealRichBasis, RichBasis, fit_to_dct
-from .circuit import entangled_qft_code, ft_mat, ift_mat, mera_code, qft_code, tebd_code
+from .block import BlockedBasis
+from .circuit import (
+    RealRichBasis,
+    RichBasis,
+    entangled_qft_code,
+    fit_to_dct,
+    ft_mat,
+    ift_mat,
+    mera_code,
+    qft_code,
+    tebd_code,
+)
 
 __all__ = [
     "AbstractSparseBasis",

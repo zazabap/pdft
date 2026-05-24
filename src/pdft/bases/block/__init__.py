@@ -1,8 +1,11 @@
-"""Block-structured bases: Blocked, Rich, RealRich."""
+"""Block-structured bases: BlockedBasis.
 
+RichBasis/RealRichBasis/fit_to_dct now live in bases.circuit (they are full
+circuits); re-exported here for back-compat.
+"""
+
+from ..circuit import RealRichBasis, RichBasis, fit_to_dct
 from .block import BlockedBasis
-from .rich import RichBasis, fit_to_dct
-from .real_rich import RealRichBasis
 
 __all__ = [
     "BlockedBasis",
