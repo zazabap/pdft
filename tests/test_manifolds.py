@@ -68,6 +68,28 @@ def test_stack_and_unstack_roundtrip():
     assert jnp.allclose(target[3], tensors[2])
 
 
+def test_stack_tensors_empty_returns_empty_batch():
+    """Empty index list → a (0, 0, 0) batch (upstream convention)."""
+    batch = stack_tensors([], [])
+    assert batch.shape == (0, 0, 0)
+
+
+def test_stack_and_unstack_roundtrip_2qubit():
+    """Rank-4 (2,2,2,2) gates (Unitary2qManifold / U4) must round-trip through
+    stack/unstack. Regression: unstack_tensors used a hardcoded 3-axis slice
+    `batch[:, :, k]`, mangling 2-qubit tensors to (2,2,2,n) and silently
+    clamping out-of-range k — which crashed the GD path for Rich/RealRich."""
+    tensors = [jnp.full((2, 2, 2, 2), float(k), dtype=jnp.complex128) for k in range(3)]
+    batch = stack_tensors(tensors, [0, 1, 2])
+    assert batch.shape == (2, 2, 2, 2, 3)
+
+    target = [None, None, None]
+    unstack_tensors(batch, [0, 1, 2], into=target)
+    for k in range(3):
+        assert target[k].shape == (2, 2, 2, 2)
+        assert jnp.allclose(target[k], tensors[k])
+
+
 def test_is_unitary_general_detects_unitary():
     H = jnp.array([[1, 1], [1, -1]], dtype=jnp.complex128) / jnp.sqrt(2)
     assert is_unitary_general(H)

@@ -56,6 +56,7 @@ from .bases import (  # noqa: E402
     RichBasis,
     TEBDBasis,
     bases_allclose,
+    freeze_as_blocked,
 )
 from .loss import AbstractLoss, L1Norm, MSELoss, loss_function  # noqa: E402
 from .optimizers import RiemannianAdam, RiemannianGD, optimize  # noqa: E402
@@ -79,6 +80,7 @@ __all__ = [
     "__upstream_ref__",
     "__version__",
     "bases_allclose",
+    "freeze_as_blocked",
     "loss_function",
     "optimize",
     "train_basis",

@@ -61,6 +61,34 @@ def u4_from_phase(phi: float) -> Array:
     return jnp.diag(diag).reshape(2, 2, 2, 2)
 
 
+def _hadamard_first_perm(tensor_list: list[Array]) -> list[int]:
+    """Indices that sort `tensor_list` Hadamards-first (stable), matching
+    Julia's `perm_vec`. Non-Hadamard tensors keep their relative order."""
+    import numpy as _np
+
+    H_np = _np.asarray(HADAMARD)
+
+    def _is_hadamard(t):
+        a = _np.asarray(t)
+        return a.shape == (2, 2) and _np.allclose(a, H_np, atol=1e-12)
+
+    is_not_hadamard = [not _is_hadamard(t) for t in tensor_list]
+    return sorted(range(len(tensor_list)), key=lambda i: is_not_hadamard[i])
+
+
+def sorted_gate_program(gates: list[Gate]) -> list[tuple[str, tuple[int, ...]]]:
+    """Return `(kind, qubits)` per tensor in sorted operand order.
+
+    Uses the same Hadamard-first sort `compile_circuit` applies, so the
+    returned order lines up element-for-element with the tensor list a basis
+    stores. Handy for mapping gates (and the qubits they touch) to tensor
+    indices after compilation.
+    """
+    tensor_list = [g["tensor"] for g in gates]
+    perm = _hadamard_first_perm(tensor_list)
+    return [(gates[p]["kind"], gates[p]["qubits"]) for p in perm]
+
+
 def build_circuit_einsum(
     gates: list[Gate],
     m: int,
@@ -131,17 +159,8 @@ def build_circuit_einsum(
         else:
             raise AssertionError(f"unknown gate kind: {g['kind']}")
 
-    # Hadamard-first sort
-    import numpy as _np
-
-    H_np = _np.asarray(HADAMARD)
-
-    def _is_hadamard(t):
-        a = _np.asarray(t)
-        return a.shape == (2, 2) and _np.allclose(a, H_np, atol=1e-12)
-
-    is_not_hadamard = [not _is_hadamard(t) for t in tensor_list]
-    perm = sorted(range(len(tensor_list)), key=lambda i: is_not_hadamard[i])
+    # Hadamard-first sort (matches Julia's perm_vec).
+    perm = _hadamard_first_perm(tensor_list)
     tensor_list = [tensor_list[i] for i in perm]
     tensor_subscripts = [tensor_subscripts[i] for i in perm]
     tensor_shapes = [tensor_shapes[i] for i in perm]
@@ -281,16 +300,7 @@ def compile_circuit(
     # Hadamard-first sort — preserves the legacy convention for the
     # returned tensor list. `perm[i]` is the original (temporal) gate index
     # of the i-th sorted slot, so `sorted_tensors[i] = original[perm[i]]`.
-    import numpy as _np
-
-    H_np = _np.asarray(HADAMARD)
-
-    def _is_hadamard(t):
-        a = _np.asarray(t)
-        return a.shape == (2, 2) and _np.allclose(a, H_np, atol=1e-12)
-
-    is_not_hadamard = [not _is_hadamard(t) for t in tensor_list]
-    perm = sorted(range(n_gates), key=lambda i: is_not_hadamard[i])
+    perm = _hadamard_first_perm(tensor_list)
     sorted_tensors = [tensor_list[i] for i in perm]
 
     # Map temporal gate index → position in the sorted operand tuple.

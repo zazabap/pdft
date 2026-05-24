@@ -78,13 +78,20 @@ def stack_tensors(tensors: list[Array], indices: list[int]) -> Array:
 
 
 def unstack_tensors(batch: Array, indices: list[int], *, into: list) -> None:
-    """Unpack `(d1, d2, n)` back into a Python list, in place.
+    """Unpack a `(*tensor_shape, n)` batch back into a Python list, in place.
 
     Mirror of upstream src/manifolds.jl:146-154. `into` is a mutable list
     long enough to be indexed by each entry of `indices`.
+
+    The slice is taken on the LAST axis (`batch[..., k]`), matching
+    ``stack_tensors``' ``axis=-1`` stacking, so this works for any tensor
+    rank — 2×2 matrices stacked to ``(2, 2, n)`` AND 2-qubit gates
+    ``(2, 2, 2, 2)`` stacked to ``(2, 2, 2, 2, n)``. A hardcoded ``[:, :, k]``
+    here would slice a qubit axis of the 2-qubit gates instead of the stack
+    axis (and JAX silently clamps out-of-range k), corrupting them.
     """
     for k, idx in enumerate(indices):
-        into[idx] = batch[:, :, k]
+        into[idx] = batch[..., k]
 
 
 # ---------------------------------------------------------------------------
@@ -103,26 +110,6 @@ def is_unitary_general(t: Array, atol: float = 1e-6) -> bool:
     return bool(jnp.allclose(t @ jnp.conj(t).T, I_mat, atol=atol))
 
 
-# Forward declarations — dataclasses defined below — so classify_manifold can
-# reference them.  In Python this is a lookup-time concern; classify_manifold
-# just names them textually and they're resolved when called.
-
-
-def _matrix_dim_of(t: Array) -> int | None:
-    """Return the matrix dimension of a tensor (rank-2 → t.shape[0]; rank-2k
-    → product of first k axes, where 2k matches the storage convention for a
-    2-qubit gate stored as (2, 2, 2, 2)). Returns None if not classifiable.
-
-    Used by classify_manifold so that U(2) and U(4) gates bucket separately,
-    enabling stack_tensors to operate on homogeneous-shape batches.
-    """
-    if t.ndim == 2 and t.shape[0] == t.shape[1]:
-        return t.shape[0]
-    if t.ndim == 4 and t.shape == (2, 2, 2, 2):
-        return 4
-    return None
-
-
 def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
     """True for a (2, 2, 2, 2) tensor whose 4x4 reshape is unitary.
 
@@ -137,6 +124,10 @@ def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
     return bool(jnp.allclose(M @ jnp.conj(M).T, I_mat, atol=atol))
 
 
+# Forward declarations — the manifold dataclasses are defined below, so
+# classify_manifold can reference them. In Python this is a lookup-time
+# concern; classify_manifold just names them textually and they're resolved
+# when called.
 def classify_manifold(t: Array) -> AbstractRiemannianManifold:
     """Return the manifold appropriate to ``t`` based on its shape and
     unitarity.
