@@ -40,9 +40,7 @@ def _identity_for_kind(kind: str) -> Array:
     raise AssertionError(f"unknown gate kind: {kind}")
 
 
-def freeze_as_blocked(
-    basis: Any, block_log_m: int, block_log_n: int
-) -> tuple[Any, list[int]]:
+def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[Any, list[int]]:
     """Return ``(basis_copy_with_identity_outer_gates, frozen_indices)``.
 
     Training the returned basis with ``frozen_indices`` reproduces
@@ -104,8 +102,7 @@ def freeze_as_blocked(
     program = sorted_gate_program(gates)
     if len(program) != len(basis.tensors):
         raise AssertionError(
-            f"gate program length {len(program)} != tensor count "
-            f"{len(basis.tensors)}"
+            f"gate program length {len(program)} != tensor count {len(basis.tensors)}"
         )
 
     new_tensors = [jnp.array(t, copy=True) for t in basis.tensors]
@@ -115,7 +112,5 @@ def freeze_as_blocked(
             new_tensors[i] = _identity_for_kind(kind).astype(new_tensors[i].dtype)
             frozen_indices.append(i)
 
-    new_basis = btype(
-        m=m, n=n, tensors=new_tensors, code=basis.code, inv_code=basis.inv_code
-    )
+    new_basis = btype(m=m, n=n, tensors=new_tensors, code=basis.code, inv_code=basis.inv_code)
     return new_basis, frozen_indices

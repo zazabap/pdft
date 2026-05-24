@@ -17,9 +17,7 @@ def test_freeze_as_blocked_qft_indices():
     assert frozen == [2, 5, 7, 8, 10, 11]
     # Frozen outer gates were reset to identity: the row/col block-index H
     # gates (sorted indices 2, 5) become eye(2).
-    np.testing.assert_allclose(
-        np.asarray(frozen_basis.tensors[2]), np.eye(2), atol=1e-12, rtol=0.0
-    )
+    np.testing.assert_allclose(np.asarray(frozen_basis.tensors[2]), np.eye(2), atol=1e-12, rtol=0.0)
 
 
 def test_freeze_as_blocked_rich_resets_outer_u4_to_identity():
@@ -61,14 +59,12 @@ def _parity_check(basis_factory):
     # freeze_as_blocked's contract: frozen_indices come back ascending. The
     # positional trainable<->inner correspondence asserted below relies on it.
     assert frozen == sorted(frozen)
-    blocked = pdft.BlockedBasis(
-        inner=basis_factory(2, 2), block_log_m=1, block_log_n=1
-    )
+    blocked = pdft.BlockedBasis(inner=basis_factory(2, 2), block_log_m=1, block_log_n=1)
 
     rng = np.random.default_rng(5)
-    dataset = (
-        rng.standard_normal((4, 8, 8)) + 1j * rng.standard_normal((4, 8, 8))
-    ).astype(np.complex128)
+    dataset = (rng.standard_normal((4, 8, 8)) + 1j * rng.standard_normal((4, 8, 8))).astype(
+        np.complex128
+    )
 
     # Initial forward transforms must already be the same operator.
     pic = jnp.asarray(dataset[0])
