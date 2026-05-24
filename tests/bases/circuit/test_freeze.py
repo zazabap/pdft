@@ -52,19 +52,22 @@ def test_freeze_as_blocked_rejects_unsupported_type():
         freeze_as_blocked(basis, 1, 1)
 
 
-def _parity_check(basis_factory):
-    """freeze_as_blocked(full(3,3)) trained == BlockedBasis(inner(2,2)) trained."""
-    full0 = basis_factory(3, 3)
-    full, frozen = freeze_as_blocked(full0, 1, 1)
+def _parity_check(basis_factory, m=3, n=3, block_log_m=1, block_log_n=1):
+    """freeze_as_blocked(full) trained == BlockedBasis(inner) trained, any partition."""
+    full0 = basis_factory(m, n)
+    full, frozen = freeze_as_blocked(full0, block_log_m, block_log_n)
     # freeze_as_blocked's contract: frozen_indices come back ascending. The
     # positional trainable<->inner correspondence asserted below relies on it.
     assert frozen == sorted(frozen)
-    blocked = pdft.BlockedBasis(inner=basis_factory(2, 2), block_log_m=1, block_log_n=1)
+    blocked = pdft.BlockedBasis(
+        inner=basis_factory(m - block_log_m, n - block_log_n),
+        block_log_m=block_log_m,
+        block_log_n=block_log_n,
+    )
 
     rng = np.random.default_rng(5)
-    dataset = (rng.standard_normal((4, 8, 8)) + 1j * rng.standard_normal((4, 8, 8))).astype(
-        np.complex128
-    )
+    shape = (4, 2**m, 2**n)
+    dataset = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
 
     # Initial forward transforms must already be the same operator.
     pic = jnp.asarray(dataset[0])
@@ -127,3 +130,9 @@ def test_freeze_as_blocked_rich_matches_blocked():
 
 def test_freeze_as_blocked_real_rich_matches_blocked():
     _parity_check(lambda m, n: pdft.RealRichBasis(m=m, n=n))
+
+
+def test_freeze_as_blocked_rich_matches_blocked_asymmetric():
+    # Asymmetric partition + larger size: locks in that the parity mechanism is
+    # not specific to (3,3) 1+1. inner = (2, 3); 16x16 image.
+    _parity_check(lambda m, n: pdft.RichBasis(m=m, n=n), m=4, n=4, block_log_m=2, block_log_n=1)
