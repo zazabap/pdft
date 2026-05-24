@@ -15,7 +15,6 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases.circuit.qft import controlled_phase_diag
 from pdft.training import cosine_with_warmup, train_basis_batched
 
 
@@ -90,22 +89,16 @@ def _toy_dataset(n_images: int, m: int, n: int, seed: int = 0):
 
 
 def _qft_as_blocked_2x2_with_frozen_outer():
-    """Return QFT(3,3) configured like BlockedBasis(QFT(2,2), 1, 1)."""
-    full = pdft.QFTBasis(m=3, n=3)
-    tensors = [jnp.array(t, copy=True) for t in full.tensors]
+    """Return QFT(3,3) configured like BlockedBasis(QFT(2,2), 1, 1).
 
-    # qft_code sorts Hadamards first, then CP gates. For QFT(3,3), qubits
-    # 3 and 6 are the block-index row/col qubits. Setting every gate touching
-    # those qubits to identity leaves exactly the within-block QFT(2,2).
-    frozen_h = [2, 5]
-    frozen_cp = [7, 8, 10, 11]
-    for i in frozen_h:
-        tensors[i] = jnp.eye(2, dtype=tensors[i].dtype)
-    for i in frozen_cp:
-        tensors[i] = controlled_phase_diag(0.0)
+    freeze_as_blocked resets the block-index (qubits 3 and 6) gates to identity
+    and returns their tensor indices; the trainable map is the complement.
+    """
+    from pdft.bases.circuit import freeze_as_blocked
 
-    basis = pdft.QFTBasis(m=3, n=3, tensors=tensors, code=full.code, inv_code=full.inv_code)
-    return basis, frozen_h + frozen_cp, [0, 1, 3, 4, 6, 9]
+    basis, frozen = freeze_as_blocked(pdft.QFTBasis(m=3, n=3), 1, 1)
+    trainable_map = [i for i in range(len(basis.tensors)) if i not in set(frozen)]
+    return basis, frozen, trainable_map
 
 
 def test_batched_returns_training_result_shape():
