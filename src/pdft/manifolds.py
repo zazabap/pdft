@@ -110,11 +110,6 @@ def is_unitary_general(t: Array, atol: float = 1e-6) -> bool:
     return bool(jnp.allclose(t @ jnp.conj(t).T, I_mat, atol=atol))
 
 
-# Forward declarations — dataclasses defined below — so classify_manifold can
-# reference them.  In Python this is a lookup-time concern; classify_manifold
-# just names them textually and they're resolved when called.
-
-
 def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
     """True for a (2, 2, 2, 2) tensor whose 4x4 reshape is unitary.
 
@@ -129,6 +124,10 @@ def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
     return bool(jnp.allclose(M @ jnp.conj(M).T, I_mat, atol=atol))
 
 
+# Forward declarations — the manifold dataclasses are defined below, so
+# classify_manifold can reference them. In Python this is a lookup-time
+# concern; classify_manifold just names them textually and they're resolved
+# when called.
 def classify_manifold(t: Array) -> AbstractRiemannianManifold:
     """Return the manifold appropriate to ``t`` based on its shape and
     unitarity.
