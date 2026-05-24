@@ -15,6 +15,7 @@ from .builder import (
     extract_phase_from_cp,
     is_compact_cp,
     select_last_n_cp_indices,
+    sorted_gate_program,
     u4_from_phase,
 )
 from .cache import optimize_code_cached
@@ -30,5 +31,6 @@ __all__ = [
     "is_compact_cp",
     "optimize_code_cached",
     "select_last_n_cp_indices",
+    "sorted_gate_program",
     "u4_from_phase",
 ]
