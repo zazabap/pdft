@@ -78,13 +78,20 @@ def stack_tensors(tensors: list[Array], indices: list[int]) -> Array:
 
 
 def unstack_tensors(batch: Array, indices: list[int], *, into: list) -> None:
-    """Unpack `(d1, d2, n)` back into a Python list, in place.
+    """Unpack a `(*tensor_shape, n)` batch back into a Python list, in place.
 
     Mirror of upstream src/manifolds.jl:146-154. `into` is a mutable list
     long enough to be indexed by each entry of `indices`.
+
+    The slice is taken on the LAST axis (`batch[..., k]`), matching
+    ``stack_tensors``' ``axis=-1`` stacking, so this works for any tensor
+    rank — 2×2 matrices stacked to ``(2, 2, n)`` AND 2-qubit gates
+    ``(2, 2, 2, 2)`` stacked to ``(2, 2, 2, 2, n)``. A hardcoded ``[:, :, k]``
+    here would slice a qubit axis of the 2-qubit gates instead of the stack
+    axis (and JAX silently clamps out-of-range k), corrupting them.
     """
     for k, idx in enumerate(indices):
-        into[idx] = batch[:, :, k]
+        into[idx] = batch[..., k]
 
 
 # ---------------------------------------------------------------------------
