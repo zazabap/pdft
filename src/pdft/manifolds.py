@@ -115,21 +115,6 @@ def is_unitary_general(t: Array, atol: float = 1e-6) -> bool:
 # just names them textually and they're resolved when called.
 
 
-def _matrix_dim_of(t: Array) -> int | None:
-    """Return the matrix dimension of a tensor (rank-2 → t.shape[0]; rank-2k
-    → product of first k axes, where 2k matches the storage convention for a
-    2-qubit gate stored as (2, 2, 2, 2)). Returns None if not classifiable.
-
-    Used by classify_manifold so that U(2) and U(4) gates bucket separately,
-    enabling stack_tensors to operate on homogeneous-shape batches.
-    """
-    if t.ndim == 2 and t.shape[0] == t.shape[1]:
-        return t.shape[0]
-    if t.ndim == 4 and t.shape == (2, 2, 2, 2):
-        return 4
-    return None
-
-
 def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
     """True for a (2, 2, 2, 2) tensor whose 4x4 reshape is unitary.
 

@@ -68,6 +68,12 @@ def test_stack_and_unstack_roundtrip():
     assert jnp.allclose(target[3], tensors[2])
 
 
+def test_stack_tensors_empty_returns_empty_batch():
+    """Empty index list → a (0, 0, 0) batch (upstream convention)."""
+    batch = stack_tensors([], [])
+    assert batch.shape == (0, 0, 0)
+
+
 def test_stack_and_unstack_roundtrip_2qubit():
     """Rank-4 (2,2,2,2) gates (Unitary2qManifold / U4) must round-trip through
     stack/unstack. Regression: unstack_tensors used a hardcoded 3-axis slice

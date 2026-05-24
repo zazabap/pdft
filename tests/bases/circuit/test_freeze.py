@@ -8,6 +8,7 @@ import pytest
 
 import pdft
 from pdft.bases.circuit import freeze_as_blocked
+from pdft.bases.circuit.freeze import _identity_for_kind
 
 
 def test_freeze_as_blocked_qft_indices():
@@ -36,6 +37,27 @@ def test_freeze_as_blocked_rich_resets_outer_u4_to_identity():
             np.testing.assert_allclose(t, eye4, atol=1e-12, rtol=0.0)
             checked_u4 = True
     assert checked_u4, "expected at least one frozen U4 gate"
+
+
+def test_identity_for_kind_shapes():
+    assert _identity_for_kind("H").shape == (2, 2)
+    assert _identity_for_kind("U4").shape == (2, 2, 2, 2)
+    assert _identity_for_kind("CP").shape == (2, 2)
+
+
+def test_identity_for_kind_rejects_unknown():
+    with pytest.raises(AssertionError):
+        _identity_for_kind("ZZ")
+
+
+def test_freeze_as_blocked_rejects_tensor_count_mismatch():
+    """Guard fires when the basis tensor count disagrees with the canonical
+    gate program rebuilt from (m, n)."""
+    import jax.numpy as jnp
+
+    bad = pdft.QFTBasis(m=3, n=3, tensors=[jnp.eye(2, dtype=jnp.complex128)] * 5)
+    with pytest.raises(AssertionError):
+        freeze_as_blocked(bad, 1, 1)
 
 
 def test_freeze_as_blocked_rejects_bad_partition():
