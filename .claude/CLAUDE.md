@@ -80,8 +80,8 @@ src/pdft/
 ├── profiling.py            Cross-cutting profiling helpers
 ├── bases/
 │   ├── base.py             AbstractSparseBasis + bases_allclose + 4 basis dataclasses
-│   ├── circuit/            QFT, EntangledQFT, TEBD, MERA (full circuit topologies)
-│   └── block/              Blocked, Rich, RealRich (parameter-efficient)
+│   ├── circuit/            QFT, EntangledQFT, TEBD, MERA, Rich, RealRich + freeze_as_blocked
+│   └── block/              BlockedBasis (Rich/RealRich re-exported from circuit for back-compat)
 ├── circuit/                Einsum builder (builder.py) + JIT closure cache (cache.py)
 ├── optimizers/             core, gd (RiemannianGD + Armijo), adam (RiemannianAdam), loop
 ├── training/               schedules, single (train_basis), batched, adam_step, eval_loop
