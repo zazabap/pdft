@@ -10,12 +10,14 @@ from .mera import mera_code
 from .tebd import tebd_code
 from .rich import RichBasis, fit_to_dct
 from .real_rich import RealRichBasis
+from .freeze import freeze_as_blocked
 
 __all__ = [
     "RealRichBasis",
     "RichBasis",
     "entangled_qft_code",
     "fit_to_dct",
+    "freeze_as_blocked",
     "ft_mat",
     "ift_mat",
     "mera_code",
