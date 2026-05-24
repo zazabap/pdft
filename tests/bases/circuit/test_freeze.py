@@ -52,7 +52,7 @@ def test_freeze_as_blocked_rejects_unsupported_type():
         freeze_as_blocked(basis, 1, 1)
 
 
-def _parity_check(basis_factory, m=3, n=3, block_log_m=1, block_log_n=1):
+def _parity_check(basis_factory, m=3, n=3, block_log_m=1, block_log_n=1, optimizer="adam"):
     """freeze_as_blocked(full) trained == BlockedBasis(inner) trained, any partition."""
     full0 = basis_factory(m, n)
     full, frozen = freeze_as_blocked(full0, block_log_m, block_log_n)
@@ -83,7 +83,7 @@ def _parity_check(basis_factory, m=3, n=3, block_log_m=1, block_log_n=1):
         loss=pdft.MSELoss(k=8),
         epochs=2,
         batch_size=2,
-        optimizer="adam",
+        optimizer=optimizer,
         validation_split=0.0,
         early_stopping_patience=10**9,
         warmup_frac=0.0,
@@ -136,3 +136,13 @@ def test_freeze_as_blocked_rich_matches_blocked_asymmetric():
     # Asymmetric partition + larger size: locks in that the parity mechanism is
     # not specific to (3,3) 1+1. inner = (2, 3); 16x16 image.
     _parity_check(lambda m, n: pdft.RichBasis(m=m, n=n), m=4, n=4, block_log_m=2, block_log_n=1)
+
+
+def test_freeze_as_blocked_rich_matches_blocked_gd():
+    # Same parity, GD/Armijo path (not just Adam). Exercises Unitary2qManifold
+    # stack/unstack on the GD optimizer (regression for the U4 unstack bug).
+    _parity_check(lambda m, n: pdft.RichBasis(m=m, n=n), optimizer="gd")
+
+
+def test_freeze_as_blocked_real_rich_matches_blocked_gd():
+    _parity_check(lambda m, n: pdft.RealRichBasis(m=m, n=n), optimizer="gd")
