@@ -6,29 +6,37 @@ own inverse. Unlike the DCT-II it is **ancilla-free** and uses only 1- and
 2-qubit gates, so it drops straight into the H + 2-qubit-gate tensor-network
 builder with no multi-controlled scaffolding.
 
-The 1D recursion (uniform: same child on both halves), for N = 2M:
+The 1D recursion is *uniform* — both halves run the same child, so DCT-IV
+unrolls into n qubit-local stages with no multi-controls (the real-orthogonal
+analogue of the QFT butterfly). For N = 2M, with top qubit b splitting the
+register (cf. ``all_real_dct_one_ancilla.tex`` §3.2):
 
-    C^IV_{2M} = (H layer)(Z sign)(I_2 (x) C^IV_M)(R_y layer)(mirror Q)
+    C^IV_{2M} = P_{2M} (H (x) I_M) (I_M (+) D_M) (I_2 (x) C^IV_M)
+                (I_M (+) R_M) T_{2M} Q_{2M}
 
-Per level k on the within-block qubits (b = top qubit of the level):
+Per level k on the within-block qubits (b = top qubit), in emission order
+(= the operator product above read right-to-left):
 
-    * mirror Q      : CX(control=b, target=q) for q below b
-    * rotation T    : R_y(pi / 2N) on b, then CR_y(pi 2^p / N) on b
-                      controlled by each lower bit (affine-angle decomposition
-                      -> one base rotation + one controlled rotation per bit,
-                      never a 2^m multiplexer)
-    * recurse       : C^IV_M on the lower register (uncontrolled)
-    * Z sign Delta  : CZ(control=b, target=next qubit)
-    * H merge       : H on b
+    * Q  pair layout : CX(control=b, target=q) for each q below b
+    * T  rotation    : R_y(pi / 2N) on b, then CR_y(pi 2^p / N) on b controlled
+                       by each lower bit — the affine phase gradient (one base
+                       rotation + one controlled rotation per bit, never a 2^m
+                       multiplexer)
+    * R  reverse     : the mirror-Q permutation repeated (odd-branch reversal)
+    * recurse        : C^IV_M on the lower register, uncontrolled (I_2 (x) C^IV_M)
+    * D  sign Delta  : CZ(control=b, target=next qubit)
+    * H  merge       : H on b
 
-All angles are fixed by the transform at initialization. The trainable leaves
-are the *bulk* gates — the affine ``R_y`` rotation layer and the branch
-Hadamards (the real-orthogonal degrees of freedom; cf. the relaxation in
-``all_real_dct_zero_ancilla.tex``). The structural gates — the mirror-``Q``
-CNOT permutations and the ``Delta`` sign — are emitted ``trainable=False``, so
-they stay fixed wiring and never enter the optimizer. The forward operator
-equals the bit-reversed orthonormal DCT-IV per dimension, matching the
-bit-reversed output convention of :func:`qft_code`.
+The interleave P_{2M} is deferred: per-level interleaves compose into a single
+bit reversal, realised as the bit-reversed output convention (matching
+:func:`qft_code`), so no explicit P gate is emitted.
+
+At init the forward operator equals the bit-reversed orthonormal DCT-IV per
+dimension. Every gate is a learnable leaf on its auto-selected Riemannian
+manifold — R_y and branch-H on O(2), CR_y and mirror-Q on O(4), the Delta
+sign on the phase manifold. Like QFT/RealRich, real init plus a real objective
+keep the operator real-orthogonal as it relaxes from the exact transform (cf.
+``all_real_dct_zero_ancilla.tex``).
 
 2D DCT-IV = (m-qubit DCT-IV on row qubits) tensor (n-qubit DCT-IV on col
 qubits); no entanglement between blocks.
@@ -108,24 +116,24 @@ def _dct4_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
         size = 2 ** (n_qubits - k)
         b = k
         lower = list(range(k + 1, n_qubits))
-        # mirror Q: controlled bit-complement of the lower register (structural
-        # permutation — fixed, not a learnable degree of freedom)
+        # Q: pair-layout permutation — controlled bit-complement of the lower
+        # register (exact CNOT at init; a learnable leaf like every gate)
         for q in lower:
-            gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0, trainable=False))
-        # rotation layer T (affine angles) — the learnable real-orthogonal bulk
+            gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0))
+        # T: affine R_y phase-gradient (one base R_y on b, one CR_y per lower bit)
         gates.append(Gate(kind="H", qubits=(Q(b),), tensor=_ry(np.pi / (2 * size)), phase=0.0))
         for p in range(n_qubits - 1 - k):
             theta = np.pi * (2**p) / size
             gates.append(Gate(kind="U4", qubits=(Q(n_qubits - 1 - p), Q(b)), tensor=_cry_u4(theta), phase=0.0))
-        # mirror Q again (structural — fixed)
+        # R: odd-branch reversal — the mirror-Q permutation repeated
         for q in lower:
-            gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0, trainable=False))
+            gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0))
         # recurse on the lower register (uncontrolled)
         level(k + 1)
-        # Z sign (Delta, fixed) + learnable branch Hadamard merge
+        # D: Delta sign  +  H: branch Hadamard merge
         if lower:
             gates.append(
-                Gate(kind="CP", qubits=(Q(b), Q(k + 1)), tensor=controlled_phase_diag(float(np.pi)), phase=float(np.pi), trainable=False)
+                Gate(kind="CP", qubits=(Q(b), Q(k + 1)), tensor=controlled_phase_diag(float(np.pi)), phase=float(np.pi))
             )
         gates.append(Gate(kind="H", qubits=(Q(b),), tensor=HADAMARD, phase=0.0))
 
