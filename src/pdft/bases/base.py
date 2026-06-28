@@ -485,11 +485,12 @@ class DCT4Basis:
     :func:`pdft.bases.circuit.dct4.dct4_code`; at initialization the forward
     operator is the bit-reversed orthonormal DCT-IV per dimension, and — since
     DCT-IV is self-inverse — the basis reconstructs exactly. ``tensors`` holds
-    only the learnable bulk (the affine ``R_y`` rotation layer and the branch
-    Hadamards); the structural mirror-``Q`` CNOT permutations and the ``Delta``
-    sign are emitted ``trainable=False`` and stay fixed. The gate tensors are
-    real-valued (stored complex128, zero imaginary), so the existing unitary
-    manifold trains the real-orthogonal subset under a real objective.
+    every gate — the affine ``R_y`` rotation layer, the branch Hadamards, the
+    mirror-``Q`` CNOT permutations and the ``Delta`` sign — each a learnable
+    leaf on its auto-selected Riemannian manifold (O(2) / O(4) / phase). The
+    gate tensors are real-valued (stored complex128, zero imaginary), so the
+    unitary manifold trains the real-orthogonal subset under a real objective:
+    exact DCT-IV at init, then relaxed, just as QFT relaxes within U.
 
     Pytree contract:
         leaves   = tensors
