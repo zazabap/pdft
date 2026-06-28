@@ -11,6 +11,7 @@ The abstract base class and bases_allclose helper live in bases.base.
 
 from .base import (
     AbstractSparseBasis,
+    DCT4Basis,
     EntangledQFTBasis,
     MERABasis,
     QFTBasis,
@@ -34,6 +35,7 @@ from .circuit import (
 __all__ = [
     "AbstractSparseBasis",
     "BlockedBasis",
+    "DCT4Basis",
     "EntangledQFTBasis",
     "MERABasis",
     "QFTBasis",

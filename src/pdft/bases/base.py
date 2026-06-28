@@ -468,3 +468,105 @@ def _mera_unflatten(aux, leaves) -> MERABasis:
 
 
 tree_util.register_pytree_node(MERABasis, _mera_flatten, _mera_unflatten)
+
+
+# ---------------------------------------------------------------------------
+# DCT4Basis
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DCT4Basis:
+    """DCT-IV tensor-network basis: the real-orthogonal, ancilla-free analogue
+    of :class:`QFTBasis`.
+
+    Mirrors QFTBasis (one tensor list; `inverse_transform` applies
+    `conj(tensors)` through `inv_code`). The gates are emitted by
+    :func:`pdft.bases.circuit.dct4.dct4_code`; at initialization the forward
+    operator is the bit-reversed orthonormal DCT-IV per dimension, and — since
+    DCT-IV is self-inverse — the basis reconstructs exactly. ``tensors`` holds
+    only the learnable bulk (the affine ``R_y`` rotation layer and the branch
+    Hadamards); the structural mirror-``Q`` CNOT permutations and the ``Delta``
+    sign are emitted ``trainable=False`` and stay fixed. The gate tensors are
+    real-valued (stored complex128, zero imaginary), so the existing unitary
+    manifold trains the real-orthogonal subset under a real objective.
+
+    Pytree contract:
+        leaves   = tensors
+        aux data = (m, n, len(tensors), code, inv_code)
+    """
+
+    m: int
+    n: int
+    tensors: list[Array]
+    code: object = field(compare=False, repr=False)
+    inv_code: object = field(compare=False, repr=False)
+
+    def __init__(
+        self,
+        m: int,
+        n: int,
+        tensors: Sequence[Array] | None = None,
+        code: object | None = None,
+        inv_code: object | None = None,
+    ):
+        if m < 1 or n < 1:
+            raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
+        from .circuit.dct4 import dct4_code
+
+        self.m = m
+        self.n = n
+        _code, init_tensors = dct4_code(m, n)
+        _inv_code, _ = dct4_code(m, n, inverse=True)
+        self.tensors = list(tensors) if tensors is not None else init_tensors
+        self.code = code if code is not None else _code
+        self.inv_code = inv_code if inv_code is not None else _inv_code
+
+    @property
+    def inv_tensors(self) -> list[Array]:
+        return self.tensors
+
+    @property
+    def image_size(self) -> tuple[int, int]:
+        return (2**self.m, 2**self.n)
+
+    @property
+    def num_parameters(self) -> int:
+        return sum(int(t.size) for t in self.tensors)
+
+    def forward_transform(self, pic: Array) -> Array:
+        from .circuit.dct4 import dct4_ft_mat
+
+        return dct4_ft_mat(self.tensors, self.code, self.m, self.n, pic)
+
+    def inverse_transform(self, pic: Array) -> Array:
+        from .circuit.dct4 import dct4_ift_mat
+
+        return dct4_ift_mat(
+            [jnp.conj(t) for t in self.tensors],
+            self.inv_code,
+            self.m,
+            self.n,
+            pic,
+        )
+
+
+def _dct4basis_flatten(b: DCT4Basis):
+    leaves = tuple(b.tensors)
+    aux = (b.m, b.n, len(b.tensors), b.code, b.inv_code)
+    return leaves, aux
+
+
+def _dct4basis_unflatten(aux, leaves) -> DCT4Basis:
+    m, n, n_fwd, code, inv_code = aux
+    assert len(leaves) == n_fwd
+    out = DCT4Basis.__new__(DCT4Basis)
+    out.m = m
+    out.n = n
+    out.tensors = list(leaves)
+    out.code = code
+    out.inv_code = inv_code
+    return out
+
+
+tree_util.register_pytree_node(DCT4Basis, _dct4basis_flatten, _dct4basis_unflatten)

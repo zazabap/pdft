@@ -49,6 +49,7 @@ __upstream_ref__ = "nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d
 from .bases import (  # noqa: E402
     AbstractSparseBasis,
     BlockedBasis,
+    DCT4Basis,
     EntangledQFTBasis,
     MERABasis,
     QFTBasis,
@@ -66,6 +67,7 @@ __all__ = [
     "AbstractLoss",
     "AbstractSparseBasis",
     "BlockedBasis",
+    "DCT4Basis",
     "EntangledQFTBasis",
     "L1Norm",
     "MERABasis",
