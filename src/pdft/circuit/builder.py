@@ -43,7 +43,7 @@ def controlled_phase_diag(phi: float) -> Array:
 
 
 class Gate(TypedDict):
-    kind: str  # "H", "CP", or "U4"
+    kind: str  # "H", "CP", "U4", or "CRY"
     qubits: tuple[int, ...]
     tensor: Array
     phase: float
@@ -267,6 +267,21 @@ def _stepped_apply(
             contract_axes = [[0, 1], [ax_c, ax_t]] if inverse else [[2, 3], [ax_c, ax_t]]
             pic = jnp.tensordot(T, pic, axes=contract_axes)
             pic = jnp.moveaxis(pic, [0, 1], [ax_c, ax_t])
+        elif kind == "CRY":
+            # Controlled rotation: T is a (2, 2) block applied to the target
+            # on the control = 1 branch only (control passes through). Same
+            # forward/inverse leg convention as the H handler; the caller
+            # conjugates tensors for the true adjoint on the inverse path.
+            q_ctrl, q_tgt = qubits
+            ax_c = _axis_of_qubit(q_ctrl, m, n)
+            ax_t = _axis_of_qubit(q_tgt, m, n)
+            contract_in = 0 if inverse else 1
+            applied = jnp.tensordot(T, pic, axes=[[contract_in], [ax_t]])
+            applied = jnp.moveaxis(applied, 0, ax_t)
+            sel_shape = [1] * pic.ndim
+            sel_shape[ax_c] = 2
+            ctrl1 = jnp.asarray([False, True]).reshape(sel_shape)
+            pic = jnp.where(ctrl1, applied, pic)
         else:
             raise AssertionError(f"unknown gate kind: {kind}")
     return pic
