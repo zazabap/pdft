@@ -114,3 +114,68 @@ def test_dct4_gates_are_at_most_two_qubit():
     gates = _dct4_gates_1d(4, offset=0)
     assert all(len(g["qubits"]) <= 2 for g in gates)
     assert {g["kind"] for g in gates} <= {"H", "CP", "U4"}
+
+
+def _rand_pic_c(m, n, seed=1):
+    import jax.numpy as jnp
+    rng = np.random.default_rng(seed)
+    a = rng.standard_normal((2**m, 2**n)) + 1j * rng.standard_normal((2**m, 2**n))
+    return jnp.asarray(a, dtype=jnp.complex128)
+
+
+def test_controlled_matches_o4_at_init():
+    import jax.numpy as jnp
+    m, n = 3, 3
+    pic = _rand_pic_c(m, n)
+    b_o4 = DCT4Basis(m, n)
+    b_ctl = DCT4Basis(m, n, parametrization="controlled")
+    out_o4 = dct4_ft_mat(b_o4.tensors, b_o4.code, m, n, pic)
+    out_ctl = dct4_ft_mat(b_ctl.tensors, b_ctl.code, m, n, pic)
+    assert jnp.allclose(out_o4, out_ctl, atol=1e-10)
+
+
+def test_controlled_roundtrips():
+    import jax.numpy as jnp
+    m, n = 3, 2
+    pic = _rand_pic_c(m, n)
+    b = DCT4Basis(m, n, parametrization="controlled")
+    fwd = b.forward_transform(pic)
+    back = b.inverse_transform(fwd)
+    assert jnp.allclose(back, pic, atol=1e-9)
+
+
+def test_controlled_drops_twiddle_o4_gates():
+    m, n = 3, 3
+    b_o4 = DCT4Basis(m, n)
+    b_ctl = DCT4Basis(m, n, parametrization="controlled")
+    n4 = lambda b: sum(1 for t in b.tensors if t.shape == (2, 2, 2, 2))
+    assert n4(b_o4) - n4(b_ctl) == 6
+
+
+def test_controlled_twiddle_on_o2_manifold():
+    from pdft.manifolds import Unitary2qManifold, group_by_manifold
+    b_o4 = DCT4Basis(3, 3)
+    b_ctl = DCT4Basis(3, 3, parametrization="controlled")
+
+    def n_o4(b):
+        g = group_by_manifold(list(b.tensors))
+        return sum(len(v) for k, v in g.items() if isinstance(k, Unitary2qManifold))
+
+    assert n_o4(b_o4) - n_o4(b_ctl) == 6
+
+
+def test_controlled_gradient_flows_to_2x2_leaves():
+    import jax
+    import jax.numpy as jnp
+    m, n = 2, 2
+    pic = _rand_pic_c(m, n)
+    b = DCT4Basis(m, n, parametrization="controlled")
+    w = jnp.arange(2 ** (m + n), dtype=jnp.float64).reshape((2**m, 2**n))
+
+    def loss(tensors):
+        out = dct4_ft_mat(tensors, b.code, m, n, pic)
+        return jnp.sum((jnp.abs(out) ** 2) * w)
+
+    grads = jax.grad(loss)(b.tensors)
+    two_grads = [g for g, t in zip(grads, b.tensors) if t.shape == (2, 2)]
+    assert two_grads and any(float(jnp.max(jnp.abs(g))) > 1e-8 for g in two_grads)
