@@ -66,6 +66,7 @@ __all__ = [
     "dct4_ft_mat",
     "dct4_ift_mat",
     "_dct4_gates_1d",
+    "_cry",
 ]
 
 
@@ -95,6 +96,16 @@ def _cry_u4(theta: float) -> Array:
         for it in (0, 1):
             M[1, ot, 1, it] = R[ot, it]  # control = 1 -> R_y on target
     return jnp.asarray(M, dtype=jnp.complex128)
+
+
+def _cry(theta: float) -> Array:
+    """Controlled-R_y trainable leaf: just the (2, 2) R_y block.
+
+    Applied with control structure by the builder's ``CRY`` kind (identity on
+    control = 0, this block on control = 1), so the leaf trains on O(2) — the
+    structured, dense-O(4)-free parametrization of the twiddle.
+    """
+    return _ry(theta)
 
 
 def _dct4_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
