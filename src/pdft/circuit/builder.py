@@ -157,6 +157,8 @@ def build_circuit_einsum(
             wire_state[q_ctrl] = out_c
             wire_state[q_tgt] = out_t
         else:
+            # NOTE: "CRY" is handled only by the stepped path (_stepped_apply);
+            # the legacy einsum builder does not emit it.
             raise AssertionError(f"unknown gate kind: {g['kind']}")
 
     # Hadamard-first sort (matches Julia's perm_vec).
