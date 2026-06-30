@@ -145,7 +145,10 @@ def test_controlled_drops_twiddle_o4_gates():
     m, n = 3, 3
     b_o4 = DCT4Basis(m, n)
     b_ctl = DCT4Basis(m, n, parametrization="controlled")
-    n4 = lambda b: sum(1 for t in b.tensors if t.shape == (2, 2, 2, 2))
+
+    def n4(b):
+        return sum(1 for t in b.tensors if t.shape == (2, 2, 2, 2))
+
     assert n4(b_o4) - n4(b_ctl) == 6
 
 
