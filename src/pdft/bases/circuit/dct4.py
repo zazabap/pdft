@@ -66,6 +66,7 @@ __all__ = [
     "dct4_ft_mat",
     "dct4_ift_mat",
     "_dct4_gates_1d",
+    "_cry",
 ]
 
 
@@ -97,7 +98,17 @@ def _cry_u4(theta: float) -> Array:
     return jnp.asarray(M, dtype=jnp.complex128)
 
 
-def _dct4_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
+def _cry(theta: float) -> Array:
+    """Controlled-R_y trainable leaf: just the (2, 2) R_y block.
+
+    Applied with control structure by the builder's ``CRY`` kind (identity on
+    control = 0, this block on control = 1), so the leaf trains on O(2) — the
+    structured, dense-O(4)-free parametrization of the twiddle.
+    """
+    return _ry(theta)
+
+
+def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> list[Gate]:
     """Emit the 1D DCT-IV gate sequence on qubits (offset+1, ..., offset+n_qubits).
 
     Within-block qubit ``q`` (0 = top/most significant) maps to builder qubit
@@ -124,7 +135,12 @@ def _dct4_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
         gates.append(Gate(kind="H", qubits=(Q(b),), tensor=_ry(np.pi / (2 * size)), phase=0.0))
         for p in range(n_qubits - 1 - k):
             theta = np.pi * (2**p) / size
-            gates.append(Gate(kind="U4", qubits=(Q(n_qubits - 1 - p), Q(b)), tensor=_cry_u4(theta), phase=0.0))
+            if parametrization == "controlled":
+                gates.append(Gate(kind="CRY", qubits=(Q(n_qubits - 1 - p), Q(b)),
+                                  tensor=_cry(theta), phase=0.0))
+            else:
+                gates.append(Gate(kind="U4", qubits=(Q(n_qubits - 1 - p), Q(b)),
+                                  tensor=_cry_u4(theta), phase=0.0))
         # R: odd-branch reversal — the mirror-Q permutation repeated
         for q in lower:
             gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0))
@@ -141,11 +157,25 @@ def _dct4_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
     return gates
 
 
-def dct4_code(m: int, n: int, *, inverse: bool = False) -> tuple[Callable[..., Array], list[Array]]:
-    """Return `(einsum_fn, initial_tensors)` for 2D DCT-IV on (2^m, 2^n) images."""
+def dct4_code(
+    m: int, n: int, *, inverse: bool = False, parametrization: str = "o4"
+) -> tuple[Callable[..., Array], list[Array]]:
+    """Return `(einsum_fn, initial_tensors)` for 2D DCT-IV on (2^m, 2^n) images.
+
+    ``parametrization`` selects how the affine twiddle is stored: ``"o4"``
+    (default) emits a dense ``(2, 2, 2, 2)`` controlled-R_y trained on O(4);
+    ``"controlled"`` emits a single-angle ``CRY`` gate whose trainable leaf is
+    a ``(2, 2)`` block on O(2) (the mirror-Q CNOTs stay dense U4).
+    """
     if m < 1 or n < 1:
         raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
-    gates = _dct4_gates_1d(m, offset=0) + _dct4_gates_1d(n, offset=m)
+    if parametrization not in ("o4", "controlled"):
+        raise ValueError(
+            f"parametrization must be 'o4' or 'controlled', got {parametrization!r}"
+        )
+    gates = _dct4_gates_1d(m, offset=0, parametrization=parametrization) + _dct4_gates_1d(
+        n, offset=m, parametrization=parametrization
+    )
     return compile_circuit(gates, m, n, inverse=inverse)
 
 

@@ -510,6 +510,7 @@ class DCT4Basis:
         tensors: Sequence[Array] | None = None,
         code: object | None = None,
         inv_code: object | None = None,
+        parametrization: str = "o4",
     ):
         if m < 1 or n < 1:
             raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
@@ -517,8 +518,8 @@ class DCT4Basis:
 
         self.m = m
         self.n = n
-        _code, init_tensors = dct4_code(m, n)
-        _inv_code, _ = dct4_code(m, n, inverse=True)
+        _code, init_tensors = dct4_code(m, n, parametrization=parametrization)
+        _inv_code, _ = dct4_code(m, n, inverse=True, parametrization=parametrization)
         self.tensors = list(tensors) if tensors is not None else init_tensors
         self.code = code if code is not None else _code
         self.inv_code = inv_code if inv_code is not None else _inv_code

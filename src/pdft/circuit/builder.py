@@ -43,7 +43,7 @@ def controlled_phase_diag(phi: float) -> Array:
 
 
 class Gate(TypedDict):
-    kind: str  # "H", "CP", or "U4"
+    kind: str  # "H", "CP", "U4", or "CRY"
     qubits: tuple[int, ...]
     tensor: Array
     phase: float
@@ -157,6 +157,8 @@ def build_circuit_einsum(
             wire_state[q_ctrl] = out_c
             wire_state[q_tgt] = out_t
         else:
+            # NOTE: "CRY" is handled only by the stepped path (_stepped_apply);
+            # the legacy einsum builder does not emit it.
             raise AssertionError(f"unknown gate kind: {g['kind']}")
 
     # Hadamard-first sort (matches Julia's perm_vec).
@@ -267,6 +269,28 @@ def _stepped_apply(
             contract_axes = [[0, 1], [ax_c, ax_t]] if inverse else [[2, 3], [ax_c, ax_t]]
             pic = jnp.tensordot(T, pic, axes=contract_axes)
             pic = jnp.moveaxis(pic, [0, 1], [ax_c, ax_t])
+        elif kind == "CRY":
+            # Controlled rotation: T is a (2, 2) block applied to the target
+            # on the control = 1 branch only (control passes through). Apply
+            # the block to the control = 1 half *only*: slicing the control
+            # axis touches 2**(m+n-1) amplitudes and recombines, instead of
+            # rotating the whole state and discarding the control = 0 half via
+            # a full-size jnp.where mask (which both doubled the contraction
+            # and materialised a 2**(m+n) masked intermediate per step — the
+            # dominant cost at large registers). Same forward/inverse leg
+            # convention as the H handler; the caller conjugates tensors for
+            # the true adjoint on the inverse path.
+            q_ctrl, q_tgt = qubits
+            ax_c = _axis_of_qubit(q_ctrl, m, n)
+            ax_t = _axis_of_qubit(q_tgt, m, n)
+            contract_in = 0 if inverse else 1
+            pic0 = jnp.take(pic, 0, axis=ax_c)  # control = 0 (passthrough)
+            pic1 = jnp.take(pic, 1, axis=ax_c)  # control = 1 (rotated)
+            # target axis index after the control axis is sliced out
+            ax_t1 = ax_t if ax_t < ax_c else ax_t - 1
+            rot = jnp.tensordot(T, pic1, axes=[[contract_in], [ax_t1]])
+            rot = jnp.moveaxis(rot, 0, ax_t1)
+            pic = jnp.stack([pic0, rot], axis=ax_c)
         else:
             raise AssertionError(f"unknown gate kind: {kind}")
     return pic
