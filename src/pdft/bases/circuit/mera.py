@@ -18,6 +18,7 @@ from ...circuit.builder import (
     Gate,
     compile_circuit,
     controlled_phase_diag,
+    u4_from_phase,
 )
 
 Array = jax.Array
@@ -57,11 +58,17 @@ def _mera_single_dim_gates(
     n_qubits: int,
     qubit_offset: int,
     phases: Sequence[float],
+    parametrization: str = "cp",
 ) -> list[Gate]:
     """Build MERA gate sequence for one dimension (upstream src/mera.jl:42-73).
 
     For k = log2(n_qubits) layers. Each layer l has stride s = 2^(l-1).
     Disentanglers and isometries are emitted in interleaved pairs.
+
+    ``parametrization`` is ``"cp"`` (diagonal, ``U(1)^4``) or ``"u4"``
+    (dense two-qubit, ``U(4)``): a MERA disentangler/isometry is a general
+    two-site unitary, so ``"u4"`` is the canonical family. Both start at
+    the same operator for a given ``phases``.
     """
     assert _is_pow2(n_qubits), f"n_qubits must be a power of 2, got {n_qubits}"
     assert n_qubits >= 2, f"n_qubits must be >= 2, got {n_qubits}"
@@ -69,6 +76,18 @@ def _mera_single_dim_gates(
     assert len(phases) == expected, f"phases length {len(phases)} != expected {expected}"
 
     import math
+
+    def _pair_gate(q_ctrl: int, q_tgt: int, phi: float) -> Gate:
+        if parametrization == "u4":
+            return Gate(
+                kind="U4", qubits=(q_ctrl, q_tgt), tensor=u4_from_phase(phi), phase=phi
+            )
+        return Gate(
+            kind="CP",
+            qubits=(q_ctrl, q_tgt),
+            tensor=controlled_phase_diag(phi),
+            phase=phi,
+        )
 
     k = int(math.log2(n_qubits))
     gates: list[Gate] = []
@@ -84,13 +103,9 @@ def _mera_single_dim_gates(
             # Julia's mod1(x, n) returns ((x - 1) % n) + 1
             q2_raw = 2 * p * s + s + 2
             q2 = ((q2_raw - 1) % n_qubits) + 1
-            phi = float(phases[phase_idx])
             gates.append(
-                Gate(
-                    kind="CP",
-                    qubits=(q1 + qubit_offset, q2 + qubit_offset),
-                    tensor=controlled_phase_diag(phi),
-                    phase=phi,
+                _pair_gate(
+                    q1 + qubit_offset, q2 + qubit_offset, float(phases[phase_idx])
                 )
             )
             phase_idx += 1
@@ -99,13 +114,9 @@ def _mera_single_dim_gates(
         for p in range(n_pairs):
             q1 = 2 * p * s + 1
             q2 = 2 * p * s + s + 1
-            phi = float(phases[phase_idx])
             gates.append(
-                Gate(
-                    kind="CP",
-                    qubits=(q1 + qubit_offset, q2 + qubit_offset),
-                    tensor=controlled_phase_diag(phi),
-                    phase=phi,
+                _pair_gate(
+                    q1 + qubit_offset, q2 + qubit_offset, float(phases[phase_idx])
                 )
             )
             phase_idx += 1
@@ -120,15 +131,23 @@ def mera_code(
     *,
     phases: Sequence[float] | None = None,
     inverse: bool = False,
+    parametrization: str = "cp",
 ) -> tuple[Callable[..., Array], list[Array], int, int]:
     """Return `(einsum_fn, initial_tensors, n_row_gates, n_col_gates)`.
 
     Mirror of upstream src/mera.jl:108-176. Each dimension with >= 2 qubits
     must be a power of 2; dimensions with exactly 1 qubit skip MERA in that
     direction.
+
+    ``parametrization`` is ``"cp"`` (diagonal, ``U(1)^4``) or ``"u4"``
+    (dense two-qubit, ``U(4)`` — the canonical disentangler/isometry).
     """
     if m < 1 or n < 1:
         raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
+    if parametrization not in ("cp", "u4"):
+        raise ValueError(
+            f"parametrization must be 'cp' or 'u4', got {parametrization!r}"
+        )
     if m >= 2 and not _is_pow2(m):
         raise ValueError(f"m must be a power of 2 when >= 2, got m={m}")
     if n >= 2 and not _is_pow2(n):
@@ -157,11 +176,25 @@ def mera_code(
 
     # Layer 2a: Row MERA
     if m >= 2:
-        gates.extend(_mera_single_dim_gates(m, qubit_offset=0, phases=phases_list[:n_row_gates]))
+        gates.extend(
+            _mera_single_dim_gates(
+                m,
+                qubit_offset=0,
+                phases=phases_list[:n_row_gates],
+                parametrization=parametrization,
+            )
+        )
 
     # Layer 2b: Col MERA
     if n >= 2:
-        gates.extend(_mera_single_dim_gates(n, qubit_offset=m, phases=phases_list[n_row_gates:]))
+        gates.extend(
+            _mera_single_dim_gates(
+                n,
+                qubit_offset=m,
+                phases=phases_list[n_row_gates:],
+                parametrization=parametrization,
+            )
+        )
 
     code, tensors = compile_circuit(gates, m, n, inverse=inverse)
     return code, tensors, n_row_gates, n_col_gates
