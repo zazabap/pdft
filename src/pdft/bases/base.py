@@ -291,11 +291,15 @@ class TEBDBasis:
         code: object | None = None,
         inv_code: object | None = None,
         seed: int | None = None,
+        parametrization: str = "cp",
     ):
         """When `seed` is provided AND `phases` is None, draws phases from
         `np.random.default_rng(seed).normal(0, 0.1, n_row_gates + n_col_gates)`
         — Julia's `randn(n_gates) * 0.1` convention from
         `ParametricDFT.jl/src/training.jl::_init_circuit`.
+
+        `parametrization` is "cp" (diagonal ring gates on U(1)^4) or "u4"
+        (dense two-qubit ring gates on U(4), the canonical TEBD gate).
         """
         import numpy as np
 
@@ -307,8 +311,12 @@ class TEBDBasis:
         self.n = n
         if phases is None and seed is not None:
             phases = list(np.random.default_rng(seed).normal(0.0, 0.1, m + n))
-        _code, init_tensors, self.n_row_gates, self.n_col_gates = tebd_code(m, n, phases=phases)
-        _inv_code, _, _, _ = tebd_code(m, n, phases=phases, inverse=True)
+        _code, init_tensors, self.n_row_gates, self.n_col_gates = tebd_code(
+            m, n, phases=phases, parametrization=parametrization
+        )
+        _inv_code, _, _, _ = tebd_code(
+            m, n, phases=phases, inverse=True, parametrization=parametrization
+        )
         self.tensors = list(tensors) if tensors is not None else init_tensors
         self.code = code if code is not None else _code
         self.inv_code = inv_code if inv_code is not None else _inv_code
@@ -394,11 +402,15 @@ class MERABasis:
         code: object | None = None,
         inv_code: object | None = None,
         seed: int | None = None,
+        parametrization: str = "cp",
     ):
         """When `seed` is provided AND `phases` is None, draws phases from
         `np.random.default_rng(seed).normal(0, 0.1, n_gates)` — Julia's
         `randn(n_gates) * 0.1` convention from
         `ParametricDFT.jl/src/training.jl::_init_circuit`.
+
+        `parametrization` is "cp" (diagonal disentanglers/isometries on
+        U(1)^4) or "u4" (dense two-qubit gates on U(4), the canonical form).
         """
         import numpy as np
 
@@ -412,8 +424,12 @@ class MERABasis:
             n_row = _n_mera_gates(m) if m >= 2 else 0
             n_col = _n_mera_gates(n) if n >= 2 else 0
             phases = list(np.random.default_rng(seed).normal(0.0, 0.1, n_row + n_col))
-        _code, init_tensors, self.n_row_gates, self.n_col_gates = mera_code(m, n, phases=phases)
-        _inv_code, _, _, _ = mera_code(m, n, phases=phases, inverse=True)
+        _code, init_tensors, self.n_row_gates, self.n_col_gates = mera_code(
+            m, n, phases=phases, parametrization=parametrization
+        )
+        _inv_code, _, _, _ = mera_code(
+            m, n, phases=phases, inverse=True, parametrization=parametrization
+        )
         self.tensors = list(tensors) if tensors is not None else init_tensors
         self.code = code if code is not None else _code
         self.inv_code = inv_code if inv_code is not None else _inv_code
