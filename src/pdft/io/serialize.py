@@ -71,8 +71,7 @@ def format_float_julia_like(x) -> str:
     mantissa, exp = s.split("e", 1)
 
     # Python always includes sign in exponent (e+20, e-07); Julia drops '+'.
-    if exp.startswith("+"):
-        exp = exp[1:]
+    exp = exp.removeprefix("+")
 
     # Strip leading zeros in the exponent magnitude, but keep at least one digit.
     if exp.startswith("-"):

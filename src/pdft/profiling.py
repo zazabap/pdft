@@ -289,4 +289,4 @@ def profile_training(
     return report
 
 
-__all__ = ["profile_training", "ProfileReport", "StepRecord"]
+__all__ = ["ProfileReport", "StepRecord", "profile_training"]

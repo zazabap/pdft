@@ -100,21 +100,20 @@ def _parity_check(basis_factory, m=3, n=3, block_log_m=1, block_log_n=1, optimiz
         rtol=0.0,
     )
 
-    train_kwargs = dict(
-        dataset=dataset,
-        loss=pdft.MSELoss(k=8),
-        epochs=2,
-        batch_size=2,
-        optimizer=optimizer,
-        validation_split=0.0,
-        early_stopping_patience=10**9,
-        warmup_frac=0.0,
-        lr_peak=0.003,
-        lr_final=0.003,
-        max_grad_norm=1.0,
-        shuffle=False,
-        seed=123,
-    )
+    train_kwargs = {
+        "dataset": dataset,
+        "loss": pdft.MSELoss(k=8),
+        "epochs": 2,
+        "batch_size": 2,
+        "optimizer": optimizer,
+        "validation_split": 0.0,
+        "early_stopping_patience": 10**9,
+        "warmup_frac": 0.0,
+        "lr_peak": 0.003,
+        "lr_final": 0.003,
+        "max_grad_norm": 1.0,
+        "shuffle": False,
+        "seed": 123,}
 
     frozen_result = pdft.train_basis_batched(full, frozen_indices=frozen, **train_kwargs)
     blocked_result = pdft.train_basis_batched(blocked, **train_kwargs)

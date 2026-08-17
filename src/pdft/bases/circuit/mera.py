@@ -25,9 +25,9 @@ Array = jax.Array
 
 
 __all__ = [
-    "mera_code",
-    "get_mera_gate_indices",
     "extract_mera_phases",
+    "get_mera_gate_indices",
+    "mera_code",
 ]
 
 

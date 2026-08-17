@@ -35,9 +35,9 @@ Array = jax.Array
 
 
 __all__ = [
-    "tebd_code",
-    "get_tebd_gate_indices",
     "extract_tebd_phases",
+    "get_tebd_gate_indices",
+    "tebd_code",
 ]
 
 

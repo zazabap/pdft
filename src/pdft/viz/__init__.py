@@ -5,6 +5,7 @@ on by core. `viz.loss` plots loss histories; `viz.circuit` draws the
 einsum schematic for a basis.
 """
 
+from .circuit import plot_circuit
 from .loss import (
     TrainingHistory,
     ema_smooth,
@@ -12,7 +13,6 @@ from .loss import (
     plot_training_loss,
     save_training_plots,
 )
-from .circuit import plot_circuit
 
 __all__ = [
     "TrainingHistory",

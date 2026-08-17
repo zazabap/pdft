@@ -21,7 +21,6 @@ import pytest
 import pdft
 from pdft.profiling import ProfileReport, StepRecord, _maybe_trace
 
-
 M, N = 2, 2
 SIZE = 2**M
 

@@ -24,10 +24,10 @@ Array = jax.Array
 
 
 __all__ = [
-    "entanglement_gate",
     "entangled_qft_code",
-    "get_entangle_tensor_indices",
+    "entanglement_gate",
     "extract_entangle_phases",
+    "get_entangle_tensor_indices",
 ]
 
 
