@@ -17,6 +17,7 @@ Public API: import from subpackages directly, e.g.
     from pdft.optimizers import RiemannianGD, RiemannianAdam
     from pdft.loss import L1Norm, MSELoss
     from pdft.io import save_basis, load_basis, compress
+    from pdft.coherence import coherence, certify_flat_modulus
 
 The names re-exported at the package root below are kept only for the
 small set most commonly used in interactive sessions and notebooks.
@@ -59,6 +60,7 @@ from .bases import (
     bases_allclose,
     freeze_as_blocked,
 )
+from .coherence import certify_flat_modulus, coherence
 from .loss import AbstractLoss, L1Norm, MSELoss, loss_function
 from .optimizers import RiemannianAdam, RiemannianGD, optimize
 from .training import TrainingResult, train_basis, train_basis_batched
@@ -82,6 +84,8 @@ __all__ = [
     "__upstream_ref__",
     "__version__",
     "bases_allclose",
+    "certify_flat_modulus",
+    "coherence",
     "freeze_as_blocked",
     "loss_function",
     "optimize",
