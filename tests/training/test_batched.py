@@ -17,7 +17,6 @@ import pytest
 import pdft
 from pdft.training import cosine_with_warmup, train_basis_batched
 
-
 # ---------------------------------------------------------------------------
 # _cosine_with_warmup
 # ---------------------------------------------------------------------------
@@ -62,7 +61,7 @@ def test_cosine_warmup_matches_julia_formula():
     lr_peak = 0.01
     lr_final = 0.001
     warmup_steps = max(1, round(warmup_frac * total))
-    for step in range(0, total + 1):
+    for step in range(total + 1):
         py = cosine_with_warmup(
             step, total, warmup_frac=warmup_frac, lr_peak=lr_peak, lr_final=lr_final
         )
@@ -294,6 +293,7 @@ def test_train_basis_batched_freezes_specified_indices():
     indices update normally."""
     import jax.numpy as jnp
     import numpy as np
+
     import pdft
 
     # Build a small QFTBasis (m=n=2 -> 4 H + 2 CP = 6 tensors).
@@ -347,6 +347,7 @@ def test_train_basis_batched_freezes_specified_indices_with_gd():
     """GD/Armijo should evaluate and retain the constrained update directly."""
     import jax.numpy as jnp
     import numpy as np
+
     import pdft
 
     basis = pdft.QFTBasis(m=2, n=2)
@@ -403,21 +404,20 @@ def test_frozen_qft_outer_gates_matches_blocked_qft_training():
         rtol=0.0,
     )
 
-    train_kwargs = dict(
-        dataset=dataset,
-        loss=pdft.MSELoss(k=8),
-        epochs=2,
-        batch_size=2,
-        optimizer="adam",
-        validation_split=0.0,
-        early_stopping_patience=10**9,
-        warmup_frac=0.0,
-        lr_peak=0.003,
-        lr_final=0.003,
-        max_grad_norm=1.0,
-        shuffle=False,
-        seed=123,
-    )
+    train_kwargs = {
+        "dataset": dataset,
+        "loss": pdft.MSELoss(k=8),
+        "epochs": 2,
+        "batch_size": 2,
+        "optimizer": "adam",
+        "validation_split": 0.0,
+        "early_stopping_patience": 10**9,
+        "warmup_frac": 0.0,
+        "lr_peak": 0.003,
+        "lr_final": 0.003,
+        "max_grad_norm": 1.0,
+        "shuffle": False,
+        "seed": 123,}
 
     frozen_result = pdft.train_basis_batched(
         full_basis,
@@ -450,6 +450,7 @@ def test_frozen_qft_outer_gates_matches_blocked_qft_training():
 def test_train_basis_batched_frozen_indices_validation():
     """frozen_indices validation: out-of-range index, negative, duplicate."""
     import pytest
+
     import pdft
 
     basis = pdft.QFTBasis(m=2, n=2)

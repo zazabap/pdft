@@ -19,14 +19,12 @@ Array = jax.Array
 class AbstractLoss(Protocol):
     """Marker protocol for loss types. No behavior; dispatch is functional."""
 
-    ...
 
 
 @dataclass(frozen=True)
 class L1Norm:
     """L1 norm loss: minimizes `sum(|T(x)|)` to encourage sparsity."""
 
-    pass
 
 
 @dataclass(frozen=True)

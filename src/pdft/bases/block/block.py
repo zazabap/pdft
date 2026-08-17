@@ -73,7 +73,7 @@ def _make_block_code(
     # axes (rows then cols) trailing. The trailing layout matches the inner
     # einsum's expected (2,)^(m_inner+n_inner) shape.
     perm = (
-        list(range(0, block_log_m))  # block row axes
+        list(range(block_log_m))  # block row axes
         + list(range(m_outer, m_outer + block_log_n))  # block col axes
         + list(range(block_log_m, m_outer))  # within row axes
         + list(range(m_outer + block_log_n, m_outer + n_outer))  # within col axes

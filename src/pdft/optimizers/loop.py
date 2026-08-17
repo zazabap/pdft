@@ -17,7 +17,7 @@ Array = jax.Array
 
 
 def optimize(
-    opt: "RiemannianGD | RiemannianAdam",
+    opt: RiemannianGD | RiemannianAdam,
     tensors: list[Array],
     loss_fn: Callable[[list[Array]], Array],
     grad_fn: Callable[[list[Array]], list[Array]],

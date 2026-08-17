@@ -34,11 +34,11 @@ Array = jax.Array
 # Re-export canonical primitives (imported by tests / external callers)
 __all__ = [
     "HADAMARD",
+    "_qft_gates_1d",
     "controlled_phase_diag",
-    "qft_code",
     "ft_mat",
     "ift_mat",
-    "_qft_gates_1d",
+    "qft_code",
 ]
 
 

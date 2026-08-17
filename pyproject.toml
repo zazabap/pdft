@@ -30,7 +30,7 @@ dependencies = [
 dev = [
     "pytest>=7",
     "pytest-cov>=4",
-    "ruff>=0.5",
+    "ruff>=0.6,<0.17",
     "numpy>=1.26",
     "jaxtyping>=0.2",
     "matplotlib>=3.8",
@@ -49,6 +49,29 @@ packages = ["src/pdft"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# Declared deliberately, because ruff's *default* rule set widens between
+# releases. With no `select` here and an unpinned `ruff>=0.5` in [dev], lint
+# was a property of the release calendar rather than of the repository: CI
+# went red on `main` with no source change when a newer ruff turned on rules
+# 0.5 did not have (RUF100, I001, C408, B008, ...).
+#
+# This set is pyflakes + import order + pyupgrade + comprehensions: the rules
+# that catch real defects, all of which the codebase already satisfies.
+select = ["E4", "E7", "E9", "F", "I", "UP", "C4"]
+
+# The package configures jax x64 mode before importing anything that reads it,
+# which is a module-level import after a statement by construction. This is
+# what the scattered `# noqa: E402` comments were for; ignoring the rule once
+# here is the same intent without directives that later ruff versions then
+# flag as unused.
+ignore = ["E402"]
+
+# Not enabled, but each is a reasonable thing to opt into later:
+#   "B"   -> 24 findings, almost all `zip()` without `strict=`
+#   "RUF" -> 40 findings, mostly ambiguous-unicode in maths docstrings where
+#            the multiplication sign is intended, so it needs per-site review
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

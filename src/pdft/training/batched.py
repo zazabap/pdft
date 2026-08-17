@@ -92,7 +92,7 @@ def _validate_batched_args(
         raise ValueError(f"warmup_frac must be in [0, 1), got {warmup_frac}")
 
 
-def _validate_frozen_indices(frozen_indices: "list[int] | None", n_tensors: int) -> frozenset:
+def _validate_frozen_indices(frozen_indices: list[int] | None, n_tensors: int) -> frozenset:
     """Validate and normalise ``frozen_indices``.
 
     Returns a ``frozenset[int]`` of validated frozen indices (empty set means
@@ -150,7 +150,7 @@ def train_basis_batched(
     shuffle: bool = True,
     seed: int = 0,
     val_every_k_epochs: int = 1,
-    frozen_indices: "list[int] | None" = None,
+    frozen_indices: list[int] | None = None,
 ) -> TrainingResult:
     """Multi-image, multi-epoch trainer with cosine LR schedule.
 

@@ -62,11 +62,11 @@ Array = jax.Array
 
 
 __all__ = [
+    "_cry",
+    "_dct4_gates_1d",
     "dct4_code",
     "dct4_ft_mat",
     "dct4_ift_mat",
-    "_dct4_gates_1d",
-    "_cry",
 ]
 
 

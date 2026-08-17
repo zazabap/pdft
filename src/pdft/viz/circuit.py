@@ -22,8 +22,9 @@ def _require_matplotlib():
 
 def _topology_from_basis(basis):
     """Return (n_qubits, gates) where gates are (kind, qubits, phase)."""
-    from ..circuit.builder import HADAMARD
     import numpy as np
+
+    from ..circuit.builder import HADAMARD
 
     m, n = basis.m, basis.n
     # Re-derive the gate sequence by reading tensor values: Hadamards sort

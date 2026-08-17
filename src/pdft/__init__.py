@@ -46,7 +46,7 @@ __upstream_ref__ = "nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d
 
 # Slim public re-export hub: most-used names only. Anything else: import
 # from the relevant subpackage directly.
-from .bases import (  # noqa: E402
+from .bases import (
     AbstractSparseBasis,
     BlockedBasis,
     DCT4Basis,
@@ -59,9 +59,9 @@ from .bases import (  # noqa: E402
     bases_allclose,
     freeze_as_blocked,
 )
-from .loss import AbstractLoss, L1Norm, MSELoss, loss_function  # noqa: E402
-from .optimizers import RiemannianAdam, RiemannianGD, optimize  # noqa: E402
-from .training import TrainingResult, train_basis, train_basis_batched  # noqa: E402
+from .loss import AbstractLoss, L1Norm, MSELoss, loss_function
+from .optimizers import RiemannianAdam, RiemannianGD, optimize
+from .training import TrainingResult, train_basis, train_basis_batched
 
 __all__ = [
     "AbstractLoss",
