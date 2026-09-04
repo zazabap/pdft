@@ -18,11 +18,16 @@ This is the reference implementation accompanying the paper
 
 ## Installation
 
-Once published on PyPI:
+From PyPI (Python 3.11+):
 
 ```bash
-pip install pdft
+pip install "pdft>=0.2.3"
 ```
+
+> **Note:** the older `pdft==0.2.2` wheel predates `DCT4Basis` and the
+> `parametrization="u4"` option of `TEBDBasis` / `MERABasis`, so it cannot run
+> the paper's DCT-IV, TEBD-U4, or MERA-U4 configurations. If
+> `pdft.__version__` reports `0.2.2`, upgrade with `pip install -U pdft`.
 
 From source:
 
