@@ -36,11 +36,21 @@ dev = [
     "matplotlib>=3.8",
 ]
 plot = ["matplotlib>=3.8"]
+docs = [
+    "sphinx>=8",
+    "furo>=2024.8",
+    "sphinx-gallery>=0.17",
+    "sphinx-design>=0.6",
+    "sphinx-copybutton>=0.5",
+    "myst-parser>=4",
+    "matplotlib>=3.8",
+]
 gpu = ["jax[cuda12]>=0.10.0"]
 
 [project.urls]
 Homepage = "https://github.com/zazabap/pdft"
 Issues = "https://github.com/zazabap/pdft/issues"
+Documentation = "https://zazabap.github.io/pdft/"
 Upstream = "https://github.com/nzy1997/ParametricDFT.jl"
 
 [tool.hatch.build.targets.wheel]

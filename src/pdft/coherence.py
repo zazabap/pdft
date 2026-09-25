@@ -98,7 +98,7 @@ def dense_operator(basis) -> Array:
 
 
 def coherence(basis, operator: Array | None = None) -> float:
-    """mu(U) = N max_ij |U_ij|^2, in [1, N]. 1 is maximal incoherence.
+    """``mu(U) = N max_ij |U_ij|^2``, in [1, N]. 1 is maximal incoherence.
 
     Pass `operator` to reuse a matrix from `dense_operator`.
     """
@@ -107,7 +107,7 @@ def coherence(basis, operator: Array | None = None) -> float:
 
 
 def is_flat_modulus(basis, operator: Array | None = None, atol: float = 1e-8) -> bool:
-    """True if |U_ij| = N^{-1/2} everywhere, i.e. sqrt(N) U is complex Hadamard."""
+    """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard."""
     u = dense_operator(basis) if operator is None else operator
     return bool(jnp.allclose(jnp.abs(u), u.shape[0] ** -0.5, atol=atol))
 
@@ -153,7 +153,7 @@ def certify_flat_modulus(
     every tensor left trainable must be diagonal --- then by the proposition in
     the module docstring, mu == 1 for every value those parameters can take.
 
-    `frozen_indices` is the same argument `train_basis_batched` accepts, so:
+    `frozen_indices` is the same argument `train_basis_batched` accepts, so::
 
         cert = certify_flat_modulus(basis, frozen_indices=frozen)
         if not cert:

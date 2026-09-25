@@ -1,6 +1,9 @@
-"""basis_demo.py — train a QFTBasis on a random 4x4 image and plot the loss.
+"""Train a QFT basis
+=================
 
-Run: python examples/basis_demo.py
+Train a QFTBasis on a random 4x4 image and plot the loss.
+
+Run: ``python examples/basis_demo.py``
 Requires: pdft + pdft[plot] extra.
 """
 from __future__ import annotations

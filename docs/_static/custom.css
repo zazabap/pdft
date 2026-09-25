@@ -1,0 +1,10 @@
+/* Landing-page tweaks on top of Furo. */
+.hero-tagline {
+  font-size: 1.2rem;
+  color: var(--color-foreground-secondary);
+  margin-top: -0.5rem;
+}
+
+.sd-card-title {
+  font-weight: 600;
+}
