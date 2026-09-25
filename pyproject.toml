@@ -38,7 +38,7 @@ dev = [
 plot = ["matplotlib>=3.8"]
 docs = [
     "sphinx>=8",
-    "furo>=2024.8",
+    "sphinx-book-theme>=1.1",
     "sphinx-gallery>=0.17",
     "sphinx-design>=0.6",
     "sphinx-copybutton>=0.5",
