@@ -45,7 +45,10 @@ def test_complex_leaves_use_the_squared_modulus():
     assert new["a"].dtype == params["a"].dtype
 
 
-def test_bit_for_bit_agreement_with_optax():
+def test_agreement_with_optax():
+    """Under jit, real leaves reproduce optax to the bit; the complex leaf may
+    differ by an ulp on CPU (optax keeps a complex-typed second moment and
+    takes a complex square root of it)."""
     optax = pytest.importorskip("optax")
     rng = np.random.default_rng(2)
     params = {
@@ -66,7 +69,7 @@ def test_bit_for_bit_agreement_with_optax():
         u, st = opt.update(g, st, p)
         return optax.apply_updates(p, u), st
 
-    for _ in range(15):
+    for _ in range(50):
         g = jax.tree.map(
             lambda x: (
                 jnp.asarray(rng.standard_normal(x.shape)) * (1 + 0j if jnp.iscomplexobj(x) else 1)
@@ -75,5 +78,5 @@ def test_bit_for_bit_agreement_with_optax():
         )
         p, st = ours(p, st, g)
         p_ref, st_ref = theirs(p_ref, st_ref, g)
-    for k in params:
-        assert np.array_equal(np.asarray(p[k]), np.asarray(p_ref[k])), k
+    assert np.array_equal(np.asarray(p["phi"]), np.asarray(p_ref["phi"]))
+    assert np.allclose(np.asarray(p["blk"]), np.asarray(p_ref["blk"]), rtol=0, atol=1e-14)

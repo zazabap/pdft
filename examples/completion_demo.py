@@ -1,5 +1,5 @@
 """Inpaint from random pixels with a trained QFT
-============================================
+=============================================
 
 Train the phase-only QFT circuit *through* the completion solver on a few
 synthetic images, then recover a held-out image from 30% of its pixels and

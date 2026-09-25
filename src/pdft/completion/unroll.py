@@ -177,9 +177,10 @@ def reconstruct(
     """The unrolled solver on a 2^nr x 2^nc image, differentiable at bounded memory.
 
     ``pr``, ``pc`` are the ``{"g", "phi"}`` parameter dicts of
-    :mod:`pdft.completion.families.general` (phase-only angles expand to that
-    form through :func:`pdft.completion.families.shared.expand` or
-    :func:`pdft.completion.families.general.init_general`). nr, nc default to
+    :mod:`pdft.completion.families.general`; distance-shared phases expand to
+    that form through :func:`pdft.completion.families.shared.expand`, and
+    phase-only angles ``theta`` are ``init_general(n)`` with
+    ``phi[:, 3]`` replaced by ``theta``. nr, nc default to
     log2 of Y's trailing two axes. strategy="auto" reads the device's free
     memory and plans against 80% of it; pass a schedule by name to pin it. The
     dtype of Y decides the precision throughout.

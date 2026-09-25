@@ -135,12 +135,17 @@ of the training objective; `test_solver.py` asserts the gradient is live.
 
 Same rule as the rest of the package (no optax dependency), but here the
 reference results *were* produced with `optax.adam`, so the written-out update
-must reproduce it to the bit: moment order, bias correction in float64 then
-cast to the moment's dtype, `sqrt(nu + 0) + eps`, `-lr` applied last, the
-update cast back to the parameter dtype, `|g|^2` for complex leaves.
-`tests/completion/test_adam.py` compares against optax when it happens to be
-importable (it is not a dev dependency) and against the textbook formula
-always. Every Adam-trained family goes through `training.adam_loop`, so the
+mirrors it: moment order, bias correction in float64 then cast to the moment's
+dtype, `sqrt(nu + 0) + eps`, `-lr` applied last, the update cast back to the
+parameter dtype, `|g|^2` for complex leaves. What that buys, measured: under
+`jax.jit` (every trainer runs it that way) real-valued parameters reproduce
+optax **bit for bit on CPU and GPU**; complex leaves (the free-block
+butterfly) agree to ~1e-16 on CPU because optax keeps a complex-typed second
+moment and takes a complex square root, exact on GPU; eagerly outside jit the
+two part by rounding (~1e-15). Do not "simplify" the arithmetic: the order of
+operations is the guarantee. `tests/completion/test_adam.py` compares against
+optax when it happens to be importable (it is not a dev dependency) and
+against the textbook formula always. Every Adam-trained family goes through `training.adam_loop`, so the
 batch/mask draw order, and with it every seed, is defined once. Cayley SGD
 (`families.riemannian`, `general.train_c`) keeps its own loop by necessity.
 

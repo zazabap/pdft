@@ -8,12 +8,17 @@ produced with ``optax.adam``; this package does not take optax as a dependency,
 so the update is written out here and mirrors optax's arithmetic operation for
 operation --- moment order, bias correction computed in float64 then cast to
 the moment's dtype, ``sqrt(nu + 0) + eps``, the ``-lr`` scaling applied last,
-and the parameter update cast back to the parameter's dtype --- so a run here
-reproduces a run there to the bit. A test compares the two when optax happens
-to be installed.
+and the parameter update cast back to the parameter's dtype. Under ``jax.jit``
+(which is how every trainer here runs it) a real-valued parameter tree then
+reproduces optax to the bit, on CPU and GPU; a test checks that when optax
+happens to be installed. Eagerly, outside jit, XLA fuses the two differently
+and they part by rounding (about 1e-15).
 
-Complex leaves (the free-block butterfly) are handled as optax handles them:
-the first moment is complex, the second moment is the elementwise |g|^2.
+Complex leaves (the free-block butterfly) get a complex first moment and the
+elementwise |g|^2 as the second, as in optax --- except that optax carries
+that second moment in the complex dtype and takes a complex square root of it,
+which on CPU differs from the real square root here by an ulp. The test
+allows that.
 """
 
 from __future__ import annotations

@@ -158,7 +158,7 @@ basis = qft_basis_from_angles(params["r"], params["c"])   # a pdft.QFTBasis: sav
 | `solver` | the unrolled IHT map: `hard_k` / `soft_k` (straight-through), `iht`, `reconstruct`, `reconstruct_batch` |
 | `unroll` | memory-bounded differentiation: nested rematerialisation turns `O(K N^2)` into `O(sqrt(K) N^2)`, with a planner |
 | `training` | the task objective, the compression control, and `adam_loop` (one batch/mask schedule for every trained family) |
-| `adam` | plain Adam written out, bit-for-bit with `optax.adam` (this package does not depend on optax) |
+| `adam` | plain Adam written out to mirror `optax.adam` (bit for bit for real parameters under jit; this package does not depend on optax) |
 | `coherence` | `mu` for closures and matrices, and `certify_flat_modulus` over sampled parameters |
 | `metrics`, `protocol` | PSNR / SSIM / MS-SSIM, and the paper's Table I protocol as data (`heldout_mask`, `budget_k`, `table1_scores`, …) |
 | `data` | Kodak and DIV2K splits from an explicit data directory (needs `pillow`) |
