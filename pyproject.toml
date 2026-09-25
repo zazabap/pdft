@@ -34,8 +34,16 @@ dev = [
     "numpy>=1.26",
     "jaxtyping>=0.2",
     "matplotlib>=3.8",
+    # pdft.completion's optional backends, so CI exercises them:
+    "scipy>=1.11",
+    "PyWavelets>=1.5",
+    "pillow>=10",
 ]
 plot = ["matplotlib>=3.8"]
+# pdft.completion: image loading (pillow), the wavelet baselines (PyWavelets)
+# and scipy's DCT (jax.scipy is the fallback). The circuit, solver, trainer
+# and metrics need none of these.
+completion = ["pillow>=10", "PyWavelets>=1.5", "scipy>=1.11"]
 gpu = ["jax[cuda12]>=0.10.0"]
 
 [project.urls]
