@@ -5,6 +5,11 @@ Losses
 
 Sparsity objectives minimized during training.
 
+.. automodule:: pdft.loss
+   :no-members:
+
+.. rubric:: Contents
+
 .. autosummary::
    :toctree: generated
    :nosignatures:

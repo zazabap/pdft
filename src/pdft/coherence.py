@@ -3,7 +3,7 @@
 For compression, the only thing that matters about a basis is how few
 coefficients it needs. For any task that recovers an image from a *subset of
 its pixels* --- inpainting, completion, compressed sensing --- a second
-quantity governs the outcome, and it is not sparsity:
+quantity governs the outcome, and it is not sparsity::
 
     mu(U) = N * max_ij |U_ij|^2   in [1, N]
 
@@ -20,7 +20,7 @@ usefully, certifies when it cannot drift at all.
 The guarantee
 -------------
 Let the circuit act on n wires, and suppose every gate is diagonal in the
-computational basis except for exactly one Hadamard per wire. Then
+computational basis except for exactly one Hadamard per wire. Then::
 
     |U_ij| = N^{-1/2}   for every i, j and every parameter value,
 
@@ -34,7 +34,7 @@ the Hadamard on wire q is applied. Every earlier gate is diagonal or a Hadamard
 on a different wire, so none has moved amplitude across wire q, and the vector
 is supported on one value of it: one branch carries a, the other 0. Since
 H (a, 0)^T = (a, a)^T / sqrt(2), the gate replaces each modulus by two equal
-moduli |a|/sqrt(2) and never combines unequal ones. Each wire receives exactly
+moduli ``|a|/sqrt(2)`` and never combines unequal ones. Each wire receives exactly
 one Hadamard, so every amplitude ends at 2^{-n/2}, and the remaining diagonal
 gates and permutations preserve moduli. QED
 

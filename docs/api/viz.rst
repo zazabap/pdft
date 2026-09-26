@@ -5,6 +5,11 @@ Visualization
 
 Loss-curve plots and circuit diagrams. Requires the ``plot`` extra (``pip install "pdft[plot]"``).
 
+.. automodule:: pdft.viz
+   :no-members:
+
+.. rubric:: Contents
+
 .. autosummary::
    :toctree: generated
    :nosignatures:

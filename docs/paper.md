@@ -25,10 +25,10 @@ If you use this package in your research, please cite the paper:
 
 ## Background reading
 
-Notes from the upstream Julia package:
+Notes from the upstream Julia package, at the pinned commit:
 
-- [Step-by-step derivation](https://github.com/nzy1997/ParametricDFT.jl/blob/main/note/stepbystep.pdf) (`note/stepbystep.pdf`)
-- [Main notes](https://github.com/nzy1997/ParametricDFT.jl/blob/main/note/main.pdf) (`note/main.pdf`)
+- {{ upstream_note_stepbystep }} (`note/stepbystep.pdf`)
+- {{ upstream_note_main }} (`note/main.pdf`)
 
 ## Relation to ParametricDFT.jl
 

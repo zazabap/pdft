@@ -21,6 +21,11 @@ Array = jax.Array
 
 @runtime_checkable
 class AbstractSparseBasis(Protocol):
+    """Structural interface shared by every basis: an ``image_size``, a
+    ``num_parameters`` count, and ``forward_transform`` / ``inverse_transform``
+    on a ``2^m x 2^n`` image.
+    """
+
     @property
     def image_size(self) -> tuple[int, int]: ...
     @property

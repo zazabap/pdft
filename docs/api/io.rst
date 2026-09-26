@@ -5,6 +5,11 @@ Serialization and compression
 
 JSON serialization of trained bases (byte-compatible with the Julia package) and top-k lossy compression of images in a learned basis.
 
+.. automodule:: pdft.io
+   :no-members:
+
+.. rubric:: Contents
+
 .. autosummary::
    :toctree: generated
    :nosignatures:

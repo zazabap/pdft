@@ -56,6 +56,11 @@ def _make_identity_batch(dtype, d: int, n: int) -> Array:
 
 @runtime_checkable
 class AbstractRiemannianManifold(Protocol):
+    """Interface the optimizers need from a manifold: ``project`` a Euclidean
+    gradient onto the tangent space, ``retract`` from ``points`` along ``tangent``
+    by step ``alpha``, and ``transport`` a tangent vector from ``old`` to ``new``.
+    """
+
     def project(self, points: Array, grads: Array) -> Array: ...
     def retract(self, points: Array, tangent: Array, alpha: float, *, I_batch=None) -> Array: ...
     def transport(self, old: Array, new: Array, vec: Array) -> Array: ...

@@ -29,11 +29,18 @@ extensions = [
 ]
 
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+# docs/superpowers/ holds design specs that are not part of the site.
+exclude_patterns = ["_build", "superpowers", "Thumbs.db", ".DS_Store"]
+
+# The docstrings use single backticks for code and object names; render them
+# as code (linked when the name resolves) rather than as <cite> italics.
+default_role = "py:obj"
 
 # -- API reference -----------------------------------------------------------
 autosummary_generate = True
-autodoc_default_options = {"members": True, "show-inheritance": True}
+# undoc-members: dataclass fields carry no docstrings, but their names and
+# types are the useful part of e.g. RiemannianGD and TrainingResult.
+autodoc_default_options = {"members": True, "undoc-members": True, "show-inheritance": True}
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 napoleon_numpy_docstring = True
@@ -55,9 +62,15 @@ myst_enable_extensions = ["colon_fence", "dollarmath", "substitution"]
 # The upstream pin is read from the package so the docs cannot drift from it.
 _upstream_repo, _upstream_sha = pdft.__upstream_ref__.split("@")
 myst_substitutions = {
-    "upstream_ref": pdft.__upstream_ref__,
     "upstream_commit_link": (
         f"[`{_upstream_sha[:7]}`](https://github.com/{_upstream_repo}/tree/{_upstream_sha})"
+    ),
+    # Upstream notes, at the pinned commit rather than main so they match.
+    "upstream_note_stepbystep": (
+        f"[Step-by-step derivation](https://github.com/{_upstream_repo}/blob/{_upstream_sha}/note/stepbystep.pdf)"
+    ),
+    "upstream_note_main": (
+        f"[Main notes](https://github.com/{_upstream_repo}/blob/{_upstream_sha}/note/main.pdf)"
     ),
 }
 

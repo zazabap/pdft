@@ -5,6 +5,11 @@ Bases
 
 Trainable sparsifying bases. Circuit bases (QFT, entangled QFT, TEBD, MERA, Rich, RealRich, DCT-IV) act on a whole ``2^m x 2^n`` image; :class:`BlockedBasis` tiles an inner basis over image blocks. The ``*_code`` and ``*_mat`` helpers build the underlying einsum circuits and reference DFT matrices.
 
+.. automodule:: pdft.bases
+   :no-members:
+
+.. rubric:: Contents
+
 .. autosummary::
    :toctree: generated
    :nosignatures:

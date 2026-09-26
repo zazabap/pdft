@@ -5,6 +5,11 @@ Circuit machinery
 
 Turns a Yao-style gate list into a JAX einsum, and caches the contraction path and the JIT-compiled closure. Every basis uses it.
 
+.. automodule:: pdft.circuit
+   :no-members:
+
+.. rubric:: Contents
+
 .. autosummary::
    :toctree: generated
    :nosignatures:

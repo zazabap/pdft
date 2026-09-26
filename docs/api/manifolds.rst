@@ -5,6 +5,11 @@ Manifolds
 
 The manifold geometry used by the optimizers: projections, retractions and batched linear algebra over stacked gate tensors.
 
+.. automodule:: pdft.manifolds
+   :no-members:
+
+.. rubric:: Contents
+
 .. autosummary::
    :toctree: generated
    :nosignatures:

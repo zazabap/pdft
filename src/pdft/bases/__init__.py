@@ -1,10 +1,11 @@
 """Sparse-basis subpackage.
 
 Two families:
-- bases.circuit  — full circuit topologies (QFT, EntangledQFT, TEBD, MERA),
-                   comparable to FFT/DCT.
-- bases.block    — BlockedBasis over arbitrary block partitions (Rich/RealRich
-                   are re-exported here for back-compat; they live in circuit).
+
+- ``bases.circuit`` — full circuit topologies (QFT, EntangledQFT, TEBD, MERA),
+  comparable to FFT/DCT.
+- ``bases.block`` — BlockedBasis over arbitrary block partitions (Rich/RealRich
+  are re-exported here for back-compat; they live in circuit).
 
 The abstract base class and bases_allclose helper live in bases.base.
 """

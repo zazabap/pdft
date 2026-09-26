@@ -7,6 +7,7 @@ on:
     paths:
       - docs/**
       - examples/**
+      - README.md  # docs/index.md includes its quick start
       - src/**
       - pyproject.toml
       - .github/workflows/docs.yml
@@ -34,7 +35,7 @@ jobs:
         run: pip install -e ".[docs]"
       # The example gallery executes examples/*.py here, not in the test CI.
       - name: Build
-        run: sphinx-build -b html -W --keep-going docs docs/_build/html
+        run: make docs
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request'
         with:

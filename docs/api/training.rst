@@ -5,6 +5,11 @@ Training
 
 :func:`train_basis` trains one basis on one target and mirrors the upstream loop. :func:`train_basis_batched` adds several images, epochs, a cosine learning-rate schedule, validation and early stopping.
 
+.. automodule:: pdft.training
+   :no-members:
+
+.. rubric:: Contents
+
 .. autosummary::
    :toctree: generated
    :nosignatures:
