@@ -1,10 +1,11 @@
-"""The trainable transform families the completion paper compares.
+"""The transform families, one per-axis operator each.
 
-Every module here parameterises a basis and starts it at the DFT so the
-comparisons are nested: ``general`` (the relaxed circuit of arXiv:2608.00053
---- Models A/B ride it, C frees its one-qubit gates), ``shared`` (phases tied
-by gate distance, the resolution-transferable form), ``butterfly`` (the
-learnable FFT factorisation of Dao et al.) and ``riemannian`` (a free unitary
-on U(N) by Cayley SGD). The core method --- circuit, solver, coherence,
-training loop, protocol --- lives one level up.
+``phases`` is the completion paper's own family (one controlled phase per wire
+pair, Hadamards fixed); ``general`` relaxes the same circuit (all four phases
+of each gate, then the one-qubit gates too); ``shared`` ties the phases by gate
+distance so a fit transfers across resolutions; ``butterfly`` frees the 2x2
+blocks of the FFT dataflow; ``riemannian`` is a free unitary on U(N);
+``transform_learning`` is a separable orthonormal pair fitted for sparsity.
+Every family starts at the DFT, so the comparisons are nested, and every one
+gets its solver, batched solver and evaluation from the generic helpers.
 """

@@ -1,14 +1,11 @@
 """Image loading and the dataset splits of the completion paper.
 
-Every function takes the data directory explicitly: this package has no
-repository layout to anchor to. Pillow is imported lazily, so the rest of the
-subpackage does not need it.
-
-The paper's Table I split is DIV2K: its 800 training images give 750 training
+Every function takes the data directory explicitly, since the package has no
+repository layout to anchor to, and Pillow is imported lazily so nothing else
+needs it. Table I's split is DIV2K: its 800 training images give 750 training
 crops and the 50 validation crops the learning-rate sweeps select on, and its
-100 validation images are the test set, one 512^2 centre crop per image,
-grayscale, no resampling. ``table1_split`` is the entry point every Table I
-producer uses; ``kodak_split`` (16 training and 8 test frames of 768x512) is
+100 validation images are the test set, one ``512^2`` centre crop per image,
+grayscale, no resampling. ``kodak_split`` (16 training and 8 test frames) is
 the earlier protocol.
 """
 
@@ -19,11 +16,13 @@ import pathlib
 
 import numpy as np
 
-from .metrics import psnr  # noqa: F401 -- historical home; new code uses pdft.completion.metrics
+HELDOUT_NAMES = tuple(f"kodim{i:02d}" for i in range(17, 25))  # kodak_split's test half
+DIV2K_N_TRAIN, DIV2K_N_VAL = 750, 50  # of DIV2K_train_HR's 800
+TEST_NAMES = tuple(f"{i:04d}" for i in range(801, 901))  # table1_split's test ids
 
 
 def _open_gray(path) -> np.ndarray:
-    """One image as float64 grayscale in [0, 1], through Pillow's 8-bit "L"."""
+    """One image as float64 grayscale in ``[0, 1]`` through Pillow's 8-bit ``"L"`` conversion."""
     try:
         from PIL import Image
     except ImportError as exc:  # pragma: no cover - exercised only without pillow
@@ -35,22 +34,19 @@ def _open_gray(path) -> np.ndarray:
 
 
 def load_gray(path, size: int, offset: str = "center") -> np.ndarray:
-    """Load one image as a size x size grayscale crop in [0, 1]."""
+    """One image as a ``size x size`` grayscale crop in ``[0, 1]``, from the centre or the corner."""
     im = _open_gray(path)
     h, w = im.shape
     if h < size or w < size:
         raise ValueError(f"{path}: {h}x{w} is smaller than the {size} crop")
-    if offset == "center":
-        y0, x0 = (h - size) // 2, (w - size) // 2
-    else:
-        y0, x0 = 0, 0
+    y0, x0 = ((h - size) // 2, (w - size) // 2) if offset == "center" else (0, 0)
     return im[y0 : y0 + size, x0 : x0 + size]
 
 
-def kodak_split(root, size: int = 512, n_train: int = 16):
-    """Disjoint train/test image sets from a directory of ``kodim*.png``.
-
-    Returns (train, test, names)."""
+def kodak_split(
+    root, size: int = 512, n_train: int = 16
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """``(train, test, names)`` from a directory of ``kodim*.png``, the first ``n_train`` for training."""
     root = pathlib.Path(root)
     paths = sorted(root.glob("kodim*.png"))
     if not paths:
@@ -60,8 +56,7 @@ def kodak_split(root, size: int = 512, n_train: int = 16):
 
 
 def load_4k(path, size: int) -> np.ndarray:
-    """A native-resolution square crop, box-averaged down when a smaller size
-    is asked for, so a resolution ladder is the same scene at every size."""
+    """A native-resolution square crop, box-averaged down to ``size``, so a resolution ladder is one scene."""
     a = _open_gray(path)
     if size == a.shape[0]:
         return a
@@ -71,10 +66,8 @@ def load_4k(path, size: int) -> np.ndarray:
     return a.reshape(size, f, size, f).mean(axis=(1, 3))
 
 
-def detail_window(img, size: int, stride: int = 32):
-    """The size x size window of highest variance: the most textured region,
-    read from the image alone so no method's error enters the choice.
-    Returns (row, col, size), or None when size is 0."""
+def detail_window(img, size: int, stride: int = 32) -> tuple[int, int, int] | None:
+    """The ``(row, col, size)`` window of highest variance, read from the image alone; ``None`` when ``size`` is 0."""
     if not size:
         return None
     N = img.shape[0]
@@ -87,12 +80,7 @@ def detail_window(img, size: int, stride: int = 32):
     return best_w
 
 
-HELDOUT_NAMES = tuple(f"kodim{i:02d}" for i in range(17, 25))  # kodak_split's test half
-DIV2K_N_TRAIN, DIV2K_N_VAL = 750, 50  # of DIV2K_train_HR's 800
-TEST_NAMES = tuple(f"{i:04d}" for i in range(801, 901))  # table1_split's test ids
-
-
-def _div2k_paths(root):
+def _div2k_paths(root: pathlib.Path):
     tr = sorted((root / "DIV2K_train_HR").glob("*.png"))
     te = sorted((root / "DIV2K_valid_HR").glob("*.png"))
     if len(tr) != 800 or len(te) != 100:
@@ -101,9 +89,11 @@ def _div2k_paths(root):
 
 
 def _div2k_cache(root, size: int):
-    """``<root>/div2k_<size>.npz``: every crop as uint8, built once from the
-    PNGs so a script starts in seconds. uint8 is lossless here: the crops are
-    PIL's 8-bit "L" conversion, which load_gray divides by 255."""
+    """Every DIV2K crop as uint8 in ``<root>/div2k_<size>.npz``, built once from the PNGs.
+
+    uint8 is lossless here: the crops are Pillow's 8-bit conversion, which
+    ``load_gray`` divides by 255.
+    """
     root = pathlib.Path(root)
     path = root / f"div2k_{size}.npz"
     if path.exists():
@@ -121,17 +111,17 @@ def _div2k_cache(root, size: int):
 
 
 def _smoke() -> int:
-    """``PDFT_SMOKE=<n>`` truncates every split to its first n images: the
-    smoke test of a producer, never a protocol."""
+    """``PDFT_SMOKE=<n>`` truncates every split to its first ``n`` images: a smoke test, never a protocol."""
     return int(os.environ.get("PDFT_SMOKE", "0"))
 
 
 def div2k_split(root, size: int = 512, n_train: int = DIV2K_N_TRAIN, n_val: int = DIV2K_N_VAL):
-    """(train, val, test, names): DIV2K_train_HR 0001-0750 and 0751-0800, then
-    DIV2K_valid_HR 0801-0900, one size^2 centre crop each in [0, 1]; names
-    lists all 900 ids in that order. The validation crops exist so that the
-    learning-rate sweeps select on images that are neither trained on nor
-    reported."""
+    """``(train, val, test, names)``: DIV2K_train_HR 0001-0750 and 0751-0800, then DIV2K_valid_HR 0801-0900.
+
+    One ``size^2`` centre crop each in ``[0, 1]``; ``names`` lists all 900 ids
+    in that order. The validation crops exist so the learning-rate sweeps
+    select on images that are neither trained on nor reported.
+    """
     train, valid, names = _div2k_cache(root, size)
     if n_train + n_val > len(train):
         raise ValueError(f"{n_train} + {n_val} exceeds DIV2K's {len(train)} training images")
@@ -149,21 +139,18 @@ def div2k_split(root, size: int = 512, n_train: int = DIV2K_N_TRAIN, n_val: int 
 
 
 def table1_split(root, size: int = 512):
-    """The split every Table I producer scores on, in kodak_split's convention:
-    (train, test, names) with names[len(train):] the test ids. The sweeps' 50
-    validation crops are table1_val's and are in neither half here."""
+    """``(train, test, names)`` in ``kodak_split``'s convention; the validation crops are in neither half."""
     tr, va, te, names = div2k_split(root, size)
     return tr, te, names[: len(tr)] + names[len(tr) + len(va) :]
 
 
-def table1_val(root, size: int = 512):
-    """The 50 crops the learning-rate (and Cayley-step) sweeps select on."""
+def table1_val(root, size: int = 512) -> np.ndarray:
+    """The 50 crops the learning-rate and Cayley-step sweeps select on."""
     return div2k_split(root, size)[1]
 
 
 def table1_test(root, size: int = 512):
-    """The test images alone, (test, names), without materialising the
-    training crops."""
+    """``(test, names)`` alone, without materialising the training crops."""
     train, valid, names = _div2k_cache(root, size)
     te = valid.astype(np.float64) / 255.0
     nm = names[len(train) :]

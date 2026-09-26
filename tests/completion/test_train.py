@@ -3,15 +3,13 @@ import numpy as np
 import pytest
 
 import pdft.completion.training as TR
-from pdft.completion.solver import reconstruct
-from pdft.completion.transform import coherence, n_params, theta0
+from pdft.completion.families.phases import coherence_phases, init_params, reconstruct
+from pdft.completion.transform import n_params, theta0
 
 n = 4
 
 
-def test_init_params_and_widths(images):
-    p = TR.init_params(n)
-    assert jnp.array_equal(p["r"], theta0(n)) and jnp.array_equal(p["c"], theta0(n))
+def test_widths():
     assert TR.widths(jnp.zeros((3, 16, 8))) == (4, 3)
 
 
@@ -24,7 +22,9 @@ def test_minibatches_are_the_one_schedule(images):
         assert Xa.shape == (2, 16, 16) and oa.shape == Xa.shape and oa.dtype == bool
         assert jnp.array_equal(Xa, Xb) and jnp.array_equal(oa, ob)
     assert abs(float(jnp.mean(jnp.stack([o for _, o in a]))) - 0.3) < 0.05
-    assert next(TR.minibatches(imgs, 1, 10, 0.3, 0))[0].shape[0] == 5  # batch capped at the dataset
+    assert (
+        next(TR.minibatches(imgs, 1, 10, 0.3, 0))[0].shape[0] == 5
+    )  # the batch is capped at the dataset
 
 
 def test_adam_loop_trains_and_records(images, capsys):
@@ -33,13 +33,13 @@ def test_adam_loop_trains_and_records(images, capsys):
 
     params, hist = TR.adam_loop(
         jnp.asarray(images()),
-        TR.init_params(n),
+        init_params(n),
         loss_fn,
         lr=1e-2,
         steps=4,
         p=0.5,
         batch=2,
-        monitor=TR.mu_monitor(coherence),
+        monitor=TR.mu_monitor(coherence_phases),
         log_every=2,
     )
     assert len(hist) == 4 and all(np.isfinite(h["loss"]) for h in hist)
@@ -56,7 +56,7 @@ def test_grad_mask_pins_entries(images):
 
     params, _ = TR.adam_loop(
         jnp.asarray(images()),
-        TR.init_params(n),
+        init_params(n),
         loss_fn,
         lr=1e-2,
         steps=3,
@@ -76,37 +76,5 @@ def test_non_finite_gradient_raises(images):
 
     with pytest.raises(FloatingPointError):
         TR.adam_loop(
-            jnp.asarray(images()),
-            TR.init_params(n),
-            loss_fn,
-            lr=1e-2,
-            steps=1,
-            p=0.5,
-            verbose=False,
+            jnp.asarray(images()), init_params(n), loss_fn, lr=1e-2, steps=1, p=0.5, verbose=False
         )
-
-
-@pytest.mark.parametrize("objective", ["task", "comp"])
-def test_train_objectives(images, objective):
-    params, hist = TR.train(
-        images(),
-        20,
-        K=2,
-        p=0.5,
-        steps=3,
-        lr=1e-2,
-        objective=objective,
-        lam_mu=0.1,
-        log_every=1,
-        verbose=False,
-    )
-    assert set(params) == {"r", "c"} and len(hist) == 3
-    for h in hist:  # phase-only: mu is pinned whatever the step did
-        assert abs(h["mu_r"] - 1.0) < 1e-9 and abs(h["mu_c"] - 1.0) < 1e-9
-
-
-def test_comp_loss_ignores_the_mask(images):
-    imgs = jnp.asarray(images())
-    obs = jnp.asarray(np.random.default_rng(1).random(imgs.shape) < 0.5)
-    p = TR.init_params(n)
-    assert float(TR.comp_loss(p, imgs, obs, 20, 2)) == float(TR.comp_loss(p, imgs, ~obs, 20, 2))

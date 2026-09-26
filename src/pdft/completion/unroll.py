@@ -1,67 +1,57 @@
 """Memory-bounded differentiation of the unrolled solver.
 
 Evaluating the solver is cheap: ``jax.lax.scan`` keeps one carry alive, so
-memory is O(N^2) and flat in the depth K. Differentiating it is not. The
-reverse pass needs each step's input to recompute that step, so a scan of K
-steps retains K carries --- O(K N^2) --- and at 4096^2, K = 100, float64 that
-is 12.5 GiB of carries before a single gate intermediate.
+memory is ``O(N^2)`` and flat in the depth ``K``. Differentiating it is not.
+The reverse pass needs each step's input to recompute that step, so a scan of
+``K`` steps retains ``K`` carries, ``O(K N^2)``: at ``4096^2``, ``K = 100``,
+float64, that is 12.5 GiB of carries before a single gate intermediate.
 
-That is a rematerialisation schedule, not a property of the method, and this
-module fixes it. Splitting the scan into n_outer blocks of n_inner steps and
-rematerialising the *blocks* retains n_outer carries between blocks and n_inner
-inside whichever block the backward pass is currently recomputing:
+That is a rematerialisation schedule, not a property of the method. Splitting
+the scan into ``n_outer`` blocks of ``n_inner`` steps and rematerialising the
+blocks retains ``n_outer`` carries between blocks and ``n_inner`` inside
+whichever block the backward pass is recomputing, so the peak is
+``n_outer + n_inner``, minimised at ``sqrt(K)`` each: ``O(K N^2)`` becomes
+``O(sqrt(K) N^2)`` for one extra forward evaluation per block (about 1.2x).
+This is binomial checkpointing at one level, which is all that is needed.
 
-    peak carries = n_outer + n_inner,   minimised at n_outer = n_inner = sqrt(K)
-
-so O(K N^2) becomes O(sqrt(K) N^2). The cost is one extra forward evaluation
-per block, about 1.2x the flat schedule. This is the classical binomial-
-checkpointing trade at one level, which is all that is needed.
-
-Three schedules, all computing the same function:
-
-    "none"      no rematerialisation. Correct only for evaluation, where
-                nothing is retained anyway; the fastest choice there.
-    "step"      rematerialise each step. Kills the ~300 gate intermediates per
-                step but still retains K carries.
-    "nested"    rematerialise blocks of steps as well. Retains sqrt(K) carries.
-
-``reconstruct`` accepts square or rectangular registers and either precision,
-and ``plan`` picks a schedule for a memory budget.
+Three schedules compute the same function: ``"none"`` (no rematerialisation,
+correct only for evaluation), ``"step"`` (each step rematerialised, ``K``
+carries retained) and ``"nested"`` (blocks rematerialised as well, ``sqrt(K)``
+carries). ``solver_for`` builds the bounded solver of any operator and
+``plan`` picks a schedule for a memory budget.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .families.general import analysis_g, synthesis_g
-from .solver import _THRESH
+from .solver import THRESHOLDS
+from .transform import apply_gates, separable
+
+Array = jax.Array
 
 STRATEGIES = ("none", "step", "nested")
 
 # Live intermediates during the backward pass, in units of one complex image.
-# Calibrated against twelve measurements (n = 10, 11, 12 x {step, nested} x
-# {float64, float32}, K = 100, RTX 5070): within 12% on every case that ran,
-# and it reproduces the fit/OOM verdict in all twelve. It is a constant fitted
+# Calibrated against twelve measurements (n = 10, 11, 12; step and nested;
+# float64 and float32; K = 100; one RTX 5070): within 12% on every case that
+# ran, and it reproduces the fit-or-OOM verdict in all twelve. A constant fitted
 # on one XLA version and one card, so plan() keeps a margin on top; the
 # retained-carry term is exact and is the one that scales with K.
 _WORKING_SET = 60
 _PLAN_MARGIN = 1.15
 
 
-# --------------------------------------------------------------------------
-# schedule arithmetic
-
-
 def split_k(K: int, n_outer: int | None = None) -> tuple[int, int, int]:
-    """(n_outer, n_inner, remainder) for the nested schedule.
+    """``(n_outer, n_inner, remainder)`` of the nested schedule.
 
-    Defaults to the square split, which minimises n_outer + n_inner. K need not
-    be a perfect square or even composite: whatever does not divide evenly is
-    run as a trailing flat scan.
+    Defaults to the square split, which minimises ``n_outer + n_inner``.
+    Whatever does not divide evenly runs as a trailing flat scan.
     """
     if K <= 0:
         raise ValueError(f"K must be positive, got {K}")
@@ -73,11 +63,12 @@ def split_k(K: int, n_outer: int | None = None) -> tuple[int, int, int]:
 
 
 def carry_bytes(shape, dtype=jnp.float64) -> int:
+    """The bytes of one solver carry of this shape and dtype."""
     return int(np.prod(shape)) * jnp.dtype(dtype).itemsize
 
 
 def retained_carries(K: int, strategy: str, n_outer: int | None = None) -> int:
-    """How many carries the backward pass holds. Exact, and the term in K."""
+    """How many carries the backward pass holds: exact, and the term in ``K``."""
     if strategy == "none":
         return 1
     if strategy == "step":
@@ -91,10 +82,10 @@ def retained_carries(K: int, strategy: str, n_outer: int | None = None) -> int:
 def estimate_peak(
     shape, K: int, strategy: str = "nested", dtype=jnp.float64, n_outer: int | None = None
 ) -> dict:
-    """Approximate peak device bytes for one gradient evaluation.
+    """Approximate peak device bytes of one gradient evaluation.
 
-    The retained term is exact; the working set is a calibrated constant, so
-    treat the total as an estimate and the ordering as reliable.
+    The retained term is exact and the working set a calibrated constant, so
+    the total is an estimate and the ordering between schedules is reliable.
     """
     real = jnp.dtype(dtype)
     cplx = jnp.complex64 if real == jnp.dtype(jnp.float32) else jnp.complex128
@@ -109,12 +100,11 @@ def estimate_peak(
 
 
 def plan(shape, K: int, budget_bytes: int, dtype=jnp.float64) -> dict:
-    """Cheapest schedule that is estimated to fit, with the split to use.
+    """The cheapest schedule estimated to fit the budget, with the split to use.
 
-    Prefers the flat schedule when it fits, since nesting costs an extra forward
-    pass. Falls back to the deepest split available rather than raising: a plan
-    that overshoots the budget is more useful than no plan, and the caller can
-    see the estimate.
+    Prefers the flat schedule when it fits, since nesting costs an extra
+    forward pass. Falls back to the deepest split rather than raising: a plan
+    that overshoots is more useful than none, and the caller sees the estimate.
     """
     limit = budget_bytes / _PLAN_MARGIN
     flat = estimate_peak(shape, K, "step", dtype)
@@ -129,25 +119,19 @@ def plan(shape, K: int, budget_bytes: int, dtype=jnp.float64) -> dict:
     return {"strategy": "nested", "n_outer": no, **est, "fits": est["total_bytes"] <= limit}
 
 
-# --------------------------------------------------------------------------
-# the solver
-
-
-def _scan(step, X0, K: int, strategy: str, n_outer: int | None):
-    """K applications of ``step``, under the requested rematerialisation."""
+def _scan(step: Callable, X0: Array, K: int, strategy: str, n_outer: int | None) -> Array:
+    """``K`` applications of ``step`` under the requested rematerialisation."""
 
     def body(c, _):
         return step(c), None
 
     if strategy == "none":
         return jax.lax.scan(body, X0, None, length=K)[0]
-
     inner = jax.checkpoint(body)  # drop the per-step gate intermediates
     if strategy == "step":
         return jax.lax.scan(inner, X0, None, length=K)[0]
     if strategy != "nested":
         raise ValueError(f"unknown strategy {strategy!r}, expected one of {STRATEGIES}")
-
     no, ni, rem = split_k(K, n_outer)
 
     def outer_body(c, _):
@@ -159,38 +143,47 @@ def _scan(step, X0, K: int, strategy: str, n_outer: int | None):
     return X
 
 
-def reconstruct(
-    pr,
-    pc,
-    Y,
-    obs,
-    k: int,
-    K: int,
-    *,
-    mode: str = "hard",
-    strategy: str = "auto",
-    n_outer: int | None = None,
-    budget_bytes: int | None = None,
-):
-    """The unrolled solver on a ``2^nr x 2^nc`` image, differentiable at bounded memory.
+def solver_for(apply: Callable) -> Callable:
+    """The bounded-memory ``K``-step solver of a per-axis operator.
 
-    ``pr``, ``pc`` are ``{"g", "phi"}`` gate dicts (``theta_to_params`` for
-    phase-only angles, ``shared.expand`` for distance-shared ones).
-    strategy="auto" reads the device's free memory and plans against 80% of it;
-    pass a schedule by name to pin it. The dtype of Y decides the precision.
+    Returns ``reconstruct(pr, pc, Y, obs, k, K, *, mode, strategy, n_outer,
+    budget_bytes)``. ``strategy="auto"`` reads the device's free memory and
+    plans against 80% of it; a schedule by name pins it. The dtype of ``Y``
+    decides the precision. Not jitted, so a Python-int ``k`` reaches
+    ``top_k``; jit the loss that calls it.
     """
-    if strategy == "auto":
-        budget = budget_bytes if budget_bytes is not None else _free_bytes()
-        chosen = plan(Y.shape[-2:], K, int(0.8 * budget), Y.dtype)
-        strategy, n_outer = chosen["strategy"], chosen["n_outer"]
+    analysis, synthesis = separable(apply)
 
-    thresh = _THRESH[mode]
-    X0 = jnp.where(obs, Y, 0.0)
+    def reconstruct(
+        pr,
+        pc,
+        Y: Array,
+        obs: Array,
+        k,
+        K: int,
+        *,
+        mode: str = "hard",
+        strategy: str = "auto",
+        n_outer: int | None = None,
+        budget_bytes: int | None = None,
+    ) -> Array:
+        """``K`` solver steps at bounded memory; see ``solver_for``."""
+        if strategy == "auto":
+            budget = budget_bytes if budget_bytes is not None else _free_bytes()
+            chosen = plan(Y.shape[-2:], K, int(0.8 * budget), Y.dtype)
+            strategy, n_outer = chosen["strategy"], chosen["n_outer"]
+        thresh = THRESHOLDS[mode]
+        X0 = jnp.where(obs, Y, 0.0)
 
-    def step(X):
-        return jnp.where(obs, Y, jnp.real(synthesis_g(thresh(analysis_g(X, pr, pc), k), pr, pc)))
+        def step(X):
+            return jnp.where(obs, Y, jnp.real(synthesis(thresh(analysis(X, pr, pc), k), pr, pc)))
 
-    return _scan(step, X0, K, strategy, n_outer)
+        return _scan(step, X0, K, strategy, n_outer)
+
+    return reconstruct
+
+
+reconstruct = solver_for(apply_gates)
 
 
 def _free_bytes(default: int = 8 * 2**30) -> int:
@@ -210,7 +203,7 @@ def device_peak_mb() -> float:
 
 
 def report(shape, K: int, dtype=jnp.float64) -> str:
-    """One-line-per-schedule table, for logs and for deciding a split."""
+    """A one-line-per-schedule table of estimated peaks, for logs and for choosing a split."""
 
     def gb(b):
         return b / 2**30
@@ -222,7 +215,6 @@ def report(shape, K: int, dtype=jnp.float64) -> str:
     for s in STRATEGIES:
         e = estimate_peak(shape, K, s, dtype)
         out.append(
-            f"{s:>10} {e['carries']:>8} {gb(e['retained_bytes']):>10.2f}G "
-            f"{gb(e['total_bytes']):>12.2f}G"
+            f"{s:>10} {e['carries']:>8} {gb(e['retained_bytes']):>10.2f}G {gb(e['total_bytes']):>12.2f}G"
         )
     return "\n".join(out)

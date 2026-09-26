@@ -4,8 +4,11 @@ import numpy as np
 import pytest
 
 import pdft.completion.unroll as U
+from pdft.completion.families.general import init_general
+from pdft.completion.families.riemannian import dft_matrix
 from pdft.completion.families.shared import expand, init_shared
 from pdft.completion.protocol import train_k
+from pdft.completion.transform import apply_dense
 
 
 def test_split_k_cases():
@@ -75,6 +78,20 @@ def test_auto_strategy_plans_against_the_budget():
     a = U.reconstruct(p, p, X * obs, obs, k, K, strategy="auto", budget_bytes=1)
     assert jnp.allclose(a, U.reconstruct(p, p, X * obs, obs, k, K, strategy="step"), atol=1e-12)
     assert jnp.allclose(a, U.reconstruct(p, p, X * obs, obs, k, K), atol=1e-12)  # reads the device
+
+
+def test_solver_for_any_operator(sparse_problem):
+    """The bounded solver of the dense operator at the DFT matrix equals the
+    default circuit solver at theta0, schedule for schedule."""
+    X, obs, th = sparse_problem(n=4, seed=2, k=6)
+    p, F = init_general(4), dft_matrix(16)
+    dense = U.solver_for(apply_dense)
+    for s in U.STRATEGIES:
+        assert jnp.allclose(
+            dense(F, F, X * obs, obs, 8, 5, strategy=s),
+            U.reconstruct(p, p, X * obs, obs, 8, 5, strategy=s),
+            atol=1e-10,
+        )
 
 
 def test_rectangular_registers():

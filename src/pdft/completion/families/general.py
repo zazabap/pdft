@@ -1,19 +1,19 @@
-"""The relaxed QFT circuit of arXiv:2608.00053, and the ladder of models on it.
+"""The relaxed QFT circuit of arXiv:2608.00053 and the ladder of models on it.
 
 That work generalises the QFT by relaxing every gate within its own manifold:
-"Each fixed Hadamard becomes an arbitrary unitary, and each conditional phase
-keeps its diagonal form while freeing its diagonal entries." The kernel is
+each fixed Hadamard becomes an arbitrary unitary and each conditional phase
+keeps its diagonal form while freeing its diagonal entries. The operator is
 :func:`pdft.completion.transform.apply_gates`, which is also what
 :class:`pdft.QFTBasis` trains under :func:`pdft.train_basis`
 (:mod:`pdft.completion.bridge` converts between the two). Three nested models
 ride it, all starting at the DFT:
 
-    A  phases       fixed Hadamards, the controlled phase of each gate free
-                    n(n-1)/2 params/axis, plain Adam, mu == 1 always
-    B  diagonals    fixed Hadamards, all four phases of each gate free
-                    2n(n-1) params/axis, plain Adam, mu == 1 always
-    C  rotations    free U(2) per wire as well
-                    4n + 2n(n-1) params/axis, Cayley step on U(2), mu drifts
+    A  phases       Hadamards fixed, the controlled phase of each gate free
+                    n(n-1)/2 parameters per axis, plain Adam, mu == 1 always
+    B  diagonals    Hadamards fixed, all four phases of each gate free
+                    2n(n-1) parameters per axis, plain Adam, mu == 1 always
+    C  rotations    the one-qubit gates free on U(2) as well
+                    4n + 2n(n-1) parameters per axis, Cayley step, mu drifts
 
 A and B are ``train_general`` with different gradient masks; C is ``train_c``.
 """
@@ -32,39 +32,40 @@ from ..training import adam_loop, minibatches, mu_monitor, task_loss, widths
 from ..transform import apply_gates, n_params, separable, theta0, theta_to_params
 from .riemannian import cayley, skew
 
+Array = jax.Array
+
 apply_general = apply_gates
 analysis_g, synthesis_g = separable(apply_gates)
 reconstruct_g = solver_for(apply_gates)
 
 
 def init_general(n: int) -> dict:
-    """The DFT: Hadamards, and phases (0, 0, 0, theta0)."""
+    """The DFT: Hadamards and phases ``(0, 0, 0, theta0)``."""
     return theta_to_params(theta0(n))
 
 
-def unitary_general(params: dict) -> jnp.ndarray:
-    """The circuit's matrix, formed explicitly. Diagnostics only."""
+def unitary_general(params: dict) -> Array:
+    """The circuit's matrix formed explicitly. Diagnostics only."""
     return dense_operator(lambda e: apply_gates(e, params, axis=0), params["g"].shape[0])
 
 
-def coherence_general(params: dict) -> jnp.ndarray:
+def coherence_general(params: dict) -> Array:
+    """``mu`` of the circuit at these parameters."""
     return coherence(unitary_general(params))
 
 
 def count_params(n: int) -> int:
-    """Real DOF per axis of model C: U(2) per wire (4 each) + 4 phases per gate."""
+    """Real degrees of freedom per axis of model C: a U(2) per wire and four phases per gate."""
     return 4 * n + 4 * n_params(n)
 
 
 def count_params_b(n: int) -> int:
-    """Real DOF per axis of model B. The one-qubit gates are not free, so they
-    are not counted; freeing them is C, which loses Proposition 1."""
+    """Real degrees of freedom per axis of model B: four phases per gate, the one-qubit gates not free."""
     return 4 * n_params(n)
 
 
 def _mask(params: dict, model: str) -> dict:
-    """Which entries move: B frees all four phases of every gate, A only the
-    controlled one; the one-qubit gates stay at the Hadamards in both."""
+    """Which entries move: B frees all four phases of every gate, A only the controlled one."""
     cols = slice(None) if model == "B" else 3
     return {
         "g": jnp.zeros_like(params["g"]),
@@ -75,21 +76,23 @@ def _mask(params: dict, model: str) -> dict:
 def train_general(
     images,
     k,
-    K=100,
-    p=0.10,
-    steps=200,
-    lr=2e-3,
-    mode="hard",
-    model="B",
-    batch=2,
-    seed=0,
-    log_every=25,
-    remat=True,
-    verbose=True,
-):
-    """Models A and B: Adam on the phases through the solver, the Hadamards
-    held by a gradient mask. Returns ``(params, history)``; ``params`` is the
-    ``{"r", "c"}`` pair of ``{"g", "phi"}`` dicts the rest of the module reads."""
+    K: int = 100,
+    p: float = 0.10,
+    steps: int = 200,
+    lr: float = 2e-3,
+    mode: str = "hard",
+    model: str = "B",
+    batch: int = 2,
+    seed: int = 0,
+    log_every: int = 25,
+    remat: bool = True,
+    verbose: bool = True,
+) -> tuple[dict, list[dict]]:
+    """Models A and B: Adam on the phases through the solver, the Hadamards held by a gradient mask.
+
+    Returns ``(params, history)`` with ``params`` the ``{"r", "c"}`` pair of
+    gate dicts the rest of the module reads.
+    """
     if model not in ("A", "B"):
         raise ValueError(f"model must be 'A' or 'B', got {model!r}; model C is train_c")
     images = jnp.asarray(images)
@@ -111,15 +114,26 @@ def train_general(
 
 
 def train_c(
-    images, k, K, p, steps, lr_phi, lr_g, seed, batch=2, log_every=50, verbose=True, remat=True
-):
-    """Model C: Adam on the phases, a Cayley step keeping each U(2) on its
-    manifold. Same minibatch schedule as ``adam_loop``, so C's batches match
-    A's and B's at the same seed. Returns ``params``.
+    images,
+    k,
+    K: int,
+    p: float,
+    steps: int,
+    lr_phi: float,
+    lr_g: float,
+    seed: int,
+    batch: int = 2,
+    log_every: int = 50,
+    verbose: bool = True,
+    remat: bool = True,
+) -> dict:
+    """Model C: Adam on the phases and a Cayley step keeping each U(2) gate on its manifold.
 
-    A check from exactly theta0 does not expose the sign of the Cayley step
-    (the first-order term vanishes there and a top-k tie-break jump masks it);
-    the tests verify descent from a perturbed point.
+    Draws the same minibatches as ``adam_loop``, so C's batches match A's and
+    B's at the same seed. A check from exactly ``theta0`` does not expose the
+    sign of the Cayley step (the first-order term vanishes there and a top-k
+    tie-break jump masks it); the tests verify descent from a perturbed point.
+    Returns ``params``.
     """
     images = jnp.asarray(images)
     params = {a: init_general(n) for a, n in zip(("r", "c"), widths(images))}
@@ -131,6 +145,8 @@ def train_c(
         v, grads = jax.value_and_grad(loss)(params, X, obs)
         upd, st = adam_update({a: grads[a]["phi"] for a in params}, st, lr_phi)
         phis = apply_updates({a: params[a]["phi"] for a in params}, upd)
+        # jax.grad of a real loss in a complex input is the conjugate Wirtinger
+        # derivative; conjugating recovers the Euclidean gradient.
         new = {
             a: {
                 "g": cayley(params[a]["g"], skew(params[a]["g"], jnp.conj(grads[a]["g"])), lr_g),

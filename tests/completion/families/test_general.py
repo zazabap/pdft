@@ -5,8 +5,9 @@ import pytest
 
 from pdft.completion.families import general as G
 from pdft.completion.families import riemannian as R
+from pdft.completion.families.phases import apply_u, unitary_phases
 from pdft.completion.protocol import evaluate_params
-from pdft.completion.transform import apply_u, theta0, unitary_matrix
+from pdft.completion.transform import theta0
 
 n = 5
 N = 2**n
@@ -15,7 +16,7 @@ N = 2**n
 def test_init_general_is_the_phase_only_circuit_at_theta0(rng):
     x = jnp.asarray(rng.standard_normal(N) + 1j * rng.standard_normal(N))
     assert jnp.allclose(G.apply_general(x, G.init_general(n)), apply_u(x, theta0(n)), atol=1e-12)
-    assert jnp.allclose(G.unitary_general(G.init_general(n)), unitary_matrix(theta0(n)), atol=1e-12)
+    assert jnp.allclose(G.unitary_general(G.init_general(n)), unitary_phases(theta0(n)), atol=1e-12)
 
 
 def test_adjoint_inverts_at_random_parameters(rng, rand_general):

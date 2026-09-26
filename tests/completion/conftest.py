@@ -6,7 +6,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from pdft.completion.transform import n_params
+from pdft.completion.families.phases import synthesis
+from pdft.completion.transform import n_params, theta0
 
 
 @pytest.fixture
@@ -38,5 +39,29 @@ def rand_general():
 def images():
     def make(n=4, count=3, seed=0, dtype=np.float64):
         return np.random.default_rng(seed).random((count, 2**n, 2**n)).astype(dtype)
+
+    return make
+
+
+@pytest.fixture
+def sparse_problem():
+    """A real image exactly ``2k``-sparse in the DFT domain and a mask at rate ``p``.
+
+    Well-separated coefficient magnitudes, so top-k has no near-ties and two
+    solvers built from different operators of the same matrix agree to round-off.
+    """
+
+    def make(n=5, seed=0, k=12, p=0.5):
+        N = 2**n
+        rng = np.random.default_rng(seed)
+        C = np.zeros((N, N), complex)
+        C.reshape(-1)[rng.choice(N * N, size=k, replace=False)] = rng.standard_normal(
+            k
+        ) + 1j * rng.standard_normal(k)
+        C = C + np.conj(
+            C[(-np.arange(N)) % N][:, (-np.arange(N)) % N]
+        )  # Hermitian, so the image is real
+        th = theta0(n)
+        return jnp.real(synthesis(jnp.asarray(C), th, th)), jnp.asarray(rng.random((N, N)) < p), th
 
     return make

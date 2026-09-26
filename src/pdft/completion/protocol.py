@@ -1,19 +1,19 @@
-"""The evaluation protocol every completion experiment scores with --- one definition.
+"""The evaluation protocol every completion experiment scores with, defined once.
 
-Numbers from different transform families are only comparable if they were
-produced the same way: masks drawn per image from a stated seed, the retained-
-coefficient rule k = max(m * k/m, 64), PSNR on the clipped reconstruction.
-
-A family plugs in as a closure ``solve(Y, obs, k) -> reconstruction``, where Y
-is the zero-filled observation, so this module needs to know nothing about how
-any transform is parameterised. The constants are the published Table I
-protocol of the completion paper (DIV2K, 512^2 centre crops, p = 10%).
+Numbers from different transform families are comparable only if they were
+produced the same way: masks drawn per image from a stated seed, the
+retained-coefficient rule ``k = max(m * frac, 64)``, PSNR on the clipped
+reconstruction. A family plugs in as a closure ``solve(Y, obs, k)`` with ``Y``
+the zero-filled observation, so this module knows nothing about how a
+transform is parameterised. The constants are Table I of the completion paper
+(DIV2K, ``512^2`` centre crops, ``p = 10%``).
 """
 
 from __future__ import annotations
 
 import json
 import pathlib
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -21,71 +21,61 @@ import numpy as np
 
 from .metrics import ms_ssim, psnr, ssim
 
-# The published Table I protocol: sampling rate, the budget sweep each
-# transform is read over, the solver depth, and the capacity grids of the
-# per-image baselines.
+Array = jax.Array
+
 TABLE1_P = 0.10
-# Single precision for every jax transform, training and evaluation: the
-# circuit is unitary, so float32 neither amplifies nor accumulates error
-# across the gates, and at 512^2, K = 300, the PSNRs agree with float64 to
-# 0.0003 dB while a recovery costs a tenth of the time. The angles themselves
-# stay float64; complex_dtype picks the working type from the image's dtype,
-# so this constant is the one switch. The circuit has no matmul; the solvers
-# that do (transform learning's dense pair, the butterfly's block products)
-# lose up to 0.55 dB under XLA's default TF32 float32 matmuls and reproduce
-# float64 exactly under "highest", which is why every scoring loop runs inside
-# MATMUL_EXACT.
+# Single precision for every jax transform in training and evaluation: the
+# circuit is unitary, so float32 neither amplifies nor accumulates error across
+# the gates, and at 512^2, K = 300, the PSNRs agree with float64 to 0.0003 dB at
+# a tenth of the time. The angles stay float64; complex_dtype picks the working
+# type from the image, so this constant is the one switch. Families that
+# multiply matrices (transform learning, the butterfly blocks) lose up to
+# 0.55 dB under XLA's default TF32 float32 matmuls and reproduce float64 under
+# "highest", which is why every scoring loop runs inside MATMUL_EXACT.
 EVAL_DTYPE = jnp.float32
 MATMUL_EXACT = "highest"
 # Wide enough that every method's optimum is interior at p = 10%.
 TABLE1_FRACS = (0.015, 0.03, 0.0625, 0.125, 0.25, 0.5)
 TABLE1_K = 300
 QTT_RANKS = (48, 96, 200, 400)
-# The rate sweep of the paper's Fig. 3: the rates, and the budget grid each
-# rate sweeps k/m over. The p = 10% grid is Table I's verbatim.
-RATE_SWEEP = (0.01, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60)
 QTT_ITERS = 512
 NUC_RANKS = (2, 4, 6, 8, 12, 16, 32)
 NUC_LAMS = (0.03125, 0.0625, 0.125, 0.25, 0.5, 1.0, 2.0)
+# The rate sweep of the paper's Fig. 3; its p = 10% column is Table I verbatim.
+RATE_SWEEP = (0.01, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60)
 
 
 def heldout_mask(i: int, shape, p: float = TABLE1_P) -> np.ndarray:
-    """Held-out image i's observation mask under the Table I protocol.
+    """Held-out image ``i``'s observation mask, seeded ``1000 + i``.
 
-    Seeded 1000+i, so every method scored on image i sees the same pixels ---
-    the invariant the whole table rests on. Returns a numpy bool array; wrap in
-    jnp.asarray for the jax solvers.
+    Every method scored on image ``i`` sees the same pixels, the invariant the
+    whole table rests on. A numpy bool array; wrap in ``jnp.asarray`` for the
+    jax solvers.
     """
     return np.random.default_rng(1000 + i).random(shape) < p
 
 
-def fracs_for(p: float):
-    """The k/m budgets swept at sampling rate p in the rate figure, wide
-    enough that every row's optimum is interior."""
+def fracs_for(p: float) -> tuple[float, ...]:
+    """The ``k/m`` budgets swept at sampling rate ``p``, wide enough that every optimum is interior."""
     if p < 0.10:
         return (0.0075,) + TABLE1_FRACS
     if p == 0.10:
-        return TABLE1_FRACS  # Table I's sweep, verbatim
+        return TABLE1_FRACS
     return (0.00375, 0.0075, 0.015, 0.03, 0.0625, 0.125, 0.25, 0.5, 0.75)
 
 
 def budget_k(obs, frac: float) -> int:
-    """Retained coefficients for a mask: k = max(m * frac, 64), m observed."""
+    """Retained coefficients for a mask: ``max(m * frac, 64)`` with ``m`` the observed count."""
     return max(int(int(np.asarray(obs).sum()) * frac), 64)
 
 
 def train_k(n_pixels: int, p: float, frac: float) -> int:
-    """budget_k's training-time counterpart, from the expected observed count.
-
-    Training redraws the mask every step, so k is pinned to p * n_pixels rather
-    than to one realisation of Omega; the floor matches budget_k's.
-    """
+    """``budget_k`` from the expected observed count, for training, where the mask is redrawn every step."""
     return max(int(p * n_pixels * frac), 64)
 
 
-def evaluate(solve, images, p: float, frac: float, seed: int) -> np.ndarray:
-    """PSNR per image at fixed masks --- the same masks for every method
-    compared at this seed, and never a mask the optimiser saw."""
+def evaluate(solve: Callable, images, p: float, frac: float, seed: int) -> np.ndarray:
+    """PSNR per image at fixed masks: the same masks for every method at this seed, never one the optimiser saw."""
     rng = np.random.default_rng(seed)
     out = []
     for img in images:
@@ -96,33 +86,16 @@ def evaluate(solve, images, p: float, frac: float, seed: int) -> np.ndarray:
     return np.array(out)
 
 
-def per_metric_best(cands, img) -> dict:
-    """Each metric read at the candidate that maximises *that* metric.
-
-    Selecting by PSNR and then reporting MS-SSIM systematically penalises
-    whichever method is not tuned for PSNR; this is the published read-off rule
-    of Table I.
-    """
-    zs = [np.asarray(z) for z in cands]
-    return {
-        "psnr": max(psnr(z, img) for z in zs),
-        "ssim": max(ssim(z, img) for z in zs),
-        "msssim": max(ms_ssim(z, img) for z in zs),
-    }
-
-
-def write_json(path, obj) -> pathlib.Path:
-    """``<path>.json``, creating the directory; announces what it wrote."""
-    path = pathlib.Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, default=str))
-    print(f"wrote {path}")
-    return path
-
-
 def evaluate_params(
-    reconstruct, params, images, p: float, frac: float, K: int, seed: int, mode: str = "hard"
-):
+    reconstruct: Callable,
+    params: dict,
+    images,
+    p: float,
+    frac: float,
+    K: int,
+    seed: int,
+    mode: str = "hard",
+) -> np.ndarray:
     """``evaluate`` for any family's solver and its ``{"r", "c"}`` parameters."""
     return evaluate(
         lambda Y, obs, k: reconstruct(params["r"], params["c"], Y, obs, k, K, mode, remat=False),
@@ -133,58 +106,24 @@ def evaluate_params(
     )
 
 
-def _floats(a) -> list:
-    """An array as a JSON list, complex entries interleaved as (re, im)."""
-    a = np.asarray(a)
-    return (a.view(float) if np.iscomplexobj(a) else a).tolist()
+def per_metric_best(cands, img) -> dict:
+    """Each metric read at the candidate that maximises that metric.
 
-
-def _complex(values, shape) -> jnp.ndarray:
-    """The inverse of ``_floats`` for a complex array of the given shape."""
-    return jnp.asarray(np.ascontiguousarray(np.array(values)).view(complex).reshape(shape))
-
-
-def encode_gphi(par) -> dict:
-    """A {"r", "c"} pair of {"g", "phi"} params as JSON-serialisable lists;
-    ``decode_gphi`` is the exact inverse."""
-    return {a: {"g": _floats(par[a]["g"]), "phi": _floats(par[a]["phi"])} for a in ("r", "c")}
-
-
-def decode_gphi(d) -> dict:
+    Selecting by PSNR and reporting MS-SSIM would penalise whichever method is
+    not tuned for PSNR; this is the read-off rule of Table I.
+    """
+    zs = [np.asarray(z) for z in cands]
     return {
-        a: {"g": _complex(d[a]["g"], (-1, 2, 2)), "phi": jnp.asarray(np.array(d[a]["phi"]))}
-        for a in ("r", "c")
+        "psnr": max(psnr(z, img) for z in zs),
+        "ssim": max(ssim(z, img) for z in zs),
+        "msssim": max(ms_ssim(z, img) for z in zs),
     }
 
 
-def encode_butterfly(par) -> dict:
-    """A {"r", "c"} pair of butterfly parameters as JSON-serialisable lists: the
-    real generators as they are, the complex blocks interleaved with their shape."""
+def table1_scores(solve: Callable, images, fracs=TABLE1_FRACS, p: float = TABLE1_P) -> dict:
+    """Score one method under Table I: the ``rng(1000 + i)`` masks, the budget sweep, each metric at its own optimum.
 
-    def one(d):
-        if "gen" in d:
-            return {"gen": _floats(d["gen"])}
-        return {"blk": _floats(d["blk"]), "shape": list(np.shape(d["blk"]))}
-
-    return {a: one(par[a]) for a in ("r", "c")}
-
-
-def decode_butterfly(d) -> dict:
-    return {
-        a: {"gen": jnp.asarray(np.array(d[a]["gen"]))}
-        if "gen" in d[a]
-        else {"blk": _complex(d[a]["blk"], tuple(d[a]["shape"]))}
-        for a in ("r", "c")
-    }
-
-
-def table1_scores(solve, images, fracs=TABLE1_FRACS, p: float = TABLE1_P) -> dict:
-    """Score one method under Table I's protocol: the rng(1000+i) masks, the
-    budget sweep over ``fracs``, each metric at its own optimum per image.
-
-    ``solve(Y, obs, k)`` is the family's closure (Y zero-filled, obs a jnp bool
-    mask, k the retained count). Returns {"psnr", "ssim", "msssim"} lists, one
-    entry per image.
+    Returns ``{"psnr", "ssim", "msssim"}`` lists with one entry per image.
     """
     out = {"psnr": [], "ssim": [], "msssim": []}
     for i, img in enumerate(images):
@@ -196,3 +135,57 @@ def table1_scores(solve, images, fracs=TABLE1_FRACS, p: float = TABLE1_P) -> dic
         for met, v in per_metric_best(cands, img).items():
             out[met].append(v)
     return out
+
+
+def write_json(path, obj) -> pathlib.Path:
+    """Write ``obj`` as JSON, creating the directory, and say where."""
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2, default=str))
+    print(f"wrote {path}")
+    return path
+
+
+def _floats(a) -> list:
+    """An array as a JSON list, complex entries interleaved as (re, im)."""
+    a = np.asarray(a)
+    return (a.view(float) if np.iscomplexobj(a) else a).tolist()
+
+
+def _complex(values, shape) -> Array:
+    """The inverse of ``_floats`` for a complex array of the given shape."""
+    return jnp.asarray(np.ascontiguousarray(np.array(values)).view(complex).reshape(shape))
+
+
+def encode_gphi(par: dict) -> dict:
+    """An ``{"r", "c"}`` pair of ``{"g", "phi"}`` gate dicts as JSON lists; ``decode_gphi`` inverts it."""
+    return {a: {"g": _floats(par[a]["g"]), "phi": _floats(par[a]["phi"])} for a in ("r", "c")}
+
+
+def decode_gphi(d: dict) -> dict:
+    """The gate dicts back from ``encode_gphi``'s lists."""
+    return {
+        a: {"g": _complex(d[a]["g"], (-1, 2, 2)), "phi": jnp.asarray(np.array(d[a]["phi"]))}
+        for a in ("r", "c")
+    }
+
+
+def encode_butterfly(par: dict) -> dict:
+    """An ``{"r", "c"}`` pair of butterfly parameters as JSON lists: real generators as they are, complex blocks with their shape."""
+
+    def one(d):
+        if "gen" in d:
+            return {"gen": _floats(d["gen"])}
+        return {"blk": _floats(d["blk"]), "shape": list(np.shape(d["blk"]))}
+
+    return {a: one(par[a]) for a in ("r", "c")}
+
+
+def decode_butterfly(d: dict) -> dict:
+    """The butterfly parameters back from ``encode_butterfly``'s lists."""
+    return {
+        a: {"gen": jnp.asarray(np.array(d[a]["gen"]))}
+        if "gen" in d[a]
+        else {"blk": _complex(d[a]["blk"], tuple(d[a]["shape"]))}
+        for a in ("r", "c")
+    }

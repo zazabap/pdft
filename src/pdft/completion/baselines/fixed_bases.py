@@ -1,39 +1,38 @@
-"""Fixed orthonormal bases, and IHT in them --- the classical controls.
+"""Fixed orthonormal bases, and iterative hard thresholding in them.
 
-The circuit at theta0 IS the DFT, so every number the subpackage reports at
-theta0 is a statement about Fourier-domain iterative hard thresholding. The
-contribution is only what training buys over the best *fixed* alternative a
-reviewer would reach for: the DCT-II (even symmetric extension, so no
-frame-border discontinuity) and the orthonormal wavelets, which are the
-classical sparsifying bases for natural images --- and the compression winners
-whose completion loss is the paper's motivating reversal.
-
-Wavelets run in periodization mode so they are exact isometries and the k
-budget means the same thing on every side. iht_fixed is the same iteration as
-pdft.completion.solver.reconstruct, in numpy, for bases that have no angles to
-train. The DCT comes from scipy when it is installed and from jax.scipy
-otherwise (they agree to round-off); the wavelets need PyWavelets.
+The circuit at ``theta0`` is the DFT, so every number at ``theta0`` is a
+statement about Fourier-domain IHT, and the contribution is only what training
+buys over the best fixed alternative: the DCT-II (even symmetric extension, so
+no frame-border discontinuity) and the orthonormal wavelets, the classical
+sparsifying bases for natural images and the compression winners whose
+completion loss is the paper's motivating reversal. Wavelets run in
+periodization mode so they are exact isometries and the ``k`` budget means the
+same thing on every side. The DCT comes from scipy when installed and from
+``jax.scipy`` otherwise; the wavelets need PyWavelets.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
+
+WAVELETS = ("haar", "db4", "sym8")
 
 
 def hard_k(C: np.ndarray, k: int) -> np.ndarray:
-    """Keep the k largest-magnitude entries (numpy; no gradient to protect)."""
+    """Keep the ``k`` largest-magnitude entries; numpy, no gradient to protect."""
     a = np.abs(C).ravel()
     if k >= a.size:
         return C
     return np.where(np.abs(C) >= np.partition(a, -k)[-k], C, 0.0)
 
 
-def iht_fixed(img, obs, k, iters, fwd, inv):
-    """The iteration of pdft.completion.solver.reconstruct, in a fixed basis (fwd, inv)."""
+def iht_fixed(img, obs, k: int, iters: int, fwd: Callable, inv: Callable) -> np.ndarray:
+    """The solver's iteration in a fixed basis ``(fwd, inv)``, in numpy."""
     x = np.where(obs, img, 0.0)
     for _ in range(iters):
-        x = np.real(inv(hard_k(fwd(x), k)))
-        x = np.where(obs, img, x)
+        x = np.where(obs, img, np.real(inv(hard_k(fwd(x), k))))
     return x
 
 
@@ -54,19 +53,24 @@ def _dct_backend():
         return dctn, idctn
 
 
-def dct_pair():
+def dct_pair() -> tuple[Callable, Callable]:
+    """``(fwd, inv)`` of the orthonormal 2-D DCT-II."""
     dctn, idctn = _dct_backend()
     return (lambda x: dctn(x, norm="ortho"), lambda c: idctn(c, norm="ortho"))
 
 
-def dft_pair():
+def dft_pair() -> tuple[Callable, Callable]:
+    """``(fwd, inv)`` of the orthonormal 2-D DFT."""
     return (lambda x: np.fft.fft2(x, norm="ortho"), lambda c: np.fft.ifft2(c, norm="ortho"))
 
 
-def wavelet_pair(name: str):
-    """(fwd, inv) for an orthonormal wavelet. fwd stashes the coefficient
-    slices it produced so inv can rebuild the pyramid --- inv is only ever
-    called on the output of the preceding fwd, as iht_fixed does."""
+def wavelet_pair(name: str) -> tuple[Callable, Callable]:
+    """``(fwd, inv)`` of an orthonormal wavelet.
+
+    ``fwd`` stashes the coefficient slices it produced so ``inv`` can rebuild
+    the pyramid; ``inv`` is only ever called on the preceding ``fwd``'s output,
+    as ``iht_fixed`` does.
+    """
     import pywt
 
     def fwd(x):
@@ -82,15 +86,8 @@ def wavelet_pair(name: str):
     return fwd, inv
 
 
-WAVELETS = ("haar", "db4", "sym8")
-
-
 def fixed_bases(wavelets=WAVELETS) -> dict:
-    """{name: (fwd, inv)} for every control available in this environment.
-
-    The wavelet rows are silently absent without PyWavelets; callers that need
-    them check for "haar" and say so, rather than half the controls failing.
-    """
+    """``{name: (fwd, inv)}`` for every control available; the wavelets are absent without PyWavelets."""
     bases = {"DCT-II": dct_pair(), "DFT": dft_pair()}
     try:
         for w in wavelets:

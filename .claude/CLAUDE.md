@@ -170,7 +170,7 @@ The two thresholds are identical.
 
 ### 16. Never form `U` on a hot path
 
-`dense_operator`, `unitary_matrix`, `unitary_general`, `unitary_butterfly` cost
+`dense_operator`, `unitary_phases`, `unitary_general`, `unitary_butterfly` cost
 `O(N^2 log N)` and are diagnostics. Transforms apply gates to the image.
 
 ### 17. The image's dtype sets the working precision
@@ -196,7 +196,11 @@ when scipy is installed. The paper's MS-SSIM column depends on it.
 
 Every transform family is a single function `apply(x, params, adjoint, axis)`
 on one axis of length `2**n` (`apply_gates` for the circuits, of which
-`apply_u` is the phase-only special case, `apply_butterfly`, `apply_dense`).
+`apply_u` in `families/phases.py` is the phase-only special case,
+`apply_butterfly`, `apply_dense`). The generic machinery lives at the top
+level of the subpackage; every family, the paper's own included, lives under
+`families/`, and `baselines/` holds only per-image methods with no trained
+basis.
 Everything else is derived: `separable(apply)` gives the 2-D analysis /
 synthesis pair, `solver_for(apply)` the jitted K-step solver, `batched` the
 vmapped one, `protocol.evaluate_params` the scoring, `training.task_loss` the
@@ -208,13 +212,18 @@ the operator and reuse. The same rule for the manifold step: `skew` and
 `cayley` in `families.riemannian` are batched and serve U(2) gates and U(N)
 matrices alike.
 
-### Naming
+### Style
 
-`pdft.completion.coherence` the *attribute* is the theta-based function
-re-exported from `transform` (the core package does the same with
-`pdft.coherence`); the module is reached with `from pdft.completion.coherence
-import ...` or `importlib.import_module`. The training module is `training`,
-not `train`, so the `train` function does not shadow it.
+Docstrings: a one-sentence summary line, then, when the reason for a design is
+not obvious, one or two short paragraphs saying why; no dates, owner quotes or
+paper-repo history. Code, maths and identifiers in double backticks; no `---`
+or `--` standing in for a dash; no `Args` / `Returns` sections (the prose names
+a parameter when it needs explaining). Comments explain a non-obvious choice,
+never restate the line, and there are no banner comment dividers. Public
+signatures are annotated, arrays as `Array = jax.Array`, as in the core
+package. Per-family diagnostics are `unitary_<family>` and
+`coherence_<family>`; `pdft.completion.coherence` is the module, not a
+function.
 
 ## Repo layout
 
@@ -234,8 +243,8 @@ src/pdft/
 ├── viz/                    loss (matplotlib loss plots), circuit (schematic)
 └── completion/             Image inpainting from random pixels (ported from pdft-completion; see below)
     ├── transform, solver, unroll, training, adam, coherence, metrics, protocol, data, bridge
-    ├── families/           general (QFT + diagonals / rotations), shared, butterfly, riemannian
-    └── baselines/          fixed_bases, nuclear, qtt, transform_learning
+    ├── families/           phases (the paper's own), general, shared, butterfly, riemannian, transform_learning
+    └── baselines/          fixed_bases, nuclear, qtt (per-image methods, no trained basis)
 
 reference/julia/            Julia harness — needed only to regenerate goldens
 reference/goldens/          Committed .npz + .json files (<200 KB total)

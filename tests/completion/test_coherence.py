@@ -3,21 +3,21 @@ import importlib
 import jax.numpy as jnp
 import numpy as np
 
+import pdft.completion.coherence as C
+from pdft.completion.families.phases import apply_u, unitary_phases
 from pdft.completion.families.shared import expand
-from pdft.completion.transform import apply_gates, apply_u, n_params, theta0, unitary_matrix
+from pdft.completion.transform import apply_gates, n_params, theta0
 
-# `pdft.completion.coherence` the attribute is the theta-based function re-exported
-# from transform (as `pdft.coherence` is in the core package); these are the modules.
-C = importlib.import_module("pdft.completion.coherence")
+# The core package re-exports a function named coherence at its root, which shadows its module.
 core = importlib.import_module("pdft.coherence")
 
 n = 5
 
 
-def test_dense_operator_matches_unitary_matrix():
+def test_dense_operator_matches_unitary_phases():
     th = theta0(n) + 0.3
     assert jnp.allclose(
-        C.dense_operator(lambda e: apply_u(e, th, axis=0), n), unitary_matrix(th), atol=1e-12
+        C.dense_operator(lambda e: apply_u(e, th, axis=0), n), unitary_phases(th), atol=1e-12
     )
 
 
@@ -26,7 +26,7 @@ def test_mu_agrees_with_the_core_definition(rng):
     U = jnp.asarray(q)
     assert float(C.coherence(U)) == core.coherence(None, operator=U)
     assert not C.is_flat_modulus(U) and float(C.flat_modulus_deviation(U)) > 0.05
-    assert C.is_flat_modulus(unitary_matrix(theta0(n)))
+    assert C.is_flat_modulus(unitary_phases(theta0(n)))
 
 
 def test_certificate_over_the_parameter_space(rand_general):

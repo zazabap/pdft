@@ -1,36 +1,35 @@
-"""Full-reference image quality metrics --- one implementation each.
+"""Full-reference image quality metrics, one implementation each.
 
 All three are higher-is-better; SSIM and MS-SSIM equal 1 for identical images.
-The Gaussian window is computed here in numpy, matching
+The Gaussian window is computed here in numpy and matches
 ``scipy.ndimage.gaussian_filter(sigma=1.5, truncate=3.5, mode="reflect")`` to
-round-off (a test pins it when scipy is installed), so the package does not
-depend on scipy for its metrics. SSIM agrees with scikit-image to about 6e-4
-on real reconstructions.
+round-off (a test pins it when scipy is installed), so the metrics do not
+depend on scipy. SSIM agrees with scikit-image to about 6e-4 on real
+reconstructions.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
+# Wang, Simoncelli and Bovik (2003), table 1.
+MS_WEIGHTS = (0.0448, 0.2856, 0.3001, 0.2363, 0.1333)
+_C1, _C2 = 0.01**2, 0.03**2
 
-def psnr(a: np.ndarray, b: np.ndarray) -> float:
-    """PSNR on [0, 1] data. Inputs are clipped."""
+
+def psnr(a, b) -> float:
+    """PSNR of two images on ``[0, 1]``; inputs are clipped to that range first."""
     a = np.clip(np.asarray(a, dtype=np.float64), 0.0, 1.0)
     b = np.clip(np.asarray(b, dtype=np.float64), 0.0, 1.0)
     return float(10.0 * np.log10(1.0 / max(np.mean((a - b) ** 2), 1e-15)))
 
 
-# Wang, Simoncelli & Bovik 2003, table 1.
-MS_WEIGHTS = (0.0448, 0.2856, 0.3001, 0.2363, 0.1333)
-_C1, _C2 = 0.01**2, 0.03**2
-
-
-def gaussian_filter(a: np.ndarray, sigma: float = 1.5, truncate: float = 3.5) -> np.ndarray:
-    """Separable Gaussian blur with scipy's kernel and "reflect" boundary.
+def gaussian_filter(a, sigma: float = 1.5, truncate: float = 3.5) -> np.ndarray:
+    """A separable Gaussian blur with scipy's kernel and its ``"reflect"`` boundary.
 
     The kernel spans ``int(truncate * sigma + 0.5)`` taps on each side and is
-    normalised to unit sum; "reflect" in scipy's sense repeats the edge sample
-    (numpy's ``symmetric``). Applied along every axis in turn.
+    normalised to unit sum; ``"reflect"`` in scipy's sense repeats the edge
+    sample (numpy's ``"symmetric"``). Applied along every axis in turn.
     """
     a = np.asarray(a, dtype=np.float64)
     radius = int(truncate * sigma + 0.5)
@@ -51,7 +50,8 @@ def gaussian_filter(a: np.ndarray, sigma: float = 1.5, truncate: float = 3.5) ->
     return a
 
 
-def _stats(a, b, sigma=1.5):
+def _stats(a, b, sigma: float = 1.5):
+    """Local means, variances and covariance under the Gaussian window."""
     mu_a, mu_b = gaussian_filter(a, sigma), gaussian_filter(b, sigma)
     return (
         mu_a,
@@ -62,8 +62,8 @@ def _stats(a, b, sigma=1.5):
     )
 
 
-def ssim(a, b, sigma=1.5):
-    """SSIM (Wang et al. 2004), 11x11 Gaussian window, data range 1."""
+def ssim(a, b, sigma: float = 1.5) -> float:
+    """SSIM (Wang et al. 2004) with an 11x11 Gaussian window and data range 1."""
     a = np.clip(np.asarray(a, float), 0, 1)
     b = np.clip(np.asarray(b, float), 0, 1)
     mu_a, mu_b, saa, sbb, sab = _stats(a, b, sigma)
@@ -72,9 +72,11 @@ def ssim(a, b, sigma=1.5):
     return float(np.mean(num / den))
 
 
-def ms_ssim(a, b, weights=MS_WEIGHTS):
-    """MS-SSIM (Wang et al. 2003): contrast/structure at each of five scales,
-    luminance at the coarsest only, 2x2 box downsampling between scales."""
+def ms_ssim(a, b, weights=MS_WEIGHTS) -> float:
+    """MS-SSIM (Wang et al. 2003): contrast and structure at five scales, luminance at the coarsest.
+
+    Scales are separated by 2x2 box downsampling.
+    """
     a = np.clip(np.asarray(a, float), 0, 1)
     b = np.clip(np.asarray(b, float), 0, 1)
     out = 1.0

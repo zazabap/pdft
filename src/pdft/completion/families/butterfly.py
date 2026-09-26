@@ -1,23 +1,24 @@
-"""A learnable FFT-structured factorisation --- the butterfly baseline.
+"""A learnable FFT-structured factorisation: the butterfly family of Dao et al. (2019).
 
-Dao et al. (ICML 2019) learn a transform by keeping the dataflow of the
-Cooley-Tukey FFT and freeing the 2x2 blocks it is built from: the natural
-competitor to the circuit, O(N log N) and started at the DFT like it, but with
-2nN (unitary) or 4nN (free) parameters per axis against model B's 2n(n-1) and
-no pinned coherence --- a butterfly factor is not diagonal-plus-one-Hadamard,
-so the family can and does leave the complex Hadamard set. Writing ``Pi`` for
-the bit reversal and ``B_l`` for the factor mixing indices at stride ``2^l``,
+It keeps the dataflow of the Cooley-Tukey FFT and frees the 2x2 blocks it is
+built from: the natural competitor to the circuit, ``O(N log N)`` and started
+at the DFT like it, but with ``2nN`` (unitary) or ``4nN`` (free) parameters per
+axis against model B's ``2n(n-1)``, and no pinned coherence, since a butterfly
+factor is not diagonal-plus-one-Hadamard and the family can leave the complex
+Hadamard set. With ``Pi`` the bit reversal and ``B_l`` the factor mixing
+indices at stride ``2^l``,
 
     U = B_{n-1} ... B_1 B_0 Pi,
 
-with block ``[[1, w], [1, -w]] / sqrt(2)``, ``w = exp(+2i pi j / 2^(l+1))``,
-at the DFT (a plus sign: the QFT is conj(DFT)).
+and at the DFT every block is ``[[1, w], [1, -w]] / sqrt(2)`` with
+``w = exp(+2i pi j / 2^(l+1))`` (a plus sign: the QFT is ``conj(DFT)``).
 
-Two parameterisations, carried in the pytree structure so jit specialises on it:
-``"unitary"`` ({"gen"}: each block ``expm(i(a0 I + a . sigma))``, exactly in
-U(2)) and ``"free"`` ({"blk"}: an unconstrained complex 2x2, not an isometry,
-whose ``adjoint=True`` is the true blockwise inverse rather than the conjugate
-transpose, which is the only thing that keeps the solver's round trip meaningful).
+Two parameterisations, carried in the pytree structure so jit specialises on
+it. ``"unitary"`` (``{"gen"}``) writes each block as
+``expm(i(a0 I + a . sigma))``, exactly in U(2). ``"free"`` (``{"blk"}``) is an
+unconstrained complex 2x2 per block, not an isometry; its ``adjoint=True`` is
+the true blockwise inverse rather than the conjugate transpose, the only thing
+that keeps the solver's round trip meaningful.
 """
 
 from __future__ import annotations
@@ -33,11 +34,13 @@ from ..solver import batched, solver_for
 from ..training import adam_loop, mu_monitor, task_loss, widths
 from ..transform import bitreverse, complex_dtype, register_width, separable
 
+Array = jax.Array
+
 MODES = ("unitary", "free")
 
 
 def count_params(n: int, mode: str = "unitary") -> int:
-    """Real DOF per axis: n factors of N/2 blocks of 4 (unitary) or 8 (free) reals."""
+    """Real degrees of freedom per axis: ``n`` factors of ``N/2`` blocks of 4 (unitary) or 8 (free) reals."""
     return n * 2 ** (n - 1) * {"unitary": 4, "free": 8}[mode]
 
 
@@ -49,11 +52,13 @@ def mode_of(params: dict) -> str:
     raise KeyError(f"not a butterfly parameter dict: keys {sorted(params)}")
 
 
-def expm_u2(a: jnp.ndarray) -> jnp.ndarray:
-    """``exp(i(a0 I + a1 X + a2 Y + a3 Z))`` for ``a`` of shape (..., 4), in closed
-    form: ``exp(i a0) (cos r I + i sinc(r) v.sigma)``, ``r = |v|``. Exact,
-    vmappable, analytically differentiable; the r = 0 branch is guarded so the
-    gradient through sqrt stays finite."""
+def expm_u2(a: Array) -> Array:
+    """``exp(i(a0 I + a1 X + a2 Y + a3 Z))`` for ``a`` of shape ``(..., 4)``, in closed form.
+
+    ``exp(i a0) (cos r I + i sinc(r) v.sigma)`` with ``r = |v|``: exact,
+    vmappable and analytically differentiable. The ``r = 0`` branch is guarded
+    so the gradient through the square root stays finite.
+    """
     a0, v = a[..., 0], a[..., 1:]
     r2 = jnp.sum(v * v, axis=-1)
     nz = r2 > 0
@@ -71,9 +76,12 @@ def expm_u2(a: jnp.ndarray) -> jnp.ndarray:
 
 
 def _logm_u2(M: np.ndarray) -> np.ndarray:
-    """Inverse of expm_u2 on U(2), in numpy, used once to sit at the DFT. Splits
-    ``M = e^{i alpha} S`` with S in SU(2) and reads (r, n) off S's Pauli
-    components; arctan2 rather than arccos keeps the digits near r = 0 and pi."""
+    """The inverse of ``expm_u2`` on U(2), in numpy, used once to sit at the DFT.
+
+    Splits ``M = e^{i alpha} S`` with ``S`` in SU(2) and reads the axis and
+    angle off ``S``'s Pauli components; ``arctan2`` rather than ``arccos``
+    keeps the digits near ``r = 0`` and ``r = pi``.
+    """
     det = M[..., 0, 0] * M[..., 1, 1] - M[..., 0, 1] * M[..., 1, 0]
     alpha = np.angle(det) / 2.0
     S = np.exp(-1j * alpha)[..., None, None] * M
@@ -87,10 +95,12 @@ def _logm_u2(M: np.ndarray) -> np.ndarray:
 
 
 def dft_blocks(n: int) -> np.ndarray:
-    """The (n, N/2, 2, 2) blocks whose product is ``apply_u(., theta0(n))``. The
-    twiddle depends only on the offset within a stage, so every group of a
+    """The ``(n, N/2, 2, 2)`` blocks whose product is ``apply_u(., theta0(n))``.
+
+    The twiddle depends only on the offset within a stage, so every group of a
     stage starts identical; training breaks that, which is exactly the extra
-    capacity this baseline has over the circuit."""
+    capacity this family has over the circuit.
+    """
     N = 2**n
     out = np.empty((n, N // 2, 2, 2), dtype=np.complex128)
     for lvl in range(n):
@@ -105,7 +115,7 @@ def dft_blocks(n: int) -> np.ndarray:
 
 
 def init_butterfly(n: int, mode: str = "unitary", dtype=None) -> dict:
-    """Parameters for n factors sitting exactly at the DFT."""
+    """Parameters for ``n`` factors sitting exactly at the DFT."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
     B = dft_blocks(n)
@@ -114,14 +124,13 @@ def init_butterfly(n: int, mode: str = "unitary", dtype=None) -> dict:
     return {"gen": jnp.asarray(_logm_u2(B), dtype=dtype or jnp.float64)}
 
 
-def blocks(params: dict) -> jnp.ndarray:
-    """The (n, N/2, 2, 2) complex blocks this parameter dict denotes."""
+def blocks(params: dict) -> Array:
+    """The ``(n, N/2, 2, 2)`` complex blocks this parameter dict denotes."""
     return expm_u2(params["gen"]) if "gen" in params else params["blk"]
 
 
-def _inverse_blocks(params: dict) -> jnp.ndarray:
-    """Unitary: negate the generator, exactly in U(2). Free: the analytic 2x2
-    inverse (the conjugate transpose would not invert the map)."""
+def _inverse_blocks(params: dict) -> Array:
+    """Unitary: negate the generator, exactly in U(2). Free: the analytic 2x2 inverse."""
     if "gen" in params:
         return expm_u2(-params["gen"])
     B = params["blk"]
@@ -137,10 +146,13 @@ def _inverse_blocks(params: dict) -> jnp.ndarray:
 
 
 @functools.partial(jax.jit, static_argnames=("adjoint", "axis"))
-def apply_butterfly(x, params: dict, adjoint: bool = False, axis: int = -1):
-    """The butterfly product (or its inverse) along one axis. O(N log N): each
-    stage is N/2 2x2 blocks applied as two broadcast multiplies and an add
-    (a batched matmul lowers twenty times slower and, in float32, to TF32)."""
+def apply_butterfly(x: Array, params: dict, adjoint: bool = False, axis: int = -1) -> Array:
+    """Apply the butterfly product, or its inverse, along one axis.
+
+    ``O(N log N)``: each stage is ``N/2`` 2x2 blocks applied as two broadcast
+    multiplies and an add. A batched matmul lowers twenty times slower and, in
+    float32, to TF32.
+    """
     n = register_width(x.shape[axis])
     cdtype = complex_dtype(x)
     B = (_inverse_blocks(params) if adjoint else blocks(params)).astype(cdtype)
@@ -150,8 +162,8 @@ def apply_butterfly(x, params: dict, adjoint: bool = False, axis: int = -1):
     lead, N = t.shape[:-1], 2**n
 
     def stage(t, lvl):
-        # Split the axis as (group, pair-bit, offset): stage lvl mixes indices
-        # that differ in bit lvl, i.e. at stride 2**lvl.
+        # Split the axis as (group, pair bit, offset): stage lvl mixes the
+        # indices that differ in bit lvl, i.e. at stride 2**lvl.
         h, j = N >> (lvl + 1), 1 << lvl
         Mb = B[lvl].reshape(h, j, 2, 2)
         tb = t.reshape(lead + (h, 2, j))
@@ -178,19 +190,18 @@ reconstruct_butterfly = solver_for(apply_butterfly)
 reconstruct_butterfly_batch = batched(reconstruct_butterfly)
 
 
-def unitary_butterfly(params: dict) -> jnp.ndarray:
-    """The 2^n x 2^n matrix, formed explicitly. Diagnostics only."""
+def unitary_butterfly(params: dict) -> Array:
+    """The product formed explicitly. ``O(N^2 log N)``; diagnostics only."""
     return dense_operator(lambda e: apply_butterfly(e, params, axis=0), blocks(params).shape[0])
 
 
-def coherence_butterfly(params: dict) -> jnp.ndarray:
-    """mu of the product. In "free" mode the operator is not an isometry, so mu
-    is no longer bounded by N; report ``isometry_defect`` alongside it."""
+def coherence_butterfly(params: dict) -> Array:
+    """``mu`` of the product. In ``"free"`` mode the operator is not an isometry, so report ``isometry_defect`` with it."""
     return coherence(unitary_butterfly(params))
 
 
 def isometry_defect(params: dict) -> float:
-    """``||U^H U - I||_max``: ~1e-15 in "unitary" mode, by construction."""
+    """``||U^H U - I||_max``: about 1e-15 in ``"unitary"`` mode, by construction."""
     U = unitary_butterfly(params)
     return float(jnp.abs(jnp.conj(U).T @ U - jnp.eye(U.shape[0], dtype=U.dtype)).max())
 
@@ -198,21 +209,19 @@ def isometry_defect(params: dict) -> float:
 def train_butterfly(
     images,
     k,
-    K=20,
-    p=0.10,
-    steps=200,
-    lr=2e-3,
-    mode="hard",
-    param="unitary",
-    batch=2,
-    seed=0,
-    log_every=10,
-    remat=True,
-    verbose=True,
-):
-    """Adam on the blocks through the shared loop, so the trained families differ
-    only in the circuit they parameterise. Returns ``(params, history)``; the
-    history carries mu, so any drift is on record."""
+    K: int = 20,
+    p: float = 0.10,
+    steps: int = 200,
+    lr: float = 2e-3,
+    mode: str = "hard",
+    param: str = "unitary",
+    batch: int = 2,
+    seed: int = 0,
+    log_every: int = 10,
+    remat: bool = True,
+    verbose: bool = True,
+) -> tuple[dict, list[dict]]:
+    """Adam on the blocks through the shared loop; the history carries ``mu`` so any drift is on record."""
     images = jnp.asarray(images)
     return adam_loop(
         images,

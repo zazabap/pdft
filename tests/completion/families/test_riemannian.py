@@ -2,15 +2,16 @@ import jax.numpy as jnp
 import numpy as np
 
 from pdft.completion.families import riemannian as R
+from pdft.completion.families.phases import analysis, unitary_phases
 from pdft.completion.protocol import evaluate_params
-from pdft.completion.transform import analysis, theta0, unitary_matrix
+from pdft.completion.transform import theta0
 
 n = 3
 N = 2**n
 
 
 def test_dft_matrix_is_the_circuit_at_theta0():
-    assert jnp.allclose(R.dft_matrix(N), unitary_matrix(theta0(n)), atol=1e-12)
+    assert jnp.allclose(R.dft_matrix(N), unitary_phases(theta0(n)), atol=1e-12)
 
 
 def test_matrix_pair_matches_the_circuit_and_inverts(rng):

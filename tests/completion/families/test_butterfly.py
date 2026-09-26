@@ -3,8 +3,9 @@ import numpy as np
 import pytest
 
 from pdft.completion.families import butterfly as B
+from pdft.completion.families.phases import apply_u
 from pdft.completion.protocol import evaluate_params
-from pdft.completion.transform import apply_u, theta0
+from pdft.completion.transform import theta0
 
 n = 4
 N = 2**n

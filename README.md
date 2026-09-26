@@ -146,10 +146,8 @@ off array shapes rather than passed around.
 ```python
 import numpy as np
 import jax.numpy as jnp
-from pdft.completion import psnr, reconstruct, theta0
-from pdft.completion.training import train
+from pdft.completion import psnr, qft_basis_from_angles, reconstruct, theta0, train
 from pdft.completion.protocol import train_k
-from pdft.completion.bridge import qft_basis_from_angles
 
 n = 9                                    # 512 x 512 images, float32 sets the working precision
 images = np.stack([...]).astype(np.float32)
@@ -167,17 +165,17 @@ basis = qft_basis_from_angles(params["r"], params["c"])   # a pdft.QFTBasis: sav
 
 | Module | What it holds |
 |---|---|
-| `transform` | the gate kernel `apply_gates`, the per-axis operators `apply_u` / `apply_dense`, and `separable`, the 2-D analysis / synthesis pair of any of them; `theta0` (`U(theta0) == conj(DFT)`, the QFT sign) |
-| `solver` | the unrolled IHT map: `hard_k` / `soft_k` (straight-through), `iht`, and `solver_for` / `batched`, the jitted and vmapped K-step solver of any per-axis operator |
+| `transform` | the circuit kernel `apply_gates`, the dense operator `apply_dense`, the DFT anchor `theta0` (`U(theta0) == conj(DFT)`, the QFT sign), and `separable`, the 2-D analysis / synthesis pair of any operator |
+| `solver` | `hard_k` / `soft_k` (straight-through), the unrolled IHT scan `iht`, and `solver_for` / `batched`, the jitted and vmapped K-step solver of any operator |
 | `unroll` | memory-bounded differentiation: nested rematerialisation turns `O(K N^2)` into `O(sqrt(K) N^2)`, with a planner |
-| `training` | `minibatches` (the one batch/mask schedule), `task_loss` of any solver, the compression control, `adam_loop` |
+| `training` | `minibatches` (the one batch/mask schedule every trainer draws from), `task_loss` of any solver, `mu_monitor`, `adam_loop` |
 | `adam` | plain Adam written out to mirror `optax.adam` (bit for bit for real parameters under jit; this package does not depend on optax) |
 | `coherence` | `mu` for closures and matrices, and `certify_flat_modulus` over sampled parameters |
 | `metrics`, `protocol` | PSNR / SSIM / MS-SSIM, and the paper's Table I protocol as data (`heldout_mask`, `budget_k`, `table1_scores`, `evaluate_params`, …) |
 | `data` | Kodak and DIV2K splits from an explicit data directory (needs `pillow`) |
 | `bridge` | `qft_basis_from_angles`, `qft_basis_from_general` and their inverses |
-| `families/` | `general` (QFT + diagonals, QFT + rotations with a Cayley step), `shared` (phases tied by gate distance, so one fit transfers across resolutions), `butterfly` (Dao et al.), `riemannian` (a free unitary on U(N)) |
-| `baselines/` | fixed bases (DCT-II / DFT / wavelets), nuclear-norm completion (SVP, APG), the coarse-to-fine quantized tensor train, sparsifying transform learning |
+| `families/` | one operator each: `phases` (the paper's own family: `apply_u`, `train`, `reconstruct`), `general` (QFT + diagonals, QFT + rotations with a Cayley step), `shared` (phases tied by gate distance, so one fit transfers across resolutions), `butterfly` (Dao et al.), `riemannian` (a free unitary on U(N)), `transform_learning` (a separable orthonormal pair fitted for sparsity) |
+| `baselines/` | per-image methods with no trained basis: fixed bases (DCT-II / DFT / wavelets), nuclear-norm completion (SVP, APG), the coarse-to-fine quantized tensor train |
 
 `pip install "pdft[completion]"` adds the optional backends (`pillow` for
 image loading, `PyWavelets` for the wavelet baselines, `scipy` for its DCT).

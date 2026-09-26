@@ -19,8 +19,7 @@ import numpy as np
 
 import pdft
 from pdft.coherence import certify_flat_modulus
-from pdft.completion import psnr, reconstruct, theta0, train
-from pdft.completion.bridge import qft_basis_from_angles
+from pdft.completion import psnr, qft_basis_from_angles, reconstruct, theta0, train
 from pdft.completion.protocol import train_k
 from pdft.io import save_basis
 

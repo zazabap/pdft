@@ -1,8 +1,7 @@
-"""Per-image competitors: methods with no trainable basis.
+"""Per-image methods with no trained basis.
 
-``fixed_bases`` (DCT-II / DFT / wavelet IHT), ``nuclear`` (low-rank matrix
-completion, the classical row), ``qtt`` (the coarse-to-fine quantized tensor
-train after PuTT) and ``transform_learning`` (the square orthonormal member of
-dictionary learning). None of these import the circuit machinery; they are what
-the trained families in :mod:`pdft.completion.families` are measured against.
+``fixed_bases`` (DCT-II, DFT and wavelet IHT in numpy), ``nuclear`` (low-rank
+matrix completion) and ``qtt`` (the coarse-to-fine quantized tensor train after
+PuTT) refit nothing, or refit to each test image alone. They are what the
+trained families in :mod:`pdft.completion.families` are measured against.
 """

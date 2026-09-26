@@ -6,8 +6,8 @@ import numpy as np
 import pdft.completion.protocol as P
 from pdft.completion.families.butterfly import init_butterfly
 from pdft.completion.families.general import init_general
+from pdft.completion.families.phases import reconstruct
 from pdft.completion.metrics import ms_ssim, psnr, ssim
-from pdft.completion.solver import reconstruct
 from pdft.completion.transform import theta0
 
 

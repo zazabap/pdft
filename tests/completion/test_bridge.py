@@ -13,7 +13,8 @@ from pdft.completion.families.general import (
     synthesis_g,
     unitary_general,
 )
-from pdft.completion.transform import bitrev_index, theta0, unitary_matrix
+from pdft.completion.families.phases import unitary_phases
+from pdft.completion.transform import bitrev_index, theta0
 from pdft.io import load_basis, save_basis
 
 m, n = 3, 2
@@ -44,7 +45,7 @@ def test_phase_only_identity_and_round_trip(rng, rand_theta):
     X = _image(rng)
     assert jnp.allclose(
         basis.forward_transform(X),
-        unitary_matrix(thr).T @ Br.bitrev_image(X) @ unitary_matrix(thc),
+        unitary_phases(thr).T @ Br.bitrev_image(X) @ unitary_phases(thc),
         atol=1e-12,
     )
     r, c = Br.angles_from_qft_basis(basis)

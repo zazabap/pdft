@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from pdft.completion.baselines import fixed_bases as F
-from pdft.completion.baselines import transform_learning as TL
+from pdft.completion.families import transform_learning as TL
 
 N, P = 8, 4
 

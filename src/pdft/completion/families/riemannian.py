@@ -1,12 +1,13 @@
-"""A free unitary basis on U(N), trained by Cayley SGD --- and the Riemannian
-machinery every manifold step in the subpackage uses.
+"""A free unitary basis on U(N) trained by Cayley SGD, and the manifold step every family shares.
 
-The adaptive competitor of the circuit families: take ``U_r, U_c`` in U(N) as
-free matrices, project the Euclidean gradient onto the tangent space at U and
-retract with a Cayley transform, which keeps ``U^H U = I`` exactly (Wen & Yin
-2013). Same images, masks, solver, depth and budget as the circuits; the only
-differences are the constraint set (2N^2 reals per axis against n(n-1)/2), the
-O(N^2) transform, and a coherence that is free to drift.
+The adaptive competitor of the circuit families: ``U_r`` and ``U_c`` are free
+matrices, the Euclidean gradient is projected onto the tangent space at ``U``
+and the step retracts with a Cayley transform, which keeps ``U^H U = I`` exactly
+(Wen and Yin 2013). Same images, masks, solver, depth and budget as the
+circuits; the differences are the constraint set (``2N^2`` reals per axis
+against ``n(n-1)/2``), the ``O(N^2)`` transform, and a coherence free to drift.
+``skew`` and ``cayley`` are batched, so they also serve the U(2) gates of
+:func:`pdft.completion.families.general.train_c`.
 """
 
 from __future__ import annotations
@@ -21,29 +22,35 @@ from ..solver import solver_for
 from ..training import minibatches, task_loss
 from ..transform import apply_dense, separable
 
+Array = jax.Array
+
 analysis_mat, synthesis_mat = separable(apply_dense)
 reconstruct_mat = solver_for(apply_dense)
 
 
-def dft_matrix(N: int, dtype=jnp.complex128) -> jnp.ndarray:
+def dft_matrix(N: int, dtype=jnp.complex128) -> Array:
     """The starting point as an explicit matrix, in the QFT sign convention."""
     j = jnp.arange(N)
     return jnp.exp(2j * jnp.pi * j[:, None] * j[None, :] / N).astype(dtype) / jnp.sqrt(N)
 
 
-def skew(U, G):
-    """The Euclidean gradient ``G`` projected onto the tangent space at ``U``:
-    ``A = U^H G - G^H U`` (skew-Hermitian, symmetrised numerically), so that
-    ``U (I - tau A)`` descends. Batched over leading axes."""
+def skew(U: Array, G: Array) -> Array:
+    """The Euclidean gradient ``G`` projected onto the tangent space at ``U``.
+
+    ``A = U^H G - G^H U`` is skew-Hermitian (symmetrised numerically), and
+    ``U (I - tau A)`` descends. Batched over leading axes.
+    """
     Uh, Gh = jnp.conj(jnp.swapaxes(U, -1, -2)), jnp.conj(jnp.swapaxes(G, -1, -2))
     A = Uh @ G - Gh @ U
     return 0.5 * (A - jnp.conj(jnp.swapaxes(A, -1, -2)))
 
 
-def cayley(U, A, tau):
-    """Retract: ``U <- U (I + tau/2 A)^{-1} (I - tau/2 A)``. Exactly unitary for
-    skew-Hermitian ``A`` and ``U (I - tau A)`` to first order, so ``tau > 0``
-    descends along ``skew(U, G)``. Batched over leading axes."""
+def cayley(U: Array, A: Array, tau: float) -> Array:
+    """Retract ``U <- U (I + tau/2 A)^{-1} (I - tau/2 A)``.
+
+    Exactly unitary for skew-Hermitian ``A`` and ``U (I - tau A)`` to first
+    order, so ``tau > 0`` descends along ``skew(U, G)``. Batched over leading axes.
+    """
     eye = jnp.eye(U.shape[-1], dtype=U.dtype)
     return U @ jnp.linalg.solve(eye + 0.5 * tau * A, eye - 0.5 * tau * A)
 
@@ -51,20 +58,23 @@ def cayley(U, A, tau):
 def train_unitary(
     images,
     k,
-    K=100,
-    p=0.10,
-    steps=200,
-    lr=0.05,
-    momentum=0.9,
-    mode="hard",
-    batch=2,
-    seed=0,
-    log_every=25,
-    verbose=True,
-):
-    """Cayley SGD with momentum on ``(U_r, U_c)`` from the DFT. Double precision
-    throughout: in complex64 the Cayley solve's unitarity residual reaches 7e-4
-    within ten steps, which would make "exactly on the manifold" false."""
+    K: int = 100,
+    p: float = 0.10,
+    steps: int = 200,
+    lr: float = 0.05,
+    momentum: float = 0.9,
+    mode: str = "hard",
+    batch: int = 2,
+    seed: int = 0,
+    log_every: int = 25,
+    verbose: bool = True,
+) -> tuple[dict, list[dict]]:
+    """Cayley SGD with momentum on ``(U_r, U_c)`` from the DFT.
+
+    Double precision throughout: in complex64 the Cayley solve's unitarity
+    residual reaches 7e-4 within ten steps, which would make "exactly on the
+    manifold" false. Returns ``(U, history)``.
+    """
     images = jnp.asarray(images, dtype=jnp.float64)
     U = {a: dft_matrix(N) for a, N in zip(("r", "c"), images.shape[-2:])}
     mom = jax.tree.map(jnp.zeros_like, U)
