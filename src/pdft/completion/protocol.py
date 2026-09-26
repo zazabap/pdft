@@ -120,57 +120,62 @@ def write_json(path, obj) -> pathlib.Path:
     return path
 
 
-def encode_gphi(par) -> dict:
-    """A {"r", "c"} pair of {"g", "phi"} params as JSON-serialisable lists.
+def evaluate_params(
+    reconstruct, params, images, p: float, frac: float, K: int, seed: int, mode: str = "hard"
+):
+    """``evaluate`` for any family's solver and its ``{"r", "c"}`` parameters."""
+    return evaluate(
+        lambda Y, obs, k: reconstruct(params["r"], params["c"], Y, obs, k, K, mode, remat=False),
+        images,
+        p,
+        frac,
+        seed,
+    )
 
-    The complex g blocks are stored as interleaved floats; decode_gphi is the
-    exact inverse.
-    """
+
+def _floats(a) -> list:
+    """An array as a JSON list, complex entries interleaved as (re, im)."""
+    a = np.asarray(a)
+    return (a.view(float) if np.iscomplexobj(a) else a).tolist()
+
+
+def _complex(values, shape) -> jnp.ndarray:
+    """The inverse of ``_floats`` for a complex array of the given shape."""
+    return jnp.asarray(np.ascontiguousarray(np.array(values)).view(complex).reshape(shape))
+
+
+def encode_gphi(par) -> dict:
+    """A {"r", "c"} pair of {"g", "phi"} params as JSON-serialisable lists;
+    ``decode_gphi`` is the exact inverse."""
+    return {a: {"g": _floats(par[a]["g"]), "phi": _floats(par[a]["phi"])} for a in ("r", "c")}
+
+
+def decode_gphi(d) -> dict:
     return {
-        a: {
-            "g": np.asarray(par[a]["g"]).view(float).tolist(),
-            "phi": np.asarray(par[a]["phi"]).tolist(),
-        }
+        a: {"g": _complex(d[a]["g"], (-1, 2, 2)), "phi": jnp.asarray(np.array(d[a]["phi"]))}
         for a in ("r", "c")
     }
 
 
-def decode_gphi(d) -> dict:
-    """The inverse of encode_gphi, in the form pdft.completion.families.general consumes."""
-    par = {}
-    for a in ("r", "c"):
-        g = np.ascontiguousarray(np.array(d[a]["g"])).view(complex).reshape(-1, 2, 2)
-        par[a] = {"g": jnp.asarray(g), "phi": jnp.asarray(np.array(d[a]["phi"]))}
-    return par
-
-
 def encode_butterfly(par) -> dict:
-    """A {"r", "c"} pair of butterfly parameters as JSON-serialisable lists.
-
-    Same contract as encode_gphi, for the other trained FFT factorisation: the
-    real generators of the unitary mode go out as they are, the complex blocks
-    of the free mode as interleaved floats.
-    """
+    """A {"r", "c"} pair of butterfly parameters as JSON-serialisable lists: the
+    real generators as they are, the complex blocks interleaved with their shape."""
 
     def one(d):
         if "gen" in d:
-            return {"gen": np.asarray(d["gen"]).tolist()}
-        b = np.asarray(d["blk"])
-        return {"blk": b.view(float).tolist(), "shape": list(b.shape)}
+            return {"gen": _floats(d["gen"])}
+        return {"blk": _floats(d["blk"]), "shape": list(np.shape(d["blk"]))}
 
     return {a: one(par[a]) for a in ("r", "c")}
 
 
 def decode_butterfly(d) -> dict:
-    """The inverse of encode_butterfly, in the form pdft.completion.families.butterfly consumes."""
-    par = {}
-    for a in ("r", "c"):
-        if "gen" in d[a]:
-            par[a] = {"gen": jnp.asarray(np.array(d[a]["gen"]))}
-        else:
-            b = np.ascontiguousarray(np.array(d[a]["blk"])).view(complex)
-            par[a] = {"blk": jnp.asarray(b.reshape(tuple(d[a]["shape"])))}
-    return par
+    return {
+        a: {"gen": jnp.asarray(np.array(d[a]["gen"]))}
+        if "gen" in d[a]
+        else {"blk": _complex(d[a]["blk"], tuple(d[a]["shape"]))}
+        for a in ("r", "c")
+    }
 
 
 def table1_scores(solve, images, fracs=TABLE1_FRACS, p: float = TABLE1_P) -> dict:

@@ -52,8 +52,7 @@ import numpy as np
 from ..bases.base import QFTBasis
 from ..bases.circuit.qft import _qft_gates_1d
 from ..circuit.builder import sorted_gate_program
-from .families.general import _H2, init_general
-from .transform import gate_pairs, n_from_params, n_params
+from .transform import bitreverse, gate_pairs, hadamards, n_params, theta_to_params
 
 __all__ = [
     "angles_from_qft_basis",
@@ -64,24 +63,10 @@ __all__ = [
 ]
 
 
-def _bitrev_index(n: int) -> np.ndarray:
-    return np.array([int(format(i, f"0{n}b")[::-1], 2) for i in range(2**n)])
-
-
 def bitrev_image(X):
-    """``Pi X Pi``: reverse the bits of the index along both axes.
-
-    The pixel permutation that relates the two conventions; an involution.
-    Axis lengths must be powers of two.
-    """
-    X = jnp.asarray(X)
-    out = X
-    for axis, size in enumerate(X.shape[-2:]):
-        n = int(round(np.log2(size)))
-        if 2**n != size:
-            raise ValueError(f"axis of length {size} is not a power of two")
-        out = jnp.take(out, jnp.asarray(_bitrev_index(n)), axis=axis + X.ndim - 2)
-    return out
+    """``Pi X Pi``: the bits of the index reversed along both axes. The pixel
+    permutation that relates the two conventions; an involution."""
+    return bitreverse(bitreverse(X, -2), -1)
 
 
 def _program(m: int, n: int):
@@ -144,11 +129,7 @@ def general_from_qft_basis(basis: QFTBasis, atol: float = 1e-6) -> tuple[dict, d
 
 def qft_basis_from_angles(theta_r, theta_c) -> QFTBasis:
     """A ``QFTBasis`` for the phase-only angles of both axes (fixed Hadamards)."""
-    pr = init_general(n_from_params(len(theta_r)))
-    pc = init_general(n_from_params(len(theta_c)))
-    pr = {"g": pr["g"], "phi": pr["phi"].at[:, 3].set(jnp.asarray(theta_r))}
-    pc = {"g": pc["g"], "phi": pc["phi"].at[:, 3].set(jnp.asarray(theta_c))}
-    return qft_basis_from_general(pr, pc)
+    return qft_basis_from_general(theta_to_params(theta_r), theta_to_params(theta_c))
 
 
 def angles_from_qft_basis(basis: QFTBasis, atol: float = 1e-6) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -161,7 +142,7 @@ def angles_from_qft_basis(basis: QFTBasis, atol: float = 1e-6) -> tuple[jnp.ndar
     pr, pc = general_from_qft_basis(basis, atol=atol)
     out = []
     for p in (pr, pc):
-        if not jnp.allclose(p["g"], _H2, atol=atol):
+        if not jnp.allclose(p["g"], hadamards(p["g"].shape[0]), atol=atol):
             raise ValueError("a Hadamard has been trained; the basis is not phase-only")
         rest = jnp.angle(jnp.exp(1j * p["phi"][:, :3]))
         if not jnp.allclose(rest, 0.0, atol=atol):

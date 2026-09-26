@@ -128,7 +128,11 @@ no retraction.
 The subpackage carries the circuit in a second representation: the gate
 angles, applied directly to the image in `O(N log N)` (no matrix, any register
 width, float32 or float64), instead of the core package's tensor lists.
-`pdft.completion.bridge` converts between the two exactly.
+`pdft.completion.bridge` converts between the two exactly. A transform family
+is one per-axis operator `apply(x, params, adjoint, axis)`; its 2-D pair, its
+solver, the batched solver and its evaluation come from `separable`,
+`solver_for`, `batched` and `evaluate_params`, and register widths are read
+off array shapes rather than passed around.
 
 ```python
 import numpy as np
@@ -142,25 +146,25 @@ n = 9                                    # 512 x 512 images, float32 sets the wo
 images = np.stack([...]).astype(np.float32)
 k = train_k(2**n * 2**n, p=0.10, frac=0.125)
 
-params, history = train(images, n, k, K=100, p=0.10, steps=200, lr=8e-3)
+params, history = train(images, k, K=100, p=0.10, steps=200, lr=8e-3)
 
 obs = jnp.asarray(np.random.default_rng(0).random((512, 512)) < 0.10)
-x_hat = reconstruct(params["r"], params["c"], test_image * obs, obs, n, k, K=300)
+x_hat = reconstruct(params["r"], params["c"], test_image * obs, obs, k, K=300)
 print(psnr(x_hat, test_image), "dB vs the DFT:",
-      psnr(reconstruct(theta0(n), theta0(n), test_image * obs, obs, n, k, 300), test_image))
+      psnr(reconstruct(theta0(n), theta0(n), test_image * obs, obs, k, 300), test_image))
 
 basis = qft_basis_from_angles(params["r"], params["c"])   # a pdft.QFTBasis: save it, certify it, draw it
 ```
 
 | Module | What it holds |
 |---|---|
-| `transform` | `U(theta)` as a gate circuit: `apply_u`, `analysis` / `synthesis`, `theta0` (`U(theta0) == conj(DFT)`, the QFT sign) |
-| `solver` | the unrolled IHT map: `hard_k` / `soft_k` (straight-through), `iht`, `reconstruct`, `reconstruct_batch` |
+| `transform` | the gate kernel `apply_gates`, the per-axis operators `apply_u` / `apply_dense`, and `separable`, the 2-D analysis / synthesis pair of any of them; `theta0` (`U(theta0) == conj(DFT)`, the QFT sign) |
+| `solver` | the unrolled IHT map: `hard_k` / `soft_k` (straight-through), `iht`, and `solver_for` / `batched`, the jitted and vmapped K-step solver of any per-axis operator |
 | `unroll` | memory-bounded differentiation: nested rematerialisation turns `O(K N^2)` into `O(sqrt(K) N^2)`, with a planner |
-| `training` | the task objective, the compression control, and `adam_loop` (one batch/mask schedule for every trained family) |
+| `training` | `minibatches` (the one batch/mask schedule), `task_loss` of any solver, the compression control, `adam_loop` |
 | `adam` | plain Adam written out to mirror `optax.adam` (bit for bit for real parameters under jit; this package does not depend on optax) |
 | `coherence` | `mu` for closures and matrices, and `certify_flat_modulus` over sampled parameters |
-| `metrics`, `protocol` | PSNR / SSIM / MS-SSIM, and the paper's Table I protocol as data (`heldout_mask`, `budget_k`, `table1_scores`, …) |
+| `metrics`, `protocol` | PSNR / SSIM / MS-SSIM, and the paper's Table I protocol as data (`heldout_mask`, `budget_k`, `table1_scores`, `evaluate_params`, …) |
 | `data` | Kodak and DIV2K splits from an explicit data directory (needs `pillow`) |
 | `bridge` | `qft_basis_from_angles`, `qft_basis_from_general` and their inverses |
 | `families/` | `general` (QFT + diagonals, QFT + rotations with a Cayley step), `shared` (phases tied by gate distance, so one fit transfers across resolutions), `butterfly` (Dao et al.), `riemannian` (a free unitary on U(N)) |

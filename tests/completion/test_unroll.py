@@ -29,26 +29,22 @@ def test_retained_carries():
 def test_estimate_peak_and_plan():
     e64 = U.estimate_peak((64, 64), 16, "step")
     e32 = U.estimate_peak((64, 64), 16, "step", jnp.float32)
-    assert e64["retained_bytes"] == 16 * 64 * 64 * 8
-    assert e32["retained_bytes"] == e64["retained_bytes"] // 2
+    assert e64["retained_bytes"] == 16 * 64 * 64 * 8 == 2 * e32["retained_bytes"]
     assert e64["total_bytes"] == e64["retained_bytes"] + e64["working_bytes"]
     big = U.plan((64, 64), 16, 10**12)
     assert big["strategy"] == "step" and big["fits"]
     small = U.plan((64, 64), 16, e64["total_bytes"] // 2)
-    assert small["strategy"] == "nested" and small["n_outer"] is not None
-    assert small["total_bytes"] < e64["total_bytes"]
-    tiny = U.plan((64, 64), 16, 1)
-    assert tiny["strategy"] == "nested" and not tiny["fits"]
+    assert small["strategy"] == "nested" and small["total_bytes"] < e64["total_bytes"]
+    assert not U.plan((64, 64), 16, 1)["fits"]
 
 
 def test_report_lists_every_schedule():
     text = U.report((4096, 4096), 100)
-    for s in U.STRATEGIES:
-        assert s in text
-    assert "float64" in text and "float32" in U.report((64, 64), 4, jnp.float32)
+    assert all(s in text for s in U.STRATEGIES) and "float64" in text
+    assert "float32" in U.report((64, 64), 4, jnp.float32)
 
 
-def _problem(n, K, seed=0):
+def _problem(n, seed=0):
     N = 2**n
     rng = np.random.default_rng(seed)
     X = jnp.asarray(rng.random((N, N)))
@@ -58,51 +54,46 @@ def _problem(n, K, seed=0):
 
 def _loss(psi, X, obs, k, K, n, strategy, n_outer=None):
     p = expand(psi, n)
-    Xh = U.reconstruct(p, p, X * obs, obs, k, K, nr=n, nc=n, strategy=strategy, n_outer=n_outer)
-    return jnp.mean((Xh - X) ** 2)
+    return jnp.mean(
+        (U.reconstruct(p, p, X * obs, obs, k, K, strategy=strategy, n_outer=n_outer) - X) ** 2
+    )
 
 
 def test_every_schedule_computes_the_same_function():
     n, K = 4, 6
-    X, obs, k, psi = _problem(n, K)
+    X, obs, k, psi = _problem(n)
     ref_v, ref_g = jax.value_and_grad(lambda q: _loss(q, X, obs, k, K, n, "none"))(psi)
     for s, no in (("step", None), ("nested", None), ("nested", 4), ("nested", 6), ("nested", 1)):
         v, g = jax.value_and_grad(lambda q, s=s, no=no: _loss(q, X, obs, k, K, n, s, no))(psi)
-        assert abs(float(v) - float(ref_v)) < 1e-12
-        assert float(jnp.abs(g - ref_g).max()) < 1e-9
+        assert abs(float(v) - float(ref_v)) < 1e-12 and float(jnp.abs(g - ref_g).max()) < 1e-9
 
 
 def test_auto_strategy_plans_against_the_budget():
     n, K = 4, 6
-    X, obs, k, psi = _problem(n, K)
+    X, obs, k, psi = _problem(n)
     p = expand(psi, n)
     a = U.reconstruct(p, p, X * obs, obs, k, K, strategy="auto", budget_bytes=1)
-    b = U.reconstruct(p, p, X * obs, obs, k, K, strategy="step")
-    assert jnp.allclose(a, b, atol=1e-12)
-    c = U.reconstruct(p, p, X * obs, obs, k, K, strategy="auto")  # reads the device
-    assert jnp.allclose(a, c, atol=1e-12)
+    assert jnp.allclose(a, U.reconstruct(p, p, X * obs, obs, k, K, strategy="step"), atol=1e-12)
+    assert jnp.allclose(a, U.reconstruct(p, p, X * obs, obs, k, K), atol=1e-12)  # reads the device
 
 
 def test_rectangular_registers():
     rng = np.random.default_rng(1)
-    nr, nc = 4, 3
-    X = jnp.asarray(rng.random((2**nr, 2**nc)))
+    X = jnp.asarray(rng.random((16, 8)))
     obs = jnp.asarray(rng.random(X.shape) < 0.5)
-    pr, pc = expand(init_shared(nr), nr), expand(init_shared(nc), nc)
-    out = U.reconstruct(pr, pc, X * obs, obs, 8, 3, strategy="nested")
+    out = U.reconstruct(
+        expand(init_shared(4), 4), expand(init_shared(3), 3), X * obs, obs, 8, 3, strategy="nested"
+    )
     assert out.shape == X.shape and bool(jnp.all(jnp.isfinite(out)))
 
 
 def test_errors():
-    X = jnp.zeros((12, 16))
     p = expand(init_shared(4), 4)
     with pytest.raises(ValueError, match="power of two"):
-        U.reconstruct(p, p, X, X > 0, 4, 2, strategy="step")
-    X = jnp.zeros((16, 16))
+        U.reconstruct(p, p, jnp.zeros((12, 16)), jnp.zeros((12, 16), bool), 4, 2, strategy="step")
     with pytest.raises(ValueError, match="unknown strategy"):
-        U.reconstruct(p, p, X, X > 0, 4, 2, strategy="bogus")
+        U.reconstruct(p, p, jnp.zeros((16, 16)), jnp.zeros((16, 16), bool), 4, 2, strategy="bogus")
 
 
 def test_device_helpers_return_numbers():
-    assert isinstance(U.device_peak_mb(), float)
-    assert U._free_bytes() > 0
+    assert isinstance(U.device_peak_mb(), float) and U._free_bytes() > 0

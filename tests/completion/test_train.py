@@ -3,77 +3,93 @@ import numpy as np
 import pytest
 
 import pdft.completion.training as TR
-from pdft.completion.transform import n_params, theta0
+from pdft.completion.solver import reconstruct
+from pdft.completion.transform import coherence, n_params, theta0
 
 n = 4
-N = 2**n
 
 
-def _images(count=3, seed=0):
-    rng = np.random.default_rng(seed)
-    return jnp.asarray(rng.random((count, N, N)))
-
-
-def test_init_params_sits_at_the_dft():
+def test_init_params_and_widths(images):
     p = TR.init_params(n)
     assert jnp.array_equal(p["r"], theta0(n)) and jnp.array_equal(p["c"], theta0(n))
+    assert TR.widths(jnp.zeros((3, 16, 8))) == (4, 3)
 
 
-def test_adam_loop_trains_and_records(capsys):
-    images = _images()
+def test_minibatches_are_the_one_schedule(images):
+    imgs = jnp.asarray(images(n, 5))
+    a = list(TR.minibatches(imgs, 3, 2, 0.3, seed=7))
+    b = list(TR.minibatches(imgs, 3, 2, 0.3, seed=7))
+    assert len(a) == 3
+    for (Xa, oa), (Xb, ob) in zip(a, b):
+        assert Xa.shape == (2, 16, 16) and oa.shape == Xa.shape and oa.dtype == bool
+        assert jnp.array_equal(Xa, Xb) and jnp.array_equal(oa, ob)
+    assert abs(float(jnp.mean(jnp.stack([o for _, o in a]))) - 0.3) < 0.05
+    assert next(TR.minibatches(imgs, 1, 10, 0.3, 0))[0].shape[0] == 5  # batch capped at the dataset
 
+
+def test_adam_loop_trains_and_records(images, capsys):
     def loss_fn(params, X, obs):
-        return TR.task_loss(params, X, obs, n, 20, 3, "hard")
+        return TR.task_loss(reconstruct, params, X, obs, 20, 3)
 
     params, hist = TR.adam_loop(
-        images,
+        jnp.asarray(images()),
         TR.init_params(n),
         loss_fn,
         lr=1e-2,
         steps=4,
         p=0.5,
         batch=2,
-        seed=0,
-        monitor=lambda p: {"mu_r": 1.0},
+        monitor=TR.mu_monitor(coherence),
         log_every=2,
-        verbose=True,
     )
     assert len(hist) == 4 and all(np.isfinite(h["loss"]) for h in hist)
     assert "mu_r" in hist[0] and "mu_r" in hist[3] and "mu_r" not in hist[1]
-    assert not jnp.array_equal(params["r"], theta0(n))
+    assert hist[0]["mu_r"] == pytest.approx(1.0) and not jnp.array_equal(params["r"], theta0(n))
     assert "loss" in capsys.readouterr().out
 
 
-def test_grad_mask_pins_entries():
-    images = _images()
+def test_grad_mask_pins_entries(images):
     mask = {"r": jnp.zeros(n_params(n)).at[0].set(1.0), "c": jnp.zeros(n_params(n))}
 
     def loss_fn(params, X, obs):
-        return TR.task_loss(params, X, obs, n, 20, 2, "hard")
+        return TR.task_loss(reconstruct, params, X, obs, 20, 2)
 
     params, _ = TR.adam_loop(
-        images, TR.init_params(n), loss_fn, lr=1e-2, steps=3, p=0.5, grad_mask=mask, verbose=False
+        jnp.asarray(images()),
+        TR.init_params(n),
+        loss_fn,
+        lr=1e-2,
+        steps=3,
+        p=0.5,
+        grad_mask=mask,
+        verbose=False,
     )
-    assert jnp.array_equal(params["c"], theta0(n))
-    assert jnp.array_equal(params["r"][1:], theta0(n)[1:])
+    assert jnp.array_equal(params["c"], theta0(n)) and jnp.array_equal(
+        params["r"][1:], theta0(n)[1:]
+    )
     assert params["r"][0] != theta0(n)[0]
 
 
-def test_non_finite_gradient_raises():
-    images = _images()
-
+def test_non_finite_gradient_raises(images):
     def loss_fn(params, X, obs):
         return jnp.sqrt(jnp.sum(params["r"]) - 1e9)  # nan
 
     with pytest.raises(FloatingPointError):
-        TR.adam_loop(images, TR.init_params(n), loss_fn, lr=1e-2, steps=1, p=0.5, verbose=False)
+        TR.adam_loop(
+            jnp.asarray(images()),
+            TR.init_params(n),
+            loss_fn,
+            lr=1e-2,
+            steps=1,
+            p=0.5,
+            verbose=False,
+        )
 
 
 @pytest.mark.parametrize("objective", ["task", "comp"])
-def test_train_objectives(objective):
+def test_train_objectives(images, objective):
     params, hist = TR.train(
-        _images(),
-        n,
+        images(),
         20,
         K=2,
         p=0.5,
@@ -89,10 +105,8 @@ def test_train_objectives(objective):
         assert abs(h["mu_r"] - 1.0) < 1e-9 and abs(h["mu_c"] - 1.0) < 1e-9
 
 
-def test_comp_loss_ignores_the_mask():
-    images = _images()
+def test_comp_loss_ignores_the_mask(images):
+    imgs = jnp.asarray(images())
+    obs = jnp.asarray(np.random.default_rng(1).random(imgs.shape) < 0.5)
     p = TR.init_params(n)
-    obs = jnp.asarray(np.random.default_rng(1).random((3, N, N)) < 0.5)
-    a = TR.comp_loss(p, images, obs, n, 20, 2, "hard")
-    b = TR.comp_loss(p, images, ~obs, n, 20, 2, "hard")
-    assert float(a) == float(b)
+    assert float(TR.comp_loss(p, imgs, obs, 20, 2)) == float(TR.comp_loss(p, imgs, ~obs, 20, 2))

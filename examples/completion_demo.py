@@ -48,15 +48,13 @@ def main():
     k = train_k(N * N, P, 0.125)
 
     print(f"training the phase-only circuit at n = {n}, p = {P:.0%}, k = {k}, K = {K_TRAIN}")
-    params, history = train(
-        train_imgs, n, k, K=K_TRAIN, p=P, steps=40, lr=2e-2, batch=2, log_every=10
-    )
+    params, history = train(train_imgs, k, K=K_TRAIN, p=P, steps=40, lr=2e-2, batch=2, log_every=10)
     print(f"loss {history[0]['loss']:.4e} -> {history[-1]['loss']:.4e}")
 
     obs = jnp.asarray(rng.random((N, N)) < P)
     Y = jnp.asarray(test_img) * obs
-    dft = reconstruct(theta0(n), theta0(n), Y, obs, n, k, K_EVAL)
-    ours = reconstruct(params["r"], params["c"], Y, obs, n, k, K_EVAL)
+    dft = reconstruct(theta0(n), theta0(n), Y, obs, k, K_EVAL)
+    ours = reconstruct(params["r"], params["c"], Y, obs, k, K_EVAL)
     print(
         f"held-out PSNR at K = {K_EVAL}: DFT {psnr(dft, test_img):.2f} dB, "
         f"trained {psnr(ours, test_img):.2f} dB"

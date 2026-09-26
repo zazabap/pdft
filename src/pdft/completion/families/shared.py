@@ -1,29 +1,14 @@
 """Resolution-transferable parameterisation: phases shared by gate distance.
 
-Model B gives every two-qubit gate (p, q) its own four diagonal phases, so the
-basis has 2n(n-1) parameters per axis and is tied to one resolution: a basis
-fitted at 512^2 (n = 9, 36 gates) has nothing to say about the 66 gates of a
-4096^2 image.
-
-The DFT itself does not have that problem. Its angle
-
-    theta0_pq = 2 pi / 2^(p - q + 1)
-
-depends on p and q only through the distance d = p - q, which is why one rule
-generates the circuit at every n. Sharing the learned phases the same way,
-
-    phi_pq = psi_d,      d = p - q in {1, ..., n-1},
-
-keeps that property: the family still contains the DFT exactly, still has mu
-identically 1 (nothing here touches the Hadamards), and now has 4(n-1)
-parameters per axis --- 32 at n = 9 instead of 144.
-
-A basis fitted at n_train then extends to any n > n_train by keeping the fitted
-psi_d for the distances that were seen and falling back to the DFT value for the
-longer-range gates that only exist at the larger size (extend). Those gates
-carry the finest frequency splittings, which the small image does not contain,
-so leaving them at their textbook value is the honest default rather than a
-convenience.
+Model B ties a basis to one resolution: 2n(n-1) phases per axis, one set per
+gate, and a basis fitted at 512^2 (n = 9, 36 gates) says nothing about the 66
+gates of a 4096^2 image. The DFT has no such problem --- its angle
+``2 pi / 2^(p-q+1)`` depends on ``(p, q)`` only through the distance
+``d = p - q``, which is why one rule generates the circuit at every n. Sharing
+the learned phases the same way, ``phi_pq = psi_d``, keeps that: the family
+still contains the DFT, still has mu == 1 (nothing touches the Hadamards), and
+has 4(n-1) parameters per axis. ``extend`` carries a fit up to a wider register,
+the longer-range gates it never saw staying at their textbook value.
 """
 
 from __future__ import annotations
@@ -31,8 +16,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 
-from ..transform import gate_pairs
-from .general import _H2
+from ..transform import gate_pairs, hadamards
 
 
 def dist_index(n: int) -> jnp.ndarray:
@@ -48,17 +32,16 @@ def init_shared(n: int) -> jnp.ndarray:
 
 
 def expand(psi: jnp.ndarray, n: int) -> dict:
-    """psi -> the per-gate parameter dict that pdft.completion.families.general consumes."""
-    return {"g": jnp.broadcast_to(_H2, (n, 2, 2)), "phi": psi[dist_index(n)]}
+    """psi -> the ``{"g", "phi"}`` dict the circuit kernel consumes."""
+    return {"g": hadamards(n), "phi": psi[dist_index(n)]}
 
 
 def extend(psi: jnp.ndarray, n_new: int) -> jnp.ndarray:
-    """Carry a psi fitted at n_train up to n_new > n_train, DFT for the rest."""
+    """Carry a psi fitted at n_train to n_new, the DFT for the distances it lacks."""
     base = init_shared(n_new)
-    d = psi.shape[0]
-    if d > base.shape[0]:
-        return psi[: base.shape[0]]
-    return base.at[:d].set(psi)
+    return (
+        psi[: base.shape[0]] if psi.shape[0] > base.shape[0] else base.at[: psi.shape[0]].set(psi)
+    )
 
 
 def n_shared(n: int) -> int:

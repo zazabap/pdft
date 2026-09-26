@@ -37,7 +37,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .families.general import analysis_rect, synthesis_rect
+from .families.general import analysis_g, synthesis_g
 from .solver import _THRESH
 
 STRATEGIES = ("none", "step", "nested")
@@ -167,32 +167,18 @@ def reconstruct(
     k: int,
     K: int,
     *,
-    nr: int | None = None,
-    nc: int | None = None,
     mode: str = "hard",
     strategy: str = "auto",
     n_outer: int | None = None,
     budget_bytes: int | None = None,
 ):
-    """The unrolled solver on a 2^nr x 2^nc image, differentiable at bounded memory.
+    """The unrolled solver on a ``2^nr x 2^nc`` image, differentiable at bounded memory.
 
-    ``pr``, ``pc`` are the ``{"g", "phi"}`` parameter dicts of
-    :mod:`pdft.completion.families.general`; distance-shared phases expand to
-    that form through :func:`pdft.completion.families.shared.expand`, and
-    phase-only angles ``theta`` are ``init_general(n)`` with
-    ``phi[:, 3]`` replaced by ``theta``. nr, nc default to
-    log2 of Y's trailing two axes. strategy="auto" reads the device's free
-    memory and plans against 80% of it; pass a schedule by name to pin it. The
-    dtype of Y decides the precision throughout.
+    ``pr``, ``pc`` are ``{"g", "phi"}`` gate dicts (``theta_to_params`` for
+    phase-only angles, ``shared.expand`` for distance-shared ones).
+    strategy="auto" reads the device's free memory and plans against 80% of it;
+    pass a schedule by name to pin it. The dtype of Y decides the precision.
     """
-    if nr is None:
-        nr = int(round(math.log2(Y.shape[-2])))
-    if nc is None:
-        nc = int(round(math.log2(Y.shape[-1])))
-    for name, val, size in (("nr", nr, Y.shape[-2]), ("nc", nc, Y.shape[-1])):
-        if 2**val != size:
-            raise ValueError(f"axis of length {size} is not a power of two ({name})")
-
     if strategy == "auto":
         budget = budget_bytes if budget_bytes is not None else _free_bytes()
         chosen = plan(Y.shape[-2:], K, int(0.8 * budget), Y.dtype)
@@ -202,8 +188,7 @@ def reconstruct(
     X0 = jnp.where(obs, Y, 0.0)
 
     def step(X):
-        C = thresh(analysis_rect(X, pr, pc, nr, nc), k)
-        return jnp.where(obs, Y, jnp.real(synthesis_rect(C, pr, pc, nr, nc)))
+        return jnp.where(obs, Y, jnp.real(synthesis_g(thresh(analysis_g(X, pr, pc), k), pr, pc)))
 
     return _scan(step, X0, K, strategy, n_outer)
 

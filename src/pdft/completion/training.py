@@ -1,50 +1,72 @@
 """Task-adapted training, and the compression control it must beat.
 
-Compression training fits theta so that the basis reconstructs *fully observed*
+Compression training fits a basis so that it reconstructs *fully observed*
 images from their k largest coefficients; it never sees a mask. Task-adapted
 training differentiates through the solver at the sampling rate we intend to
 deploy at:
 
     theta* = argmin_theta  E_{(X,Omega)} || Xhat_K(theta; P_Omega X, Omega) - X ||_F^2 .
 
-dim(theta) = n(n-1) ~ 72 at n = 9 against ~260k pixels, so the optimisation is
-tiny and very over-determined.
+Everything a trained family needs is here once: the minibatch and mask
+schedule (so one seed means one trajectory for every family), the task loss
+of any solver, the mu monitor, and the Adam loop.
 """
 
 from __future__ import annotations
+
+import functools
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from .adam import adam_init, adam_update, apply_updates
-from .solver import _THRESH, reconstruct_batch
-from .transform import analysis, coherence, synthesis, theta0
+from .solver import _THRESH, reconstruct
+from .transform import analysis, coherence, register_width, synthesis, theta0
 
 
 def init_params(n: int) -> dict:
-    """Start at the Fourier point: theta0 is an exact classical transform, so
-    training deforms the FFT factorisation itself rather than appending a
-    learned correction to it."""
+    """Both axes at the Fourier point, so training deforms the FFT factorisation
+    itself rather than appending a learned correction to it."""
     return {"r": theta0(n), "c": theta0(n)}
 
 
-def task_loss(params, X, obs, n, k, K, mode, remat=True):
-    """Loss of the K-step reconstruction from masked observations."""
-    Xh = reconstruct_batch(params["r"], params["c"], X * obs, obs, n, k, K, mode, remat)
+def widths(images) -> tuple[int, int]:
+    """``(nr, nc)`` of a stack of images."""
+    return tuple(register_width(s) for s in images.shape[-2:])
+
+
+def minibatches(images, steps: int, batch: int, p: float, seed: int):
+    """``steps`` draws of ``(X, obs)``: a batch of images without replacement
+    and a fresh mask at rate ``p``, so the basis adapts to the sampling *rate*
+    rather than to one realisation of Omega. The one schedule every trainer
+    consumes."""
+    rng = np.random.default_rng(seed)
+    for _ in range(steps):
+        X = images[rng.choice(len(images), size=min(batch, len(images)), replace=False)]
+        yield X, jnp.asarray(rng.random(X.shape) < p)
+
+
+def task_loss(reconstruct, params, X, obs, k, K, mode="hard", remat=True):
+    """Mean squared error of ``reconstruct``'s K-step recovery from the masked batch."""
+    Xh = jax.vmap(lambda y, o: reconstruct(params["r"], params["c"], y, o, k, K, mode, remat))(
+        X * obs, obs
+    )
     return jnp.mean((Xh - X) ** 2)
 
 
-def comp_loss(params, X, obs, n, k, K, mode, remat=True):
-    """Reconstruct fully observed images from k coefficients. The mask is
-    accepted and ignored, so the two objectives share a call signature."""
+def comp_loss(params, X, obs, k, K, mode="hard", remat=True):
+    """The compression control for the phase-only family: reconstruct fully
+    observed images from k coefficients. The mask is accepted and ignored, so
+    the two objectives share a signature."""
     del obs, K, remat
-    C = _THRESH[mode](analysis(X, params["r"], params["c"], n), k)
-    R = jnp.real(synthesis(C, params["r"], params["c"], n))
-    return jnp.mean((R - X) ** 2)
+    C = _THRESH[mode](analysis(X, params["r"], params["c"]), k)
+    return jnp.mean((jnp.real(synthesis(C, params["r"], params["c"])) - X) ** 2)
 
 
-_OBJECTIVES = {"task": task_loss, "comp": comp_loss}
+def mu_monitor(coherence_fn):
+    """A ``monitor`` for ``adam_loop`` that logs both axes' coherence."""
+    return lambda params: {f"mu_{a}": float(coherence_fn(params[a])) for a in ("r", "c")}
 
 
 def adam_loop(
@@ -62,20 +84,13 @@ def adam_loop(
     log_every=10,
     verbose=True,
 ):
-    """The Adam loop every trained family shares; only the loss differs.
+    """Adam on ``params`` against ``loss_fn(params, X, obs)`` over ``minibatches``.
 
-    Masks are redrawn every step at rate p, so the basis adapts to the sampling
-    *rate*, not to one realisation of Omega. ``loss_fn(params, X, obs)`` is the
-    objective; ``grad_mask``, if given, zeroes gradient entries so tied
-    parameters stay at their initial value (Model A rides Model B's circuit
-    this way); ``monitor(params)`` contributes extra fields (mu, typically) to
-    the logged records. Raises on a non-finite gradient rather than training
-    on garbage.
-
-    Returns (params, history). Every family that trains by plain Adam goes
-    through here so the batch/mask draw order --- and with it every seed ---
-    is defined once. Manifold optimisers (Cayley SGD) cannot: their update is
-    not an Adam transform.
+    ``grad_mask`` zeroes gradient entries so tied or frozen parameters stay at
+    their initial value (Adam's update of a zero gradient is exactly zero);
+    ``monitor(params)`` adds fields to the logged records. Raises on a
+    non-finite gradient rather than training on garbage. Returns
+    ``(params, history)``.
     """
     opt_state = adam_init(params)
 
@@ -83,20 +98,14 @@ def adam_loop(
     def step(params, opt_state, X, obs):
         loss, grads = jax.value_and_grad(loss_fn)(params, X, obs)
         if grad_mask is not None:
-            grads = jax.tree.map(lambda g, m: g * m, grads, grad_mask)
+            grads = jax.tree.map(jnp.multiply, grads, grad_mask)
         updates, opt_state = adam_update(grads, opt_state, lr)
         return apply_updates(params, updates), opt_state, loss, grads
 
-    rng = np.random.default_rng(seed)
     history = []
-    for it in range(steps):
-        idx = rng.choice(len(images), size=min(batch, len(images)), replace=False)
-        X = images[idx]
-        obs = jnp.asarray(rng.random(X.shape) < p)
+    for it, (X, obs) in enumerate(minibatches(images, steps, batch, p, seed)):
         params, opt_state, loss, grads = step(params, opt_state, X, obs)
-
-        # jnp.abs, not g**2: some families carry complex leaves, for which g**2
-        # is complex and its sum is not a norm.
+        # |g|^2, not g**2: complex leaves would make the sum complex.
         gnorm = float(jnp.sqrt(sum(jnp.sum(jnp.abs(g) ** 2) for g in jax.tree.leaves(grads))))
         if not np.isfinite(gnorm):
             raise FloatingPointError(f"non-finite gradient at step {it}")
@@ -110,13 +119,11 @@ def adam_loop(
                 )
                 print(f"  {it:4d}  loss {rec['loss']:.6e}  |g| {gnorm:.3e}  {extra}", flush=True)
         history.append(rec)
-
     return params, history
 
 
 def train(
     images,
-    n,
     k,
     K=20,
     p=0.10,
@@ -131,36 +138,29 @@ def train(
     remat=True,
     verbose=True,
 ):
-    """The phase-only family trained through the solver (or the compression
-    control). See :func:`adam_loop`."""
-    loss_fn = _OBJECTIVES[objective]
+    """The phase-only family trained through the solver (``objective="task"``)
+    or by the compression control (``"comp"``). ``lam_mu`` adds a coherence
+    penalty, a control that this family, with mu pinned at 1, never needs."""
+    images = jnp.asarray(images)
+    nr, nc = widths(images)
+    loss_fn = {"task": functools.partial(task_loss, reconstruct), "comp": comp_loss}[objective]
 
     def total(params, X, obs):
-        loss = loss_fn(params, X, obs, n, k, K, mode, remat)
+        loss = loss_fn(params, X, obs, k, K, mode, remat)
         if lam_mu:
-            # Nothing in the task objective prevents training from raising
-            # mu, trading well-posedness for a lower loss on the sampling
-            # pattern it saw. (For this family mu == 1 identically, so the
-            # term is a control, not a need.)
-            loss = loss + lam_mu * (coherence(params["r"], n) + coherence(params["c"], n))
+            loss = loss + lam_mu * (coherence(params["r"]) + coherence(params["c"]))
         return loss
 
-    def monitor(params):
-        return {
-            "mu_r": float(coherence(params["r"], n)),
-            "mu_c": float(coherence(params["c"], n)),
-        }
-
     return adam_loop(
-        jnp.asarray(images),
-        init_params(n),
+        images,
+        {"r": theta0(nr), "c": theta0(nc)},
         total,
         lr=lr,
         steps=steps,
         p=p,
         batch=batch,
         seed=seed,
-        monitor=monitor,
+        monitor=mu_monitor(coherence),
         log_every=log_every,
         verbose=verbose,
     )

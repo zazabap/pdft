@@ -145,9 +145,10 @@ moment and takes a complex square root, exact on GPU; eagerly outside jit the
 two part by rounding (~1e-15). Do not "simplify" the arithmetic: the order of
 operations is the guarantee. `tests/completion/test_adam.py` compares against
 optax when it happens to be importable (it is not a dev dependency) and
-against the textbook formula always. Every Adam-trained family goes through `training.adam_loop`, so the
-batch/mask draw order, and with it every seed, is defined once. Cayley SGD
-(`families.riemannian`, `general.train_c`) keeps its own loop by necessity.
+against the textbook formula always. Every trainer draws its batches from `training.minibatches`, so the
+batch/mask draw order, and with it every seed, is defined once; the Adam-trained
+families also share `training.adam_loop`, and the Cayley trainers
+(`families.riemannian`, `general.train_c`) share only the schedule.
 
 ### 14. The Cayley step descends with `+tau`
 
@@ -179,9 +180,9 @@ float64. The circuit has no matmul, so float32 loses nothing measurable, but
 the families that do multiply matrices (transform learning, the butterfly's
 blocks, `riemannian`) lose up to 0.55 dB under XLA's default TF32, which is
 why `protocol.evaluate` and `table1_scores` run under
-`jax.default_matmul_precision("highest")`, and why every matrix-valued solver
-casts its matrices to the carry's dtype (a mismatched `lax.scan` carry is a
-hard error). Tests that compare float32 contractions on a GPU need the same
+`jax.default_matmul_precision("highest")`, and why `apply_dense` casts the
+matrix to the carry's dtype, once, for every dense family (a mismatched
+`lax.scan` carry is a hard error). Tests that compare float32 contractions on a GPU need the same
 context.
 
 ### 18. `metrics.gaussian_filter` must match scipy's
@@ -190,6 +191,22 @@ SSIM and MS-SSIM use an 11-tap Gaussian (`sigma = 1.5`, `truncate = 3.5`,
 `mode = "reflect"`) written in numpy so scipy is not a dependency;
 `test_metrics.py` pins it against `scipy.ndimage.gaussian_filter` to 1e-12
 when scipy is installed. The paper's MS-SSIM column depends on it.
+
+### 19. A family is one per-axis operator
+
+Every transform family is a single function `apply(x, params, adjoint, axis)`
+on one axis of length `2**n` (`apply_gates` for the circuits, of which
+`apply_u` is the phase-only special case, `apply_butterfly`, `apply_dense`).
+Everything else is derived: `separable(apply)` gives the 2-D analysis /
+synthesis pair, `solver_for(apply)` the jitted K-step solver, `batched` the
+vmapped one, `protocol.evaluate_params` the scoring, `training.task_loss` the
+objective, `training.minibatches` the batch/mask schedule and
+`training.mu_monitor` the logging. Register widths are read off shapes
+(`register_width`), never passed. Do not add a hand-written
+`analysis_*` / `reconstruct_*` / `evaluate_*` / `train_*` per family; declare
+the operator and reuse. The same rule for the manifold step: `skew` and
+`cayley` in `families.riemannian` are batched and serve U(2) gates and U(N)
+matrices alike.
 
 ### Naming
 
