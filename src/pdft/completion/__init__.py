@@ -19,6 +19,13 @@ imported from its module. Importing this subpackage assumes ``pdft`` has
 enabled JAX x64 mode, which ``import pdft`` does.
 """
 
+from .bridge import (
+    angles_from_qft_basis,
+    bitrev_image,
+    general_from_qft_basis,
+    qft_basis_from_angles,
+    qft_basis_from_general,
+)
 from .coherence import certify_flat_modulus
 from .families.phases import (
     analysis,
@@ -34,11 +41,16 @@ from .transform import apply_gates, separable, theta0
 
 __all__ = [
     "analysis",
+    "angles_from_qft_basis",
     "apply_gates",
     "apply_u",
     "batched",
+    "bitrev_image",
     "certify_flat_modulus",
+    "general_from_qft_basis",
     "init_params",
+    "qft_basis_from_angles",
+    "qft_basis_from_general",
     "reconstruct",
     "reconstruct_batch",
     "separable",
