@@ -35,10 +35,12 @@ jobs:
       - name: Install
         run: pip install -e ".[docs]"
       # The example gallery executes examples/*.py here, not in the test CI.
+      # A second attempt covers a transient intersphinx fetch failure, which
+      # Sphinx reports as an untyped warning that -W cannot be told to ignore.
       - name: Build
-        run: make docs
+        run: make docs || (echo '::warning::first build failed, retrying once' && make docs)
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
         with:
           path: docs/_build/html
 

@@ -10,11 +10,13 @@ Run:  python docs/logo/build_logo.py path/to/Inter-Bold.ttf
 Needs fonttools. Inter is SIL OFL: https://github.com/rsms/inter
 Writes: logo-light.svg, logo-dark.svg (lockups), mark.svg (bare mark) and
 favicon.svg, a reduced mark (no Hadamards, heavier strokes) that stays
-legible at 16 px. favicon.png is favicon.svg rasterised at 64 px.
+legible at 16 px, and favicon.png (favicon.svg at 64 px) when resvg-py is
+installed; conf.py uses the PNG because Safari ignores SVG favicons.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -142,10 +144,12 @@ def wordmark(font_path, size=268, tracking=-8):
 
 
 def svg(body, w=VB, h=VB):
-    return (
+    out = (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">\n'
         f"{DEFS}\n{body}\n</svg>\n"
     )
+    # Two decimals is far below anything visible at 512 px; keeps diffs readable.
+    return re.sub(r"-?\d+\.\d+", lambda m: f"{round(float(m.group()), 2):g}", out)
 
 
 def main(font_path):
@@ -163,7 +167,17 @@ def main(font_path):
         )
         (OUT / name).write_text(svg(body, width, 384))
     print(f"wrote mark.svg, favicon.svg, logo-light.svg, logo-dark.svg ({width}x384) to {OUT}")
+    try:
+        import resvg_py
+    except ImportError:
+        print("resvg-py not installed: favicon.png NOT regenerated (pip install resvg-py)")
+    else:
+        png = resvg_py.svg_to_bytes(svg_path=str(OUT / "favicon.svg"), width=64, height=64)
+        (OUT / "favicon.png").write_bytes(bytes(png))
+        print("wrote favicon.png")
 
 
 if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        sys.exit(f"usage: {sys.argv[0]} path/to/Inter-Bold.ttf")
     main(sys.argv[1])

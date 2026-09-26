@@ -9,18 +9,9 @@
 
 ## Citing pdft
 
-If you use this package in your research, please cite the paper:
-
-```bibtex
-@misc{an2026fast,
-  title         = {Fast Trainable Multilinear Bases for Image Compression},
-  author        = {An, Shiwen and Ni, Zhongyi and Zhou, Huanhai and Liu, Jin-Guo},
-  year          = {2026},
-  eprint        = {2608.00053},
-  archivePrefix = {arXiv},
-  primaryClass  = {eess.IV},
-  url           = {https://arxiv.org/abs/2608.00053},
-}
+```{include} ../README.md
+:start-after: "## Citation"
+:end-before: "## License"
 ```
 
 ## Background reading

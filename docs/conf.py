@@ -106,8 +106,6 @@ html_theme_options = {
         "alt_text": "pdft",
     },
     "repository_url": "https://github.com/zazabap/pdft",
-    "repository_branch": "main",
-    "path_to_docs": "docs",
     "use_repository_button": True,
     "use_issues_button": True,
     # Off: autosummary stubs and gallery pages are generated, so their

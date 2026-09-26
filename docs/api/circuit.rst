@@ -20,6 +20,7 @@ Turns a Yao-style gate list into a JAX einsum, and caches the contraction path a
    optimize_code_cached
    sorted_gate_program
    Gate
+   HADAMARD
    controlled_phase_diag
    u4_from_phase
    extract_phase_from_cp

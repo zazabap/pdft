@@ -16,4 +16,5 @@ Riemannian optimizers that keep each gate tensor on its manifold (unitary, ortho
 
    RiemannianGD
    RiemannianAdam
+   AbstractRiemannianOptimizer
    optimize
