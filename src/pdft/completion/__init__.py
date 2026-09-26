@@ -36,6 +36,8 @@ from .families.phases import (
     synthesis,
     train,
 )
+from .metrics import ms_ssim, psnr, ssim
+from .protocol import evaluate_params
 from .solver import batched, solver_for
 from .transform import apply_gates, separable, theta0
 
@@ -47,14 +49,18 @@ __all__ = [
     "batched",
     "bitrev_image",
     "certify_flat_modulus",
+    "evaluate_params",
     "general_from_qft_basis",
     "init_params",
+    "ms_ssim",
+    "psnr",
     "qft_basis_from_angles",
     "qft_basis_from_general",
     "reconstruct",
     "reconstruct_batch",
     "separable",
     "solver_for",
+    "ssim",
     "synthesis",
     "theta0",
     "train",
