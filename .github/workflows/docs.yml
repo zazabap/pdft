@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+    paths:
+      - docs/**
+      - examples/**
+      - src/**
+      - pyproject.toml
+      - .github/workflows/docs.yml
   workflow_dispatch:
 
 permissions:
@@ -11,7 +17,9 @@ permissions:
 
 concurrency:
   group: docs-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR builds, but never a main-branch run that may be
+  # mid-deploy: a cancelled deploy-pages step leaves a failed deployment.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:

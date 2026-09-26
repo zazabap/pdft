@@ -1,9 +1,9 @@
 Manifolds
 =========
 
-The manifold geometry used by the optimizers: projections, retractions and batched linear algebra over stacked gate tensors.
-
 .. currentmodule:: pdft.manifolds
+
+The manifold geometry used by the optimizers: projections, retractions and batched linear algebra over stacked gate tensors.
 
 .. autosummary::
    :toctree: generated

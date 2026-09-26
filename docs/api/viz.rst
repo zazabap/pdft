@@ -1,9 +1,9 @@
 Visualization
 =============
 
-Loss-curve plots and circuit diagrams. Requires the ``plot`` extra (``pip install "pdft[plot]"``).
-
 .. currentmodule:: pdft.viz
+
+Loss-curve plots and circuit diagrams. Requires the ``plot`` extra (``pip install "pdft[plot]"``).
 
 .. autosummary::
    :toctree: generated

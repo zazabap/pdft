@@ -65,26 +65,9 @@ any JAX arrays.
 
 ## Quick start
 
-Train a parametric QFT basis on a 4×4 target with Riemannian gradient
-descent:
-
-```python
-import jax
-import jax.numpy as jnp
-import pdft
-
-target = jax.random.normal(jax.random.PRNGKey(7), (4, 4)).astype(jnp.complex128)
-basis = pdft.QFTBasis(m=2, n=2)  # 2^m x 2^n image
-
-result = pdft.train_basis(
-    basis,
-    target=target,
-    loss=pdft.L1Norm(),
-    optimizer=pdft.RiemannianGD(lr=0.01),
-    steps=50,
-    seed=0,
-)
-print(result.loss_history[0], "->", result.loss_history[-1])
+```{include} ../README.md
+:start-after: "## Quick start"
+:end-before: "Runnable demos"
 ```
 
 ## What's in the package

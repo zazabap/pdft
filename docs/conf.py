@@ -46,8 +46,20 @@ intersphinx_mapping = {
     "jax": ("https://docs.jax.dev/en/latest", None),
     "matplotlib": ("https://matplotlib.org/stable", None),
 }
+# Inventories are fetched over the network under -W; bound a hang, and if a
+# host is down the fix is to re-run the build.
+intersphinx_timeout = 30
 
-myst_enable_extensions = ["colon_fence", "dollarmath"]
+myst_enable_extensions = ["colon_fence", "dollarmath", "substitution"]
+
+# The upstream pin is read from the package so the docs cannot drift from it.
+_upstream_repo, _upstream_sha = pdft.__upstream_ref__.split("@")
+myst_substitutions = {
+    "upstream_ref": pdft.__upstream_ref__,
+    "upstream_commit_link": (
+        f"[`{_upstream_sha[:7]}`](https://github.com/{_upstream_repo}/tree/{_upstream_sha})"
+    ),
+}
 
 # -- Example gallery ---------------------------------------------------------
 # Each example runs at build time (a few seconds apiece) so the rendered
@@ -74,7 +86,9 @@ html_theme_options = {
     "path_to_docs": "docs",
     "use_repository_button": True,
     "use_issues_button": True,
-    "use_edit_page_button": True,
+    # Off: autosummary stubs and gallery pages are generated, so their
+    # "edit this page" targets would 404.
+    "use_edit_page_button": False,
     "use_download_button": False,
     "show_toc_level": 2,
     "home_page_in_toc": True,

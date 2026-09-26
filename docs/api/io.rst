@@ -1,9 +1,9 @@
 Serialization and compression
 =============================
 
-JSON serialization of trained bases (byte-compatible with the Julia package) and top-k lossy compression of images in a learned basis.
-
 .. currentmodule:: pdft.io
+
+JSON serialization of trained bases (byte-compatible with the Julia package) and top-k lossy compression of images in a learned basis.
 
 .. autosummary::
    :toctree: generated

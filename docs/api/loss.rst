@@ -1,9 +1,9 @@
 Losses
 ======
 
-Sparsity objectives minimized during training.
-
 .. currentmodule:: pdft.loss
+
+Sparsity objectives minimized during training.
 
 .. autosummary::
    :toctree: generated

@@ -8,4 +8,4 @@ goldens:
 	julia --project=reference/julia reference/julia/generate_goldens.jl
 
 docs:
-	sphinx-build -b html docs docs/_build/html
+	sphinx-build -W --keep-going -b html docs docs/_build/html
