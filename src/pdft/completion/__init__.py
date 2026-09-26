@@ -1,0 +1,83 @@
+"""pdft.completion: image inpainting from random pixels with a trainable QFT.
+
+Ported from the code of *Image Inpainting from Random Pixels with a Trainable
+Quantum Fourier Transform* (github.com/zazabap/pdft-completion). Recovery from
+pointwise samples is governed by incoherence with the pixel basis rather than
+by sparsity, so the transform is trained through the recovery solver while its
+coherence stays pinned at the theoretical minimum for every parameter value
+(Proposition 1; see :mod:`pdft.coherence`).
+
+A transform family is one per-axis operator ``apply(x, params, adjoint, axis)``.
+Everything else is derived from it: ``separable`` gives the 2-D analysis and
+synthesis pair, ``solver_for`` the jitted K-step solver, ``batched`` the
+vmapped one, ``evaluate_params`` the scoring, ``task_loss`` the objective and
+``minibatches`` the one batch and mask schedule every trainer draws from.
+Register widths are read off array shapes, never passed.
+
+Layout::
+
+    transform      the circuit kernel, the dense operator, the DFT anchor, ``separable``
+    solver         the thresholds, the unrolled IHT scan, ``solver_for`` and ``batched``
+    unroll         the same solver at bounded memory (nested rematerialisation)
+    training       ``minibatches``, ``task_loss``, ``mu_monitor``, ``adam_loop``
+    adam           plain Adam written out (this package does not use optax)
+    coherence      ``mu`` for closures and matrices, ``certify_flat_modulus``
+    metrics        PSNR, SSIM, MS-SSIM
+    protocol       the evaluation protocol and the Table I constants
+    data           image loading and the DIV2K and Kodak splits
+    bridge         exact conversion to and from :class:`pdft.QFTBasis`
+    families/      phases (the paper's own), general, shared, butterfly,
+                   riemannian, transform_learning
+    baselines/     fixed_bases, nuclear, qtt (per-image methods, no trained basis)
+
+The names below are the ones most used interactively; everything else is
+imported from its module. Importing this subpackage assumes ``pdft`` has
+enabled JAX x64 mode, which ``import pdft`` does.
+"""
+
+from .bridge import (
+    angles_from_qft_basis,
+    bitrev_image,
+    general_from_qft_basis,
+    qft_basis_from_angles,
+    qft_basis_from_general,
+)
+from .coherence import certify_flat_modulus
+from .families.phases import (
+    analysis,
+    apply_u,
+    init_params,
+    reconstruct,
+    reconstruct_batch,
+    synthesis,
+    train,
+)
+from .metrics import ms_ssim, psnr, ssim
+from .protocol import evaluate_params
+from .solver import batched, solver_for
+from .transform import apply_gates, separable, theta0
+
+__all__ = [
+    "analysis",
+    "angles_from_qft_basis",
+    "apply_gates",
+    "apply_u",
+    "batched",
+    "bitrev_image",
+    "certify_flat_modulus",
+    "evaluate_params",
+    "general_from_qft_basis",
+    "init_params",
+    "ms_ssim",
+    "psnr",
+    "qft_basis_from_angles",
+    "qft_basis_from_general",
+    "reconstruct",
+    "reconstruct_batch",
+    "separable",
+    "solver_for",
+    "ssim",
+    "synthesis",
+    "theta0",
+    "train",
+]

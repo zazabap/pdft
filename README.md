@@ -121,6 +121,68 @@ Freezing gates is a real trade — it removes the freedom that `RichBasis` and
 `TEBDBasis` add for compression. The point is that the trade is now visible and
 checkable, so it can be made deliberately per task.
 
+## Image inpainting from random pixels (`pdft.completion`)
+
+`pdft.completion` is the library half of
+[pdft-completion](https://github.com/zazabap/pdft-completion), the code behind
+*Image Inpainting from Random Pixels with a Trainable Quantum Fourier
+Transform*. The premise follows from the coherence section above: recovery
+from a random subset of pixels is governed by incoherence with the pixel
+basis, not by sparsity, so the QFT circuit is trained *through* the recovery
+solver — `K` unrolled steps of hard thresholding plus data consistency,
+differentiated end to end with a straight-through top-k — while Proposition 1
+keeps `mu = 1` at every parameter value. Plain Adam moves on the manifold with
+no retraction.
+
+The subpackage carries the circuit in a second representation: the gate
+angles, applied directly to the image in `O(N log N)` (no matrix, any register
+width, float32 or float64), instead of the core package's tensor lists.
+`pdft.completion.bridge` converts between the two exactly. A transform family
+is one per-axis operator `apply(x, params, adjoint, axis)`; its 2-D pair, its
+solver, the batched solver and its evaluation come from `separable`,
+`solver_for`, `batched` and `evaluate_params`, and register widths are read
+off array shapes rather than passed around.
+
+```python
+import numpy as np
+import jax.numpy as jnp
+from pdft.completion import psnr, qft_basis_from_angles, reconstruct, theta0, train
+from pdft.completion.protocol import train_k
+
+n = 9                                    # 512 x 512 images, float32 sets the working precision
+images = np.stack([...]).astype(np.float32)
+k = train_k(2**n * 2**n, p=0.10, frac=0.125)
+
+params, history = train(images, k, K=100, p=0.10, steps=200, lr=8e-3)
+
+obs = jnp.asarray(np.random.default_rng(0).random((512, 512)) < 0.10)
+x_hat = reconstruct(params["r"], params["c"], test_image * obs, obs, k, K=300)
+print(psnr(x_hat, test_image), "dB vs the DFT:",
+      psnr(reconstruct(theta0(n), theta0(n), test_image * obs, obs, k, 300), test_image))
+
+basis = qft_basis_from_angles(params["r"], params["c"])   # a pdft.QFTBasis: save it, certify it, draw it
+```
+
+| Module | What it holds |
+|---|---|
+| `transform` | the circuit kernel `apply_gates`, the dense operator `apply_dense`, the DFT anchor `theta0` (`U(theta0) == conj(DFT)`, the QFT sign), and `separable`, the 2-D analysis / synthesis pair of any operator |
+| `solver` | `hard_k` / `soft_k` (straight-through), the unrolled IHT scan `iht`, and `solver_for` / `batched`, the jitted and vmapped K-step solver of any operator |
+| `unroll` | memory-bounded differentiation: nested rematerialisation turns `O(K N^2)` into `O(sqrt(K) N^2)`, with a planner |
+| `training` | `minibatches` (the one batch/mask schedule every trainer draws from), `task_loss` of any solver, `mu_monitor`, `adam_loop` |
+| `adam` | plain Adam written out to mirror `optax.adam` (bit for bit for real parameters under jit; this package does not depend on optax) |
+| `coherence` | `mu` for closures and matrices, and `certify_flat_modulus` over sampled parameters |
+| `metrics`, `protocol` | PSNR / SSIM / MS-SSIM, and the paper's Table I protocol as data (`heldout_mask`, `budget_k`, `table1_scores`, `evaluate_params`, …) |
+| `data` | Kodak and DIV2K splits from an explicit data directory (needs `pillow`) |
+| `bridge` | `qft_basis_from_angles`, `qft_basis_from_general` and their inverses |
+| `families/` | one operator each: `phases` (the paper's own family: `apply_u`, `train`, `reconstruct`), `general` (QFT + diagonals, QFT + rotations with a Cayley step), `shared` (phases tied by gate distance, so one fit transfers across resolutions), `butterfly` (Dao et al.), `riemannian` (a free unitary on U(N)), `transform_learning` (a separable orthonormal pair fitted for sparsity) |
+| `baselines/` | per-image methods with no trained basis: fixed bases (DCT-II / DFT / wavelets), nuclear-norm completion (SVP, APG), the coarse-to-fine quantized tensor train |
+
+`pip install "pdft[completion]"` adds the optional backends (`pillow` for
+image loading, `PyWavelets` for the wavelet baselines, `scipy` for its DCT).
+The circuit, solver, trainer and metrics need none of them. The experiment
+scripts, data fetchers, figures and result files stay in the paper's
+repository; `examples/completion_demo.py` is a self-contained run.
+
 ## Background
 
 For the theory, see the paper:

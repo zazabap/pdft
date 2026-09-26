@@ -71,6 +71,7 @@ any JAX arrays.
 | Losses | {class}`~pdft.loss.L1Norm`, {class}`~pdft.loss.MSELoss` with top-k truncation |
 | Training | {func}`~pdft.training.train_basis` (single target), {func}`~pdft.training.train_basis_batched` (multi-image, cosine schedule, early stopping) |
 | Coherence | {func}`~pdft.coherence.coherence`, {func}`~pdft.coherence.certify_flat_modulus` |
+| Completion | {func}`~pdft.completion.train`, {func}`~pdft.completion.reconstruct`, {func}`~pdft.completion.qft_basis_from_angles` |
 | I/O | {mod}`pdft.io`: JSON serialization compatible with Julia, and top-k compression |
 
 ```{toctree}

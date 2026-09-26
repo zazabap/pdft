@@ -1,0 +1,77 @@
+import json
+
+import jax.numpy as jnp
+import numpy as np
+
+import pdft.completion.protocol as P
+from pdft.completion.families.butterfly import init_butterfly
+from pdft.completion.families.general import init_general
+from pdft.completion.families.phases import reconstruct
+from pdft.completion.metrics import ms_ssim, psnr, ssim
+from pdft.completion.transform import theta0
+
+
+def test_heldout_mask_is_deterministic_and_at_rate():
+    a, b = P.heldout_mask(3, (64, 64)), P.heldout_mask(3, (64, 64))
+    assert a.dtype == bool and np.array_equal(a, b)
+    assert abs(a.mean() - P.TABLE1_P) < 0.03
+    assert not np.array_equal(a, P.heldout_mask(4, (64, 64)))
+
+
+def test_budget_rules():
+    obs = np.zeros((32, 32), bool)
+    obs[:16] = True  # 512 observed
+    assert P.budget_k(obs, 0.5) == 256 and P.budget_k(obs, 0.01) == 64
+    assert P.train_k(32 * 32, 0.5, 0.5) == 256 and P.train_k(100, 0.1, 0.1) == 64
+
+
+def test_fracs_for_every_regime():
+    assert P.fracs_for(0.10) == P.TABLE1_FRACS
+    assert P.fracs_for(0.05) == (0.0075,) + P.TABLE1_FRACS
+    assert P.fracs_for(0.30)[-1] == 0.75
+
+
+def test_evaluate_and_table1_scores_with_the_dft(images):
+    th = theta0(4)
+
+    def solve(Y, obs, k):
+        return reconstruct(th, th, Y, obs, k, 3)
+
+    psnrs = P.evaluate(solve, images(4, 2), 0.5, 0.25, seed=0)
+    assert psnrs.shape == (2,) and np.all(psnrs > 5)
+    assert np.array_equal(
+        P.evaluate_params(reconstruct, {"r": th, "c": th}, images(4, 2), 0.5, 0.25, 3, 0), psnrs
+    )
+    scores = P.table1_scores(solve, images(4, 2), fracs=(0.25, 0.5), p=0.5)
+    assert set(scores) == {"psnr", "ssim", "msssim"} and all(len(v) == 2 for v in scores.values())
+
+
+def test_per_metric_best_reads_each_metric_at_its_own_optimum(rng):
+    img = rng.random((32, 32))
+    cands = [np.clip(img + s * rng.standard_normal(img.shape), 0, 1) for s in (0.3, 0.05, 0.1)]
+    best = P.per_metric_best(cands, img)
+    assert best["psnr"] == max(psnr(c, img) for c in cands)
+    assert best["ssim"] == max(ssim(c, img) for c in cands)
+    assert best["msssim"] == max(ms_ssim(c, img) for c in cands)
+
+
+def test_encodings_round_trip():
+    p = init_general(4)
+    par = {"r": {"g": p["g"] * jnp.exp(0.3j), "phi": p["phi"] + 0.1}, "c": init_general(4)}
+    back = P.decode_gphi(json.loads(json.dumps(P.encode_gphi(par))))
+    for a in ("r", "c"):
+        assert jnp.allclose(back[a]["g"], par[a]["g"]) and jnp.allclose(
+            back[a]["phi"], par[a]["phi"]
+        )
+    for mode, key in (("unitary", "gen"), ("free", "blk")):
+        bpar = {"r": init_butterfly(3, mode), "c": init_butterfly(3, mode)}
+        back = P.decode_butterfly(json.loads(json.dumps(P.encode_butterfly(bpar))))
+        for a in ("r", "c"):
+            assert back[a][key].shape == bpar[a][key].shape and jnp.allclose(
+                back[a][key], bpar[a][key]
+            )
+
+
+def test_write_json(tmp_path, capsys):
+    path = P.write_json(tmp_path / "sub" / "out.json", {"a": 1, "b": np.float64(2.5)})
+    assert json.loads(path.read_text()) == {"a": 1, "b": 2.5} and "wrote" in capsys.readouterr().out
