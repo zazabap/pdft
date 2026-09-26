@@ -1,8 +1,8 @@
 """Generate the pdft logo assets in docs/_static/.
 
 The mark is a two-wire circuit fragment (Hadamard, controlled phase) whose
-wires leave the phase gate as waves, on a plum-to-coral tile with a gold phase
-dot. The wordmark is "pdft" set in Inter Bold and converted to outlines, so
+wires leave the phase gate as waves, on a navy-to-teal tile lit from the top
+left, with an amber phase dot. The wordmark is "pdft" set in Inter Bold and converted to outlines, so
 the SVGs render identically without the font installed.
 
 Run:  python docs/logo/build_logo.py path/to/Inter-Bold.ttf
@@ -24,15 +24,21 @@ from fontTools.ttLib import TTFont
 OUT = Path(__file__).resolve().parents[1] / "_static"
 VB = 512
 WHITE, INK, PAPER = "#ffffff", "#1f2933", "#f3f5f7"
-TILE = ("#2a0b3d", "#7a2a6d", "#e2557a")  # dark floor, mid, bright corner
-DOT = ("#ffe7a3", "#ffb43c")  # phase dot: lit centre, gold rim (also the halo)
-WORD = "#b03a72"  # the "dft" of the wordmark
+TILE = ("#06263a", "#0a5f7c", "#17a0ad")  # dark floor, mid, bright corner
+DOT = ("#ffc77a", "#ef7f3a")  # phase dot: lit centre, amber rim (also the halo)
+WORD = "#0f8a9c"  # the "dft" of the wordmark
 MARK = "D"
 
 DEFS = f"""<defs>
   <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
     <stop offset="0" stop-color="{TILE[0]}"/><stop offset="0.55" stop-color="{TILE[1]}"/><stop offset="1" stop-color="{TILE[2]}"/>
   </linearGradient>
+  <radialGradient id="light" cx="0.22" cy="0.18" r="0.75">
+    <stop offset="0" stop-color="{WHITE}" stop-opacity="0.22"/><stop offset="1" stop-color="{WHITE}" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="vign" cx="0.85" cy="0.9" r="0.7">
+    <stop offset="0" stop-color="#000000" stop-opacity="0.22"/><stop offset="1" stop-color="#000000" stop-opacity="0"/>
+  </radialGradient>
   <radialGradient id="dotg" cx="0.35" cy="0.35" r="0.85">
     <stop offset="0" stop-color="{DOT[0]}"/><stop offset="1" stop-color="{DOT[1]}"/>
   </radialGradient>
@@ -55,15 +61,18 @@ def glow_dot(x, y, r):
     # The halo is two translucent discs rather than a blur filter, so it
     # survives every renderer, including favicon rasterisers.
     return (
-        f'<circle cx="{x}" cy="{y}" r="{r + 26}" fill="{DOT[1]}" fill-opacity="0.16"/>'
-        f'<circle cx="{x}" cy="{y}" r="{r + 12}" fill="{DOT[1]}" fill-opacity="0.32"/>'
+        f'<circle cx="{x}" cy="{y}" r="{r + 34}" fill="{DOT[1]}" fill-opacity="0.10"/>'
+        f'<circle cx="{x}" cy="{y}" r="{r + 22}" fill="{DOT[1]}" fill-opacity="0.18"/>'
+        f'<circle cx="{x}" cy="{y}" r="{r + 10}" fill="{DOT[1]}" fill-opacity="0.34"/>'
         + dot(x, y, r, "url(#dotg)")
+        + f'<circle cx="{x - r * 0.32}" cy="{y - r * 0.34}" r="{r * 0.28}" fill="{WHITE}" fill-opacity="0.55"/>'
     )
 
 
 def h_gate(cx, cy, s=100):
     b, ih, g = 17, s * 0.5, TILE[0]
     return (
+        f'<rect x="{cx - s / 2}" y="{cy - s / 2 + 6}" width="{s}" height="{s}" rx="20" fill="#000000" fill-opacity="0.22"/>'
         f'<rect x="{cx - s / 2}" y="{cy - s / 2}" width="{s}" height="{s}" rx="20" fill="{WHITE}"/>'
         f'<rect x="{cx - s * 0.25 - b / 2}" y="{cy - ih / 2}" width="{b}" height="{ih}" fill="{g}"/>'
         f'<rect x="{cx + s * 0.25 - b / 2}" y="{cy - ih / 2}" width="{b}" height="{ih}" fill="{g}"/>'
@@ -80,10 +89,22 @@ def sine(x0, x1, y, amp, lam, phase=0.0, n=60):
 
 def mark():
     y1, y2 = 186, 326
-    tile = f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#tile)"/>'
+    tile = (
+        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#tile)"/>'
+        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#light)"/>'
+        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#vign)"/>'
+        f'<rect x="4" y="4" width="{VB - 8}" height="{VB - 8}" rx="100" fill="none" stroke="{WHITE}" stroke-opacity="0.16" stroke-width="3"/>'
+    )
+    shadows = wire(56, y1 + 6, 300, y1 + 6, color="#000000") + wire(
+        56, y2 + 6, 300, y2 + 6, color="#000000"
+    )
+    shadows = shadows.replace(
+        'stroke-linecap="round"/>', 'stroke-linecap="round" stroke-opacity="0.2"/>'
+    )
     cp = wire(300, y1, 300, y2) + dot(300, y1, 26) + glow_dot(300, y2, 30)
     return (
         tile
+        + shadows
         + wire(56, y1, 300, y1)
         + wire(56, y2, 300, y2)
         + h_gate(150, y1)

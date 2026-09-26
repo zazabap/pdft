@@ -1,19 +1,19 @@
-/* Site accents follow the logo palette (docs/logo/build_logo.py): plum links
-   and highlights, gold only where the theme uses a secondary colour. */
+/* Site accents follow the logo palette (docs/logo/build_logo.py): teal links
+   and highlights, amber only where the theme uses a secondary colour. */
 html[data-theme="light"] {
-  --pst-color-primary: #b03a72;
-  --pst-color-primary-bg: #fbe9f1;
+  --pst-color-primary: #0f8a9c;
+  --pst-color-primary-bg: #e3f4f6;
   --pst-color-secondary: #c9862a;
-  --pst-color-link: #b03a72;
-  --pst-color-link-hover: #7a2a6d;
+  --pst-color-link: #0f8a9c;
+  --pst-color-link-hover: #0a5f7c;
 }
 
 html[data-theme="dark"] {
-  --pst-color-primary: #ee8fb8;
-  --pst-color-primary-bg: #3a1a30;
-  --pst-color-secondary: #ffb43c;
-  --pst-color-link: #ee8fb8;
-  --pst-color-link-hover: #f7b3d0;
+  --pst-color-primary: #5cc8d6;
+  --pst-color-primary-bg: #0d3a46;
+  --pst-color-secondary: #ffb45c;
+  --pst-color-link: #5cc8d6;
+  --pst-color-link-hover: #9fe0e8;
 }
 
 /* The sidebar logo is the full lockup; give it room and no extra title text. */
