@@ -241,6 +241,7 @@ reference/julia/            Julia harness — needed only to regenerate goldens
 reference/goldens/          Committed .npz + .json files (<200 KB total)
 examples/                   4 runnable demos, each <10s
 tests/                      pytest; mirrors src/pdft/ layout (tests/bases/, tests/optimizers/, ...)
+docs/                       Sphinx site (conf.py, index.md, api/*.rst, paper.md); deployed to GitHub Pages by docs.yml
 ```
 
 Benchmarks live in a separate repo: https://github.com/zazabap/pdft-benchmarks (split from this repo at pdft v0.2.0; pinned via its `pyproject.toml`).
@@ -277,6 +278,10 @@ python examples/basis_demo.py
 python examples/optimizer_benchmark.py
 python examples/mera_demo.py
 python examples/completion_demo.py      # train through the solver, convert to QFTBasis, save
+
+# Build the docs site (Sphinx + sphinx-book-theme; same -W command CI runs)
+pip install -e ".[docs]"
+make docs                                 # -> docs/_build/html
 
 # Regenerate Julia goldens (requires Julia 1.10+)
 make goldens
@@ -315,6 +320,7 @@ If you find another mismatch:
 - Coverage gate runs only on the actual test suite, not examples; don't rely on examples for coverage.
 - The `verify-upstream-pin.yml` workflow runs only on PRs touching `reference/`. It uses the GitHub API to confirm the pinned sha exists in upstream — don't push a sha that's only in a fork.
 - The matrix is 3.11 / 3.12 / 3.13. JAX dropped 3.10 in 0.10.0; do not lower the floor.
+- `docs.yml` deploys with `actions/deploy-pages`, which needs the repository's Pages source set to **GitHub Actions** (Settings → Pages, one-time). Until that is set the `deploy` job fails with a 404 while `build` stays green.
 
 ## What NOT to do
 
@@ -324,7 +330,7 @@ If you find another mismatch:
 - **Don't introduce backwards-compat shims** for the JSON schema. We're at v0.1.0; if the schema changes, bump the version and regenerate goldens.
 - **Don't add ML scaffolding** (no DataLoader, no Trainer-like classes, no Lightning). Upstream is one-target-image-at-a-time and we mirror that. Batched training is open work in #2.
 - **Don't move the paper's scripts, data or results into this repo.** `pdft.completion` is the library; the experiments live in pdft-completion. Anything two of that repo's scripts would share belongs here, with explicit paths, no `ROOT`.
-- **Don't run examples in CI.** They write to `out/` (gitignored) and are not coverage-relevant.
+- **Don't run examples in the test CI.** They write to `out/` (gitignored) and are not coverage-relevant. The one place they do run is the docs workflow (`docs.yml`): sphinx-gallery executes `examples/*.py` to render the example gallery, under `-W`, so a broken example fails the docs build rather than the test matrix.
 
 ## When making changes
 

@@ -1,0 +1,34 @@
+/* Site accents follow the logo palette (docs/logo/build_logo.py): teal links
+   and highlights, amber only where the theme uses a secondary colour. */
+html[data-theme="light"] {
+  --pst-color-primary: #0f8a9c;
+  --pst-color-primary-bg: #e3f4f6;
+  --pst-color-secondary: #c9862a;
+  --pst-color-link: #0f8a9c;
+  --pst-color-link-hover: #0a5f7c;
+}
+
+html[data-theme="dark"] {
+  --pst-color-primary: #5cc8d6;
+  --pst-color-primary-bg: #0d3a46;
+  --pst-color-secondary: #ffb45c;
+  --pst-color-link: #5cc8d6;
+  --pst-color-link-hover: #9fe0e8;
+}
+
+/* The sidebar logo is the full lockup; give it room and no extra title text. */
+.navbar-brand.logo img {
+  max-height: 3.2rem;
+  width: auto;
+}
+
+/* Landing-page tweaks. */
+.hero-tagline {
+  font-size: 1.2rem;
+  color: var(--pst-color-text-muted);
+  margin-top: -0.5rem;
+}
+
+.sd-card-title {
+  font-weight: 600;
+}

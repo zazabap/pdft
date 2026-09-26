@@ -44,11 +44,24 @@ plot = ["matplotlib>=3.8"]
 # and scipy's DCT (jax.scipy is the fallback). The circuit, solver, trainer
 # and metrics need none of these.
 completion = ["pillow>=10", "PyWavelets>=1.5", "scipy>=1.11"]
+# Bounded above because the docs build runs under -W: a deprecation warning
+# in a new major of any of these would fail the main-branch deploy with no
+# change in this repo (the same reason ruff is pinned in [dev]).
+docs = [
+    "sphinx>=8,<10",
+    "sphinx-book-theme>=1.1,<2",
+    "sphinx-gallery>=0.17,<1",
+    "sphinx-design>=0.6,<1",
+    "sphinx-copybutton>=0.5,<1",
+    "myst-parser>=4,<6",
+    "matplotlib>=3.8",
+]
 gpu = ["jax[cuda12]>=0.10.0"]
 
 [project.urls]
 Homepage = "https://github.com/zazabap/pdft"
 Issues = "https://github.com/zazabap/pdft/issues"
+Documentation = "https://zazabap.github.io/pdft/"
 Upstream = "https://github.com/nzy1997/ParametricDFT.jl"
 
 [tool.hatch.build.targets.wheel]

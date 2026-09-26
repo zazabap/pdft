@@ -1,0 +1,59 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - docs/**
+      - examples/**
+      - README.md  # docs/index.md includes its quick start
+      - src/**
+      - pyproject.toml
+      - Makefile  # defines the `make docs` target this workflow runs
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  # Cancel superseded PR builds, but never a main-branch run that may be
+  # mid-deploy: a cancelled deploy-pages step leaves a failed deployment.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[docs]"
+      # The example gallery executes examples/*.py here, not in the test CI.
+      # A second attempt covers a transient intersphinx fetch failure, which
+      # Sphinx reports as an untyped warning that -W cannot be told to ignore.
+      - name: Build
+        run: make docs || (echo '::warning::first build failed, retrying once' && make docs)
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: docs/_build/html
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

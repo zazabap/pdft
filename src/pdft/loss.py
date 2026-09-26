@@ -31,8 +31,8 @@ class L1Norm:
 class MSELoss:
     """MSE loss with top-k truncation: `||x - T^{-1}(truncate(T(x), k))||^2`.
 
-    Parameter
-    ---------
+    Parameters
+    ----------
     k : int
         Number of coefficients to keep after top-k magnitude truncation.
         Must be positive.

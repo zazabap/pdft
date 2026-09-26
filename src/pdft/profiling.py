@@ -8,8 +8,7 @@ Two outputs:
      viewing. Annotated with `StepTraceAnnotation` so each step shows
      up as a discrete unit.
 
-Usage
------
+Usage::
 
     from pdft.profiling import profile_training
 

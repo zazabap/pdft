@@ -138,6 +138,7 @@ def recover(basis, compressed: CompressedImage, *, verify_hash: bool = True) -> 
 
 
 def compressed_to_dict(c: CompressedImage) -> dict:
+    """Convert to the JSON-ready dict form (schema version `_VERSION`)."""
     return {
         "version": _VERSION,
         "indices": c.indices,
@@ -150,6 +151,7 @@ def compressed_to_dict(c: CompressedImage) -> dict:
 
 
 def dict_to_compressed(d: dict) -> CompressedImage:
+    """Inverse of `compressed_to_dict`."""
     return CompressedImage(
         indices=[int(i) for i in d["indices"]],
         values_real=[float(v) for v in d["values_real"]],
@@ -160,6 +162,7 @@ def dict_to_compressed(d: dict) -> CompressedImage:
 
 
 def save_compressed(path: str | Path, c: CompressedImage) -> Path:
+    """Write a `CompressedImage` to ``path`` as JSON; returns the path."""
     p = Path(path)
     with p.open("w") as f:
         json.dump(compressed_to_dict(c), f, indent=2)
@@ -167,6 +170,7 @@ def save_compressed(path: str | Path, c: CompressedImage) -> Path:
 
 
 def load_compressed(path: str | Path) -> CompressedImage:
+    """Read a `CompressedImage` written by `save_compressed`."""
     p = Path(path)
     with p.open("r") as f:
         return dict_to_compressed(json.load(f))
