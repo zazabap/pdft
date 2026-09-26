@@ -93,6 +93,9 @@ html_theme = "sphinx_book_theme"
 html_title = f"pdft {release}"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
+# The theme's default sidebar opens with a "Search / Ctrl+K" field; JAX's site
+# does not show it, and the magnifier button in the article header remains.
+html_sidebars = {"**": ["navbar-logo.html", "icon-links.html", "sbt-sidebar-nav.html"]}
 html_theme_options = {
     "repository_url": "https://github.com/zazabap/pdft",
     "repository_branch": "main",
@@ -106,4 +109,6 @@ html_theme_options = {
     "show_toc_level": 2,
     "home_page_in_toc": True,
     "navigation_with_keys": False,
+    # No search field in the (hidden) top navbar either; the header icon remains.
+    "navbar_persistent": [],
 }
