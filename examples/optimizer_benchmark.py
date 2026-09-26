@@ -1,6 +1,9 @@
-"""optimizer_benchmark.py — compare RiemannianGD vs RiemannianAdam on QFTBasis.
+"""Riemannian GD vs. Adam
+======================
 
-Run: python examples/optimizer_benchmark.py
+Compare RiemannianGD vs RiemannianAdam on QFTBasis.
+
+Run: ``python examples/optimizer_benchmark.py``
 """
 from __future__ import annotations
 

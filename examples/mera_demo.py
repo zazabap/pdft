@@ -1,6 +1,9 @@
-"""mera_demo.py — compare QFTBasis, EntangledQFTBasis, TEBDBasis, MERABasis on a single target.
+"""Compare circuit bases
+=====================
 
-Run: python examples/mera_demo.py
+Compare QFTBasis, EntangledQFTBasis, TEBDBasis, MERABasis on a single target.
+
+Run: ``python examples/mera_demo.py``
 """
 from __future__ import annotations
 

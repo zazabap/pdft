@@ -57,3 +57,9 @@ out/
 
 # Benchmark outputs
 benchmarks/results/
+
+# Sphinx docs build output
+docs/_build/
+docs/api/generated/
+docs/auto_examples/
+docs/sg_execution_times.rst

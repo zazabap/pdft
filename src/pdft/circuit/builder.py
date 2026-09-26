@@ -43,6 +43,13 @@ def controlled_phase_diag(phi: float) -> Array:
 
 
 class Gate(TypedDict):
+    """One gate of a circuit program.
+
+    ``kind`` is ``"H"``, ``"CP"``, ``"U4"`` or ``"CRY"``; ``qubits`` are the
+    wires it acts on; ``tensor`` is its einsum tensor; ``phase`` is the angle
+    of a CP or CRY gate.
+    """
+
     kind: str  # "H", "CP", "U4", or "CRY"
     qubits: tuple[int, ...]
     tensor: Array

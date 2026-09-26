@@ -1,6 +1,14 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zazabap/pdft/main/docs/_static/logo-dark.svg">
+    <img alt="pdft" src="https://raw.githubusercontent.com/zazabap/pdft/main/docs/_static/logo-light.svg" width="340">
+  </picture>
+</p>
+
 # pdft
 
 [![arXiv](https://img.shields.io/badge/arXiv-2608.00053-b31b1b.svg)](https://arxiv.org/abs/2608.00053)
+[![Docs](https://img.shields.io/badge/docs-zazabap.github.io%2Fpdft-blue.svg)](https://zazabap.github.io/pdft/)
 
 A Python port of [ParametricDFT.jl](https://github.com/nzy1997/ParametricDFT.jl):
 learning parametric quantum Fourier transforms via manifold optimization. The
@@ -9,7 +17,8 @@ Fourier Transform (DFT) with parameterized quantum circuits.
 
 This is the reference implementation accompanying the paper
 [*Fast Trainable Multilinear Bases for Image Compression*](https://arxiv.org/abs/2608.00053)
-(An, Ni, Zhou, Liu, 2026).
+(An, Ni, Zhou, Liu, 2026). The API reference and example gallery are at
+[zazabap.github.io/pdft](https://zazabap.github.io/pdft/).
 
 > Status: feature-complete port. All bases (QFT, entangled QFT, TEBD, MERA,
 > Rich/RealRich, DCT-IV, blocked), both Riemannian optimizers (GD + Adam),
