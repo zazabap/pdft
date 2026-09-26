@@ -1,6 +1,6 @@
 """Coherence with the pixel basis, for transforms given as closures or matrices.
 
-mu(U) = N max_ij |U_ij|^2 in [1, N]. It is 1 at the Fourier point, maximal
+``mu(U) = N max_ij |U_ij|^2`` in [1, N]. It is 1 at the Fourier point, maximal
 incoherence with the pixel basis and the most favourable case for recovery from
 pointwise samples; it is N for an atom living on a single pixel, invisible to
 any sample set that misses it.
@@ -14,7 +14,7 @@ asked for --- and it keeps every function traceable, because ``train`` can add
 test pins it): the operator differs between representations; mu does not.
 
 Proposition 1 of the completion paper is why any of this matters. If every
-gate is diagonal except exactly one Hadamard per wire, then |U_ij| = N^{-1/2}
+gate is diagonal except exactly one Hadamard per wire, then ``|U_ij| = N^{-1/2}``
 for every parameter value, so mu == 1 identically over the whole parameter
 space and sqrt(N) U is a complex Hadamard matrix. ``certify_flat_modulus``
 checks that as a property of the model rather than of the point it happens to
@@ -48,12 +48,12 @@ def dense_operator(apply_fn, n: int, dtype=jnp.complex128) -> jnp.ndarray:
 
 
 def coherence(U: jnp.ndarray) -> jnp.ndarray:
-    """mu(U) = N max_ij |U_ij|^2, in [1, N]. 1 is maximal incoherence."""
+    """``mu(U) = N max_ij |U_ij|^2``, in [1, N]. 1 is maximal incoherence."""
     return U.shape[0] * jnp.max(jnp.abs(U) ** 2)
 
 
 def flat_modulus_deviation(U: jnp.ndarray) -> jnp.ndarray:
-    """max_ij | |U_ij| - N^{-1/2} |, the residual of Proposition 1.
+    """``max_ij | |U_ij| - N^{-1/2} |``, the residual of Proposition 1.
 
     Reported rather than thresholded where a number is quoted: it says how
     exactly the guarantee holds, not merely that it does.
@@ -62,7 +62,7 @@ def flat_modulus_deviation(U: jnp.ndarray) -> jnp.ndarray:
 
 
 def is_flat_modulus(U: jnp.ndarray, atol: float = 1e-12) -> bool:
-    """True if |U_ij| = N^{-1/2} everywhere, i.e. sqrt(N) U is complex Hadamard."""
+    """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard."""
     return bool(flat_modulus_deviation(U) <= atol)
 
 

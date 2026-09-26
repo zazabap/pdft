@@ -15,7 +15,7 @@ happens to be installed. Eagerly, outside jit, XLA fuses the two differently
 and they part by rounding (about 1e-15).
 
 Complex leaves (the free-block butterfly) get a complex first moment and the
-elementwise |g|^2 as the second, as in optax --- except that optax carries
+elementwise ``|g|^2`` as the second, as in optax --- except that optax carries
 that second moment in the complex dtype and takes a complex square root of it,
 which on CPU differs from the real square root here by an ulp. The test
 allows that.
