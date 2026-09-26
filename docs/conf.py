@@ -45,6 +45,10 @@ autodoc_default_options = {"members": True, "undoc-members": True, "show-inherit
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 napoleon_numpy_docstring = True
+
+# Otherwise viewcode follows HADAMARD (a jax.Array) to jaxlib._jax, a C extension
+# with no source, and the module index links to a page that does not exist.
+viewcode_follow_imported_members = False
 napoleon_google_docstring = False
 napoleon_use_rtype = False
 
