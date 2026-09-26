@@ -20,11 +20,30 @@ enabled JAX x64 mode, which ``import pdft`` does.
 """
 
 from .coherence import certify_flat_modulus
+from .families.phases import (
+    analysis,
+    apply_u,
+    init_params,
+    reconstruct,
+    reconstruct_batch,
+    synthesis,
+    train,
+)
+from .solver import batched, solver_for
 from .transform import apply_gates, separable, theta0
 
 __all__ = [
+    "analysis",
     "apply_gates",
+    "apply_u",
+    "batched",
     "certify_flat_modulus",
+    "init_params",
+    "reconstruct",
+    "reconstruct_batch",
     "separable",
+    "solver_for",
+    "synthesis",
     "theta0",
+    "train",
 ]
