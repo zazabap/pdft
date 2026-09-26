@@ -45,10 +45,6 @@ autodoc_default_options = {"members": True, "undoc-members": True, "show-inherit
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 napoleon_numpy_docstring = True
-
-# Otherwise viewcode follows HADAMARD (a jax.Array) to jaxlib._jax, a C extension
-# with no source, and the module index links to a page that does not exist.
-viewcode_follow_imported_members = False
 napoleon_google_docstring = False
 napoleon_use_rtype = False
 
@@ -122,3 +118,31 @@ html_theme_options = {
     # No search field in the (hidden) top navbar either; the header icon remains.
     "navbar_persistent": [],
 }
+
+
+def _viewcode_stay_in_pdft(app, modname, attribute):
+    """Resolve re-exports to their defining module, but only inside pdft.
+
+    viewcode follows each documented object to the module that defines it, so
+    ``pdft.optimizers.RiemannianGD`` links to ``pdft/optimizers/gd.py``. For
+    ``HADAMARD``, a jax.Array, that walk ends in ``jaxlib._jax``, a C extension
+    with no source, and the module index then linked to a page that was never
+    generated. Answering with the documenting module for anything defined
+    outside pdft leaves such objects without a source link instead.
+    """
+    import importlib
+
+    try:
+        obj = importlib.import_module(modname)
+        for part in attribute.split("."):
+            obj = getattr(obj, part)
+    except Exception:
+        return None
+    origin = getattr(obj, "__module__", None)
+    if isinstance(origin, str) and not origin.startswith("pdft"):
+        return modname
+    return None
+
+
+def setup(app):
+    app.connect("viewcode-follow-imported", _viewcode_stay_in_pdft)
