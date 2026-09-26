@@ -36,13 +36,16 @@ dev = [
     "matplotlib>=3.8",
 ]
 plot = ["matplotlib>=3.8"]
+# Bounded above because the docs build runs under -W: a deprecation warning
+# in a new major of any of these would fail the main-branch deploy with no
+# change in this repo (the same reason ruff is pinned in [dev]).
 docs = [
-    "sphinx>=8",
-    "sphinx-book-theme>=1.1",
-    "sphinx-gallery>=0.17",
-    "sphinx-design>=0.6",
-    "sphinx-copybutton>=0.5",
-    "myst-parser>=4",
+    "sphinx>=8,<10",
+    "sphinx-book-theme>=1.1,<2",
+    "sphinx-gallery>=0.17,<1",
+    "sphinx-design>=0.6,<1",
+    "sphinx-copybutton>=0.5,<1",
+    "myst-parser>=4,<6",
     "matplotlib>=3.8",
 ]
 gpu = ["jax[cuda12]>=0.10.0"]

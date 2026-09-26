@@ -29,7 +29,8 @@ extensions = [
 ]
 
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
-# docs/superpowers/ holds design specs that are not part of the site.
+# CLAUDE.md points design specs at docs/superpowers/; the directory is not
+# committed today, and this keeps it out of the site if it ever is.
 exclude_patterns = ["_build", "superpowers", "Thumbs.db", ".DS_Store"]
 
 # The docstrings use single backticks for code and object names; render them

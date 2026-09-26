@@ -40,22 +40,13 @@ The arXiv paper this package accompanies, and the BibTeX entry to cite it.
 
 ## Installation
 
-From PyPI (Python 3.11+):
-
-```bash
-pip install "pdft>=0.2.3"
+```{include} ../README.md
+:start-after: "## Installation"
+:end-before: "## Quick start"
 ```
 
 Optional extras: `pdft[plot]` adds matplotlib for the plotting helpers in
 {mod}`pdft.viz`, and `pdft[gpu]` installs a CUDA 12 build of JAX.
-
-From source:
-
-```bash
-git clone https://github.com/zazabap/pdft.git
-cd pdft
-pip install -e ".[dev]"
-```
 
 ```{note}
 Importing `pdft` turns on JAX's 64-bit mode for the whole process. Julia
