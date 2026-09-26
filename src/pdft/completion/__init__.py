@@ -14,6 +14,22 @@ vmapped one, ``evaluate_params`` the scoring, ``task_loss`` the objective and
 ``minibatches`` the one batch and mask schedule every trainer draws from.
 Register widths are read off array shapes, never passed.
 
+Layout::
+
+    transform      the circuit kernel, the dense operator, the DFT anchor, ``separable``
+    solver         the thresholds, the unrolled IHT scan, ``solver_for`` and ``batched``
+    unroll         the same solver at bounded memory (nested rematerialisation)
+    training       ``minibatches``, ``task_loss``, ``mu_monitor``, ``adam_loop``
+    adam           plain Adam written out (this package does not use optax)
+    coherence      ``mu`` for closures and matrices, ``certify_flat_modulus``
+    metrics        PSNR, SSIM, MS-SSIM
+    protocol       the evaluation protocol and the Table I constants
+    data           image loading and the DIV2K and Kodak splits
+    bridge         exact conversion to and from :class:`pdft.QFTBasis`
+    families/      phases (the paper's own), general, shared, butterfly,
+                   riemannian, transform_learning
+    baselines/     fixed_bases, nuclear, qtt (per-image methods, no trained basis)
+
 The names below are the ones most used interactively; everything else is
 imported from its module. Importing this subpackage assumes ``pdft`` has
 enabled JAX x64 mode, which ``import pdft`` does.
