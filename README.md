@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zazabap/pdft/main/docs/_static/logo-dark.svg">
+    <img alt="pdft" src="https://raw.githubusercontent.com/zazabap/pdft/main/docs/_static/logo-light.svg" width="340">
+  </picture>
+</p>
+
 # pdft
 
 [![arXiv](https://img.shields.io/badge/arXiv-2608.00053-b31b1b.svg)](https://arxiv.org/abs/2608.00053)
