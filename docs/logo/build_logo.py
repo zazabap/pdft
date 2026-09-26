@@ -1,19 +1,20 @@
 """Generate the pdft logo assets in docs/_static/.
 
-The mark is a two-wire circuit fragment (Hadamard, controlled phase) whose
-wires leave the phase gate as waves, on a navy-to-teal tile lit from the top
-left, with an amber phase dot. The wordmark is "pdft" set in Inter Bold and converted to outlines, so
-the SVGs render identically without the font installed.
+The mark is the two-qubit QFT circuit: a Hadamard, a controlled phase, a
+second Hadamard, and the final swap drawn as crossing wires, on a
+navy-to-teal tile lit from the top left, with an amber phase dot. The
+wordmark is "pdft" set in Inter Bold, two-tone, converted to outlines so the
+SVGs render identically without the font installed.
 
 Run:  python docs/logo/build_logo.py path/to/Inter-Bold.ttf
 Needs fonttools. Inter is SIL OFL: https://github.com/rsms/inter
-Writes: logo-light.svg, logo-dark.svg (lockups), mark.svg (bare mark).
-favicon.png is mark.svg rasterised at 64 px (any SVG renderer).
+Writes: logo-light.svg, logo-dark.svg (lockups), mark.svg (bare mark) and
+favicon.svg, a reduced mark (no Hadamards, heavier strokes) that stays
+legible at 16 px. favicon.png is favicon.svg rasterised at 64 px.
 """
 
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 
@@ -27,7 +28,7 @@ WHITE, INK, PAPER = "#ffffff", "#1f2933", "#f3f5f7"
 TILE = ("#06263a", "#0a5f7c", "#17a0ad")  # dark floor, mid, bright corner
 DOT = ("#ffc77a", "#ef7f3a")  # phase dot: lit centre, amber rim (also the halo)
 WORD = "#0f8a9c"  # the "dft" of the wordmark
-MARK = "D"
+Y1, Y2 = 186, 326  # the two wires
 
 DEFS = f"""<defs>
   <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
@@ -45,12 +46,11 @@ DEFS = f"""<defs>
 </defs>"""
 
 
-def wire(x1, y1, x2, y2, w=16, color=WHITE):
-    return f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{color}" stroke-width="{w}" stroke-linecap="round"/>'
-
-
-def path(d, w=16, color=WHITE):
-    return f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{w}" stroke-linecap="round" stroke-linejoin="round"/>'
+def stroke(d, w, color=WHITE, op=1.0):
+    return (
+        f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{w}" '
+        f'stroke-linecap="round" stroke-linejoin="round" stroke-opacity="{op}"/>'
+    )
 
 
 def dot(x, y, r, color=WHITE):
@@ -58,8 +58,8 @@ def dot(x, y, r, color=WHITE):
 
 
 def glow_dot(x, y, r):
-    # The halo is two translucent discs rather than a blur filter, so it
-    # survives every renderer, including favicon rasterisers.
+    # The halo is translucent discs rather than a blur filter, so it survives
+    # every renderer, including favicon rasterisers.
     return (
         f'<circle cx="{x}" cy="{y}" r="{r + 34}" fill="{DOT[1]}" fill-opacity="0.10"/>'
         f'<circle cx="{x}" cy="{y}" r="{r + 22}" fill="{DOT[1]}" fill-opacity="0.18"/>'
@@ -69,54 +69,65 @@ def glow_dot(x, y, r):
     )
 
 
-def h_gate(cx, cy, s=100):
-    b, ih, g = 17, s * 0.5, TILE[0]
+def h_gate(cx, cy, s=88):
+    b, ih, g = 16, s * 0.5, TILE[0]
+    box = f'x="{cx - s / 2}" width="{s}" height="{s}" rx="18"'
     return (
-        f'<rect x="{cx - s / 2}" y="{cy - s / 2 + 6}" width="{s}" height="{s}" rx="20" fill="#000000" fill-opacity="0.22"/>'
-        f'<rect x="{cx - s / 2}" y="{cy - s / 2}" width="{s}" height="{s}" rx="20" fill="{WHITE}"/>'
-        f'<rect x="{cx - s * 0.25 - b / 2}" y="{cy - ih / 2}" width="{b}" height="{ih}" fill="{g}"/>'
-        f'<rect x="{cx + s * 0.25 - b / 2}" y="{cy - ih / 2}" width="{b}" height="{ih}" fill="{g}"/>'
-        f'<rect x="{cx - s * 0.25}" y="{cy - b / 2}" width="{s * 0.5}" height="{b}" fill="{g}"/>'
+        f'<rect {box} y="{cy - s / 2 + 6}" fill="#000000" fill-opacity="0.22"/>'
+        f'<rect {box} y="{cy - s / 2}" fill="{WHITE}"/>'
+        f'<rect x="{cx - s * 0.25 - b / 2}" y="{cy - ih / 2}" width="{b}" height="{ih}" rx="3" fill="{g}"/>'
+        f'<rect x="{cx + s * 0.25 - b / 2}" y="{cy - ih / 2}" width="{b}" height="{ih}" rx="3" fill="{g}"/>'
+        f'<rect x="{cx - s * 0.25}" y="{cy - b / 2}" width="{s * 0.5}" height="{b}" rx="3" fill="{g}"/>'
     )
 
 
-def sine(x0, x1, y, amp, lam, phase=0.0, n=60):
-    xs = [x0 + (x1 - x0) * i / n for i in range(n + 1)]
-    return "M" + " L".join(
-        f"{x:.1f},{y + amp * math.sin(2 * math.pi * (x - x0) / lam + phase):.1f}" for x in xs
+def tile():
+    return (
+        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#tile)"/>'
+        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#light)"/>'
+        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#vign)"/>'
+        f'<rect x="4" y="4" width="{VB - 8}" height="{VB - 8}" rx="100" fill="none" '
+        f'stroke="{WHITE}" stroke-opacity="0.16" stroke-width="3"/>'
+    )
+
+
+def swap(x0, x1, w):
+    """The QFT's final swap: each wire crosses to the other's position."""
+    c0, c1 = x0 + 0.42 * (x1 - x0), x0 + 0.58 * (x1 - x0)
+    return stroke(f"M{x0},{Y1} C{c0},{Y1} {c1},{Y2} {x1},{Y2}", w) + stroke(
+        f"M{x0},{Y2} C{c0},{Y2} {c1},{Y1} {x1},{Y1}", w
     )
 
 
 def mark():
-    y1, y2 = 186, 326
-    tile = (
-        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#tile)"/>'
-        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#light)"/>'
-        f'<rect width="{VB}" height="{VB}" rx="104" fill="url(#vign)"/>'
-        f'<rect x="4" y="4" width="{VB - 8}" height="{VB - 8}" rx="100" fill="none" stroke="{WHITE}" stroke-opacity="0.16" stroke-width="3"/>'
+    """H, controlled phase, H, swap: the two-qubit QFT."""
+    x_h1, x_cp, x_h2, x_sw0, x_sw1 = 110, 218, 316, 372, 468
+    wires = stroke(f"M44,{Y1 + 6} H{x_sw0}", 16, "#000000", 0.2) + stroke(
+        f"M44,{Y2 + 6} H{x_sw0}", 16, "#000000", 0.2
     )
-    shadows = wire(56, y1 + 6, 300, y1 + 6, color="#000000") + wire(
-        56, y2 + 6, 300, y2 + 6, color="#000000"
-    )
-    shadows = shadows.replace(
-        'stroke-linecap="round"/>', 'stroke-linecap="round" stroke-opacity="0.2"/>'
-    )
-    cp = wire(300, y1, 300, y2) + dot(300, y1, 26) + glow_dot(300, y2, 30)
+    wires += stroke(f"M44,{Y1} H{x_sw0}", 16) + stroke(f"M44,{Y2} H{x_sw0}", 16)
+    cp = stroke(f"M{x_cp},{Y1} V{Y2}", 16) + dot(x_cp, Y1, 24)
     return (
-        tile
-        + shadows
-        + wire(56, y1, 300, y1)
-        + wire(56, y2, 300, y2)
-        + h_gate(150, y1)
+        tile()
+        + wires
+        + swap(x_sw0, x_sw1, 16)
+        + h_gate(x_h1, Y1)
+        + h_gate(x_h2, Y2)
         + cp
-        + path(sine(300, 456, y1, 14, 104))
-        + path(sine(300, 456, y2, 26, 104, math.pi), color=DOT[1])
+        + glow_dot(x_cp, Y2, 28)
     )
+
+
+def favicon_mark():
+    """Reduced mark for 16-32 px: the phase gate and the swap, heavier strokes, no Hadamards."""
+    x_cp, x_sw0, x_sw1 = 190, 300, 460
+    wires = stroke(f"M52,{Y1} H{x_sw0}", 26) + stroke(f"M52,{Y2} H{x_sw0}", 26)
+    cp = stroke(f"M{x_cp},{Y1} V{Y2}", 26) + dot(x_cp, Y1, 36)
+    return tile() + wires + swap(x_sw0, x_sw1, 26) + cp + glow_dot(x_cp, Y2, 44)
 
 
 def wordmark(font_path, size=268, tracking=-8):
-    """Outline 'pdft' at the given pixel size; returns (paths, advance) with the
-    'p' and 'dft' as separate path strings so they can be coloured apart."""
+    """Outline 'pdft'; returns the 'p' and 'dft' paths separately plus the advance."""
     font = TTFont(font_path)
     scale = size / font["head"].unitsPerEm
     cmap, glyphs, hmtx = font.getBestCmap(), font.getGlyphSet(), font["hmtx"]
@@ -131,22 +142,27 @@ def wordmark(font_path, size=268, tracking=-8):
 
 
 def svg(body, w=VB, h=VB):
-    return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">\n{DEFS}\n{body}\n</svg>\n'
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">\n'
+        f"{DEFS}\n{body}\n</svg>\n"
+    )
 
 
 def main(font_path):
     OUT.mkdir(exist_ok=True)
     (OUT / "mark.svg").write_text(svg(mark()))
+    (OUT / "favicon.svg").write_text(svg(favicon_mark()))
     p_path, dft_path, advance = wordmark(font_path)
     x0, base, pad = 440, 292, 28
     width = round(x0 + advance + pad)
     for name, p_fill in (("logo-light.svg", INK), ("logo-dark.svg", PAPER)):
         body = (
             f'<g transform="scale(0.75)">{mark()}</g>'
-            f'<g transform="translate({x0},{base})"><path d="{p_path}" fill="{p_fill}"/><path d="{dft_path}" fill="{WORD}"/></g>'
+            f'<g transform="translate({x0},{base})">'
+            f'<path d="{p_path}" fill="{p_fill}"/><path d="{dft_path}" fill="{WORD}"/></g>'
         )
         (OUT / name).write_text(svg(body, width, 384))
-    print(f"wrote mark.svg, logo-light.svg, logo-dark.svg ({width}x384) to {OUT}")
+    print(f"wrote mark.svg, favicon.svg, logo-light.svg, logo-dark.svg ({width}x384) to {OUT}")
 
 
 if __name__ == "__main__":
