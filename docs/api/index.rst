@@ -15,6 +15,7 @@ else is imported from its subpackage, for example
    loss
    training
    coherence
+   completion
    io
 
 .. toctree::

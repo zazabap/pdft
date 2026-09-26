@@ -71,6 +71,160 @@ GD on L1 loss is bit-exact for ~50 steps and stays within `atol=1e-3` over 200 s
 
 `get_*_gate_indices` walks the tensor list and tags any 2×2 tensor whose four entries have unit-modulus magnitudes (within `atol=0.15`) as a CP gate, then returns the LAST `n_gates` such positions. After training, individual entries can drift slightly off the unit circle; the moderate tolerance accommodates that. If you tighten the tolerance, do so in tandem with a regression test on a trained basis.
 
+## `pdft.completion` (ported from pdft-completion)
+
+The library half of [pdft-completion](https://github.com/zazabap/pdft-completion),
+the code behind *Image Inpainting from Random Pixels with a Trainable Quantum
+Fourier Transform*, lives in `src/pdft/completion/`. It is **not a Julia port**:
+there are no goldens for it, and its correctness criteria are the property
+tests in `tests/completion/` (the paper repo's `verify.py` / `verify_unroll.py`
+checks, turned into pytest) plus agreement with the paper repo's numbers. The
+paper's experiment scripts, data fetchers, figures and `results/` stay in that
+repo; only code two scripts would share was brought over, and every function
+that took a repository path now takes an explicit directory.
+
+It carries the QFT circuit in a **second representation**: the gate angles
+(`transform.apply_u`) or the `{"g", "phi"}` gate dict (`families.general`),
+applied directly to the image with no matrix formed, trained by plain Adam.
+The conventions below are load-bearing; several were rediscovered painfully
+upstream.
+
+### 10. Sign convention: `U(theta0) == conj(DFT_ortho)`
+
+The QFT uses `e^{+2 pi i kx/N}`, so the circuit at the textbook angles is the
+*conjugate* of NumPy's orthonormal DFT. `tests/completion/test_transform.py`
+pins it. Do not "fix" it: `synthesis` is `U`, `analysis` is `U^H`, and every
+family (`butterfly.dft_blocks`, `riemannian.dft_matrix`) is anchored to the
+same sign so the comparisons stay nested.
+
+### 11. The bridge identity (QFTBasis <-> angles)
+
+`QFTBasis` applies its gates in Yao's order (qubit 1 is the LSB and gets its
+Hadamard first, no final swap layer). In the same axis frame that is the
+**reverse** of the completion circuit's gate sequence, so the operators are
+transposes of each other up to the bit reversal the completion circuit ends
+with. Exactly, with `Pi` the bit-reversal permutation of an axis:
+
+```
+QFTBasis.forward_transform(X) == U(theta_r)^T (Pi X Pi) U(theta_c)
+```
+
+`completion/bridge.py` implements it: one-qubit gates map to their transposes
+(a Hadamard is symmetric, so phase-only bases need none), the four phases of
+each two-qubit gate are re-indexed to the other bit order
+(`exp(i phi).reshape(2, 2).T`), and the gate index map comes from
+`sorted_gate_program`, never from arithmetic on the emission order.
+`tests/completion/test_bridge.py` checks the identity at random *non-symmetric*
+gates; the phase-only case cannot catch a wrong transpose. `mu` needs no
+adjustment (invariant under permutation, transposition and conjugation), so
+`pdft.coherence.coherence` of a converted basis equals the product of the
+per-axis `coherence_general` values, and that is tested too. Consequence
+worth knowing: at initialisation `QFTBasis` is the DFT of the *bit-reversed*
+image, not of the image (a fixed pixel permutation; inherited from Yao, and
+what the Julia goldens encode).
+
+### 12. Straight-through thresholds
+
+`solver.hard_k` is `C * M(C)` with the support mask `M` under
+`stop_gradient`; `soft_k` holds its threshold `lambda` the same way. `M` is
+piecewise constant, so differentiating it naively kills the selection pathway
+and the task loss goes flat. A silent zero gradient is the most likely failure
+of the training objective; `test_solver.py` asserts the gradient is live.
+
+### 13. No optax: `completion/adam.py` mirrors `optax.adam` operation for operation
+
+Same rule as the rest of the package (no optax dependency), but here the
+reference results *were* produced with `optax.adam`, so the written-out update
+mirrors it: moment order, bias correction in float64 then cast to the moment's
+dtype, `sqrt(nu + 0) + eps`, `-lr` applied last, the update cast back to the
+parameter dtype, `|g|^2` for complex leaves. What that buys, measured: under
+`jax.jit` (every trainer runs it that way) real-valued parameters reproduce
+optax **bit for bit on CPU and GPU**; complex leaves (the free-block
+butterfly) agree to ~1e-16 on CPU because optax keeps a complex-typed second
+moment and takes a complex square root, exact on GPU; eagerly outside jit the
+two part by rounding (~1e-15). Do not "simplify" the arithmetic: the order of
+operations is the guarantee. `tests/completion/test_adam.py` compares against
+optax when it happens to be importable (it is not a dev dependency) and
+against the textbook formula always. Every trainer draws its batches from `training.minibatches`, so the
+batch/mask draw order, and with it every seed, is defined once; the Adam-trained
+families also share `training.adam_loop`, and the Cayley trainers
+(`families.riemannian`, `general.train_c`) share only the schedule.
+
+### 14. The Cayley step descends with `+tau`
+
+For a U(2) or U(N) gate `G` with Euclidean gradient `E = conj(jax.grad(...))`
+(the Wirtinger conjugation again, see §1), the generator is
+`A = G^H E - E^H G` and the descent step is `cayley(G, A, +tau)`. The sign was
+wrong for a month upstream and nothing caught it, because a check from exactly
+`theta0` has a vanishing first-order term and a top-k tie-break jump masks the
+rest. `test_general.py::test_cayley_step_descends_from_a_perturbed_point`
+starts from a perturbed point on purpose; keep it that way.
+
+### 15. `k` is traced in the evaluation solvers
+
+`solver.kth_largest` sends a Python-int `k` through `top_k` (training, `k`
+fixed) and a traced `k` through a full sort (evaluation, `k = budget_k`
+differs with every mask). Keep `k` traced in `reconstruct*`: recompiling the
+K-step scan once per (image, budget) was the whole cost of scoring a sweep.
+The two thresholds are identical.
+
+### 16. Never form `U` on a hot path
+
+`dense_operator`, `unitary_phases`, `unitary_general`, `unitary_butterfly` cost
+`O(N^2 log N)` and are diagnostics. Transforms apply gates to the image.
+
+### 17. The image's dtype sets the working precision
+
+`transform.complex_dtype` picks complex64 for float32 images; the angles stay
+float64. The circuit has no matmul, so float32 loses nothing measurable, but
+the families that do multiply matrices (transform learning, the butterfly's
+blocks, `riemannian`) lose up to 0.55 dB under XLA's default TF32, which is
+why `protocol.evaluate` and `table1_scores` run under
+`jax.default_matmul_precision("highest")`, and why `apply_dense` casts the
+matrix to the carry's dtype, once, for every dense family (a mismatched
+`lax.scan` carry is a hard error). Tests that compare float32 contractions on a GPU need the same
+context.
+
+### 18. `metrics.gaussian_filter` must match scipy's
+
+SSIM and MS-SSIM use an 11-tap Gaussian (`sigma = 1.5`, `truncate = 3.5`,
+`mode = "reflect"`) written in numpy so scipy is not a dependency;
+`test_metrics.py` pins it against `scipy.ndimage.gaussian_filter` to 1e-12
+when scipy is installed. The paper's MS-SSIM column depends on it.
+
+### 19. A family is one per-axis operator
+
+Every transform family is a single function `apply(x, params, adjoint, axis)`
+on one axis of length `2**n` (`apply_gates` for the circuits, of which
+`apply_u` in `families/phases.py` is the phase-only special case,
+`apply_butterfly`, `apply_dense`). The generic machinery lives at the top
+level of the subpackage; every family, the paper's own included, lives under
+`families/`, and `baselines/` holds only per-image methods with no trained
+basis.
+Everything else is derived: `separable(apply)` gives the 2-D analysis /
+synthesis pair, `solver_for(apply)` the jitted K-step solver, `batched` the
+vmapped one, `protocol.evaluate_params` the scoring, `training.task_loss` the
+objective, `training.minibatches` the batch/mask schedule and
+`training.mu_monitor` the logging. Register widths are read off shapes
+(`register_width`), never passed. Do not add a hand-written
+`analysis_*` / `reconstruct_*` / `evaluate_*` / `train_*` per family; declare
+the operator and reuse. The same rule for the manifold step: `skew` and
+`cayley` in `families.riemannian` are batched and serve U(2) gates and U(N)
+matrices alike.
+
+### Style
+
+Docstrings: a one-sentence summary line, then, when the reason for a design is
+not obvious, one or two short paragraphs saying why; no dates, owner quotes or
+paper-repo history. Code, maths and identifiers in double backticks; no `---`
+or `--` standing in for a dash; no `Args` / `Returns` sections (the prose names
+a parameter when it needs explaining). Comments explain a non-obvious choice,
+never restate the line, and there are no banner comment dividers. Public
+signatures are annotated, arrays as `Array = jax.Array`, as in the core
+package. Per-family diagnostics are `unitary_<family>` and
+`coherence_<family>`; `pdft.completion.coherence` is the module, not a
+function.
+
 ## Repo layout
 
 ```
@@ -86,11 +240,15 @@ src/pdft/
 ├── optimizers/             core, gd (RiemannianGD + Armijo), adam (RiemannianAdam), loop
 ├── training/               schedules, single (train_basis), batched, adam_step, eval_loop
 ├── io/                     serialize (JSON), compression
-└── viz/                    loss (matplotlib loss plots), circuit (schematic)
+├── viz/                    loss (matplotlib loss plots), circuit (schematic)
+└── completion/             Image inpainting from random pixels (ported from pdft-completion; see below)
+    ├── transform, solver, unroll, training, adam, coherence, metrics, protocol, data, bridge
+    ├── families/           phases (the paper's own), general, shared, butterfly, riemannian, transform_learning
+    └── baselines/          fixed_bases, nuclear, qtt (per-image methods, no trained basis)
 
 reference/julia/            Julia harness — needed only to regenerate goldens
 reference/goldens/          Committed .npz + .json files (<200 KB total)
-examples/                   3 runnable demos, each <10s
+examples/                   4 runnable demos, each <10s
 tests/                      pytest; mirrors src/pdft/ layout (tests/bases/, tests/optimizers/, ...)
 docs/                       Sphinx site (conf.py, index.md, api/*.rst, paper.md); deployed to GitHub Pages by docs.yml
 ```
@@ -118,6 +276,7 @@ pip install -e ".[dev]"
 pytest                                    # full suite
 pytest --cov=pdft --cov-fail-under=90     # CI gate
 pytest tests/test_parity_*.py             # parity-only
+pytest tests/completion                   # the completion subpackage (no goldens; property tests)
 
 # Lint (CI fails if this is dirty — check before pushing)
 ruff check src tests
@@ -127,6 +286,7 @@ ruff format src tests
 python examples/basis_demo.py
 python examples/optimizer_benchmark.py
 python examples/mera_demo.py
+python examples/completion_demo.py      # train through the solver, convert to QFTBasis, save
 
 # Build the docs site (Sphinx + sphinx-book-theme; same -W command CI runs)
 pip install -e ".[docs]"
@@ -178,6 +338,7 @@ If you find another mismatch:
 - **Don't add explicit JIT to `train_basis`.** It calls a basis-typed loss closure with Python-list pytrees; JIT decisions are best left to inner functions where the static-vs-leaf split is clearer.
 - **Don't introduce backwards-compat shims** for the JSON schema. We're at v0.1.0; if the schema changes, bump the version and regenerate goldens.
 - **Don't add ML scaffolding** (no DataLoader, no Trainer-like classes, no Lightning). Upstream is one-target-image-at-a-time and we mirror that. Batched training is open work in #2.
+- **Don't move the paper's scripts, data or results into this repo.** `pdft.completion` is the library; the experiments live in pdft-completion. Anything two of that repo's scripts would share belongs here, with explicit paths, no `ROOT`.
 - **Don't run examples in the test CI.** They write to `out/` (gitignored) and are not coverage-relevant. The one place they do run is the docs workflow (`docs.yml`): sphinx-gallery executes `examples/*.py` to render the example gallery, under `-W`, so a broken example fails the docs build rather than the test matrix.
 
 ## When making changes
