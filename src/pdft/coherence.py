@@ -55,10 +55,10 @@ question "does this training run preserve incoherence?" can be answered before
 the run rather than measured after it.
 
 The same quantity is available for a transform that is applied by a closure
-rather than stored as a basis (see `pdft.circuit.gates`): `axis_operator` forms
-the matrix of one axis, `operator_coherence` and `flat_modulus_deviation`
-measure it and stay traceable so a loss may carry mu, and
-`sampled_flat_modulus` checks the guarantee over drawn parameter values.
+rather than stored as a basis, such as the gate kernel in `pdft.circuit.gates`:
+`operator_coherence` and `flat_modulus_deviation` measure any explicit matrix
+and stay traceable so a loss may carry mu, and `sampled_flat_modulus` checks
+the guarantee over drawn parameter values.
 
 Discovered while applying this package's basis family to image *completion*,
 where the reversal matters: the transform that compresses an image best is not
@@ -75,12 +75,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from .circuit.builder import is_compact_cp
+from .circuit.gates import axis_operator
 
 Array = jax.Array
 
 __all__ = [
     "FlatModulusCertificate",
-    "axis_operator",
     "certify_flat_modulus",
     "coherence",
     "dense_operator",
@@ -233,18 +233,6 @@ def flat_modulus_deviation(u: Array) -> Array:
     return jnp.max(jnp.abs(jnp.abs(u) - u.shape[0] ** -0.5))
 
 
-def axis_operator(apply_fn: Callable, n: int, dtype=jnp.complex128) -> Array:
-    """The ``2^n x 2^n`` matrix of a per-axis transform given as a closure.
-
-    `apply_fn` maps an array to its transform along axis 0, as
-    ``lambda e: apply_gates(e, params, axis=0)`` does. It is the counterpart of
-    `dense_operator` for a transform that is applied rather than stored as a
-    basis, and a diagnostic like it: N transforms of length N. The coherence of
-    a separable 2-D transform is the product of its two axes' values.
-    """
-    return apply_fn(jnp.eye(2**n, dtype=dtype))
-
-
 def sampled_flat_modulus(
     family: Callable,
     n: int,
@@ -256,11 +244,14 @@ def sampled_flat_modulus(
     """Check the guarantee over drawn parameter values of a closure family.
 
     ``sampler(rng)`` draws a parameter value and ``family(params)`` returns the
-    per-axis closure for it, as `axis_operator` takes. The check holds when
-    every draw is flat-modulus, which is what distinguishes a transform that
-    happens to be incoherent from a family that cannot leave the complex
-    Hadamard set. `certify_flat_modulus` proves the same thing from a basis's
-    structure; this measures it, for families that have no tensor list.
+    closure applying that transform along axis 0, which
+    `pdft.circuit.gates.axis_operator` turns into the ``2^n x 2^n`` matrix of
+    one axis. The check holds when every draw is flat-modulus, which is what
+    distinguishes a transform that happens to be incoherent from a family that
+    cannot leave the complex Hadamard set. `certify_flat_modulus` proves the
+    same thing from a basis's structure; this measures it, for families that
+    have no tensor list. The coherence of a separable 2-D transform is the
+    product of its two axes' values.
 
     Returns the verdict, the worst deviation and the worst mu seen, so a
     failure says how far it drifted.

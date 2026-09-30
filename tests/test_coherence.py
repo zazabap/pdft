@@ -11,9 +11,15 @@ from pdft.bases import (
     TEBDBasis,
 )
 from pdft.circuit.builder import controlled_phase_diag, is_compact_cp
-from pdft.circuit.gates import apply_gates, hadamards, n_params, theta0, theta_to_params
+from pdft.circuit.gates import (
+    apply_gates,
+    gate_matrix,
+    hadamards,
+    n_params,
+    theta0,
+    theta_to_params,
+)
 from pdft.coherence import (
-    axis_operator,
     certify_flat_modulus,
     coherence,
     dense_operator,
@@ -159,15 +165,8 @@ def test_certificate_is_falsy_when_the_basis_is_not_flat():
 
 
 def _kernel(params):
+    """The family ``sampled_flat_modulus`` draws from: the closure of one parameter value."""
     return lambda e: apply_gates(e, params, axis=0)
-
-
-def test_axis_operator_is_the_matrix_of_the_closure():
-    p = theta_to_params(theta0(WIRES) + 0.3)
-    u = axis_operator(_kernel(p), WIRES)
-    e = jnp.zeros(2**WIRES, jnp.complex128).at[3].set(1.0)
-    assert jnp.allclose(u[:, 3], apply_gates(e, p), atol=1e-12)
-    assert jnp.allclose(jnp.conj(u).T @ u, jnp.eye(2**WIRES), atol=1e-12)
 
 
 def test_operator_coherence_is_the_same_mu_and_traceable(rng):
@@ -176,7 +175,7 @@ def test_operator_coherence_is_the_same_mu_and_traceable(rng):
     assert float(operator_coherence(u)) == coherence(None, operator=u)
     assert float(jax.jit(operator_coherence)(u)) == pytest.approx(coherence(None, operator=u))
     assert float(flat_modulus_deviation(u)) > 0.05 and not is_flat_modulus(None, operator=u)
-    dft = axis_operator(_kernel(theta_to_params(theta0(WIRES))), WIRES)
+    dft = gate_matrix(theta_to_params(theta0(WIRES)))
     assert float(flat_modulus_deviation(dft)) < 1e-12 and is_flat_modulus(None, operator=dft)
 
 

@@ -75,7 +75,7 @@ def n_from_params(n_angles: int) -> int:
 
 
 def theta0(n: int, dtype=jnp.float64) -> Array:
-    """The textbook controlled phases; the circuit at ``theta0(n)`` is the DFT."""
+    """The textbook controlled phases; the circuit at ``theta0(n)`` is ``conj(DFT_ortho)``."""
     return jnp.asarray([2.0 * np.pi / 2 ** (p - q + 1) for p, q in gate_pairs(n)], dtype=dtype)
 
 
@@ -139,20 +139,17 @@ def apply_gates(x: Array, params: dict, adjoint: bool = False, axis: int = -1) -
         shape[nl + q] = shape[nl + p] = 2
         return t * table.reshape(shape)
 
-    pairs = gate_pairs(n)
-    if not adjoint:
-        for i, (p, q) in enumerate(pairs):
-            if i == 0 or pairs[i - 1][1] != q:
-                t = one_qubit(t, q, g[q])
-            t = two_qubit(t, p, q, phi[i])
-        t = one_qubit(t, n - 1, g[n - 1])  # the last wire has no two-qubit gate
-    else:
-        t = one_qubit(t, n - 1, jnp.conj(g[n - 1]).T)
-        for i in reversed(range(len(pairs))):
-            p, q = pairs[i]
-            t = two_qubit(t, p, q, -phi[i])
-            if i == 0 or pairs[i - 1][1] != q:
-                t = one_qubit(t, q, jnp.conj(g[q]).T)
+    # The circuit written once: each wire's own gate (no partner), then its
+    # two-qubit gates. The adjoint walks the same list backwards and inverts
+    # each factor, so the two directions cannot drift apart.
+    index = {pair: i for i, pair in enumerate(gate_pairs(n))}
+    circuit = [(q, p) for q in range(n) for p in (None, *range(q + 1, n))]
+    for q, p in reversed(circuit) if adjoint else circuit:
+        if p is None:
+            t = one_qubit(t, q, jnp.conj(g[q]).T if adjoint else g[q])
+        else:
+            ph = phi[index[p, q]]
+            t = two_qubit(t, p, q, -ph if adjoint else ph)
     out = t.reshape(lead + (2**n,))
     if not adjoint:
         out = bitreverse(out)
@@ -191,3 +188,18 @@ def separable(apply: Callable) -> tuple[Callable, Callable]:
         return apply(apply(C, pr, False, -2), pc, False, -1)
 
     return analysis, synthesis
+
+
+def axis_operator(apply_fn: Callable, n: int, dtype=jnp.complex128) -> Array:
+    """The ``2^n x 2^n`` matrix of a per-axis transform given as a closure.
+
+    ``apply_fn`` maps an array to its transform along axis 0. A diagnostic,
+    ``N`` transforms of length ``N``: nothing that applies an operator needs
+    its matrix.
+    """
+    return apply_fn(jnp.eye(2**n, dtype=dtype))
+
+
+def gate_matrix(params: dict) -> Array:
+    """The circuit ``{"g", "phi"}`` formed explicitly as a matrix. A diagnostic, like ``axis_operator``."""
+    return axis_operator(lambda e: apply_gates(e, params, axis=0), params["g"].shape[0])

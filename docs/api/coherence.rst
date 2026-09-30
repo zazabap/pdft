@@ -29,7 +29,6 @@ The same quantity for a transform that is applied rather than stored as a basis,
    :toctree: generated
    :nosignatures:
 
-   axis_operator
    operator_coherence
    flat_modulus_deviation
    sampled_flat_modulus

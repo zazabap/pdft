@@ -76,10 +76,10 @@ GD on L1 loss is bit-exact for ~50 steps and stays within `atol=1e-3` over 200 s
 `circuit/gates.py` carries the QFT circuit as its gate parameters (`{"g", "phi"}`: one-qubit gates and four phases per wire pair) and applies them to the image directly, with no tensors and no matrix. There are no goldens for it; its correctness criteria are the property tests in `tests/circuit/test_gates.py`. Three conventions are load-bearing:
 
 - **Sign: `U(theta0) == conj(DFT_ortho)`.** The QFT uses `e^{+2 pi i kx/N}`, so the circuit at the textbook angles is the *conjugate* of NumPy's orthonormal DFT. `test_theta0_is_the_conjugate_dft` pins it. Do not "fix" it.
-- **Wire 0 is the most significant bit, and the circuit ends with a bit reversal.** That is the opposite of Yao's little-endian order in §2, which `QFTBasis` keeps. The two are the same circuit read in opposite gate order.
-- **The four phases of gate `(p, q)`, `p > q`, are indexed `phi[i][2*b_p + b_q]`**, with `i` the position in `gate_pairs(n)`. The phase-only circuit uses slot 3 alone, which is symmetric in the two wires, so only a test at random four-phases can catch a swapped index.
+- **Wire 0 is the most significant bit, and the circuit ends with a bit reversal.** That is the opposite of Yao's little-endian order in §2, which `QFTBasis` keeps. The package therefore states the QFT circuit twice (`_qft_gates_1d` and `gate_pairs` / `theta0`) and neither is derived from the other; `test_the_kernel_and_qft_basis_are_the_same_circuit` ties them: `QFTBasis.forward_transform(X) == U^T (Pi X Pi) U` with `Pi` the bit reversal.
+- **The four phases of gate `(p, q)`, `p > q`, are indexed `phi[i][2*b_p + b_q]`**, with `i` the position in `gate_pairs(n)`. The phase-only circuit uses slot 3 alone, which is symmetric in the two wires, so it cannot catch a swapped index; `test_four_phase_index_order` does.
 
-The per-axis operator signature `apply(x, params, adjoint, axis)` is the contract everything built on the kernel relies on; register widths are read off shapes (`register_width`), never passed.
+The per-axis operator signature `apply(x, params, adjoint, axis)` is the contract everything built on the kernel relies on; register widths are read off shapes (`register_width`), never passed. `apply_gates` writes the circuit once and walks it backwards for the adjoint; keep it that way rather than mirroring two loops. `gate_matrix` and `axis_operator` form the matrix for diagnostics and tests only, never on a path that applies the transform.
 
 ## Repo layout
 

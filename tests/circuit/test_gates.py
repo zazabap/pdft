@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 import pdft.circuit.gates as T
-from pdft.coherence import axis_operator
+from pdft.bases import QFTBasis
 
 n = 5
 N = 2**n
@@ -22,10 +22,33 @@ def test_register_bookkeeping():
 
 def test_theta0_is_the_conjugate_dft():
     """The QFT sign convention: the circuit at theta0 is conj(DFT_ortho), not DFT_ortho."""
-    p = T.theta_to_params(T.theta0(n))
-    U0 = np.asarray(axis_operator(lambda e: T.apply_gates(e, p, axis=0), n))
+    U0 = np.asarray(T.gate_matrix(T.theta_to_params(T.theta0(n))))
     F = np.fft.fft(np.eye(N), axis=0, norm="ortho")
     assert np.abs(U0 - F.conj()).max() < 1e-12 and np.abs(U0 - F).max() > 0.1
+
+
+def test_the_kernel_and_qft_basis_are_the_same_circuit(rng):
+    """The package states the QFT circuit twice: as ``QFTBasis``'s tensors, in
+    Yao's order (qubit 1 is the least significant bit and gets its Hadamard
+    first, no final swap), and as the kernel's gate list, most significant wire
+    first with a bit reversal at the end. Neither is derived from the other, so
+    this ties them: read in the same frame one is the other's transpose acting
+    on the bit-reversed image."""
+    m, k = 3, 2
+    X = jnp.asarray(rng.standard_normal((2**m, 2**k)) + 1j * rng.standard_normal((2**m, 2**k)))
+    Ur = T.gate_matrix(T.theta_to_params(T.theta0(m)))
+    Uc = T.gate_matrix(T.theta_to_params(T.theta0(k)))
+    flipped = T.bitreverse(T.bitreverse(X, -2), -1)
+    assert jnp.allclose(QFTBasis(m=m, n=k).forward_transform(X), Ur.T @ flipped @ Uc, atol=1e-12)
+
+
+def test_gate_matrix_and_axis_operator(rng, rand_general):
+    p = rand_general(rng, n)
+    U = T.gate_matrix(p)
+    e = jnp.zeros(N, jnp.complex128).at[3].set(1.0)
+    assert U.shape == (N, N) and jnp.allclose(U[:, 3], T.apply_gates(e, p), atol=1e-12)
+    W = jnp.asarray(np.linalg.qr(rng.standard_normal((8, 8)))[0])
+    assert jnp.allclose(T.axis_operator(lambda e: T.apply_dense(e, W, axis=0), 3), W, atol=1e-12)
 
 
 def test_theta_to_params(rng, rand_theta):
@@ -37,7 +60,7 @@ def test_theta_to_params(rng, rand_theta):
 
 def test_kernel_is_unitary_and_the_adjoint_inverts(rng, rand_general):
     p = rand_general(rng, n)
-    U = np.asarray(axis_operator(lambda e: T.apply_gates(e, p, axis=0), n))
+    U = np.asarray(T.gate_matrix(p))
     assert np.abs(U.conj().T @ U - np.eye(N)).max() < 1e-11
     x = jnp.asarray(rng.standard_normal(N) + 1j * rng.standard_normal(N))
     assert jnp.allclose(T.apply_gates(T.apply_gates(x, p), p, adjoint=True), x, atol=1e-11)
@@ -53,7 +76,7 @@ def test_four_phase_index_order():
         "g": jnp.broadcast_to(jnp.eye(2, dtype=jnp.complex128), (2, 2, 2)),
         "phi": jnp.asarray(phi),
     }
-    U = np.asarray(axis_operator(lambda e: T.apply_gates(e, p, axis=0), 2))
+    U = np.asarray(T.gate_matrix(p))
     for idx in range(4):
         b_q, b_p = idx >> 1, idx & 1  # the one gate is (p, q) = (1, 0), and wire 0 is the MSB
         assert np.isclose(U[T.bitrev_index(2)[idx], idx], np.exp(1j * phi[0, 2 * b_p + b_q]))
@@ -64,8 +87,7 @@ def test_separable_pair_matches_the_dense_matrices_on_a_rectangular_image(rng, r
     pr, pc = rand_general(rng, 4), rand_general(rng, 3)
     analysis, synthesis = T.separable(T.apply_gates)
     X = jnp.asarray(rng.standard_normal((16, 8)) + 1j * rng.standard_normal((16, 8)))
-    Ur = np.asarray(axis_operator(lambda e: T.apply_gates(e, pr, axis=0), 4))
-    Uc = np.asarray(axis_operator(lambda e: T.apply_gates(e, pc, axis=0), 3))
+    Ur, Uc = np.asarray(T.gate_matrix(pr)), np.asarray(T.gate_matrix(pc))
     assert np.allclose(synthesis(X, pr, pc), Ur @ np.asarray(X) @ Uc.T, atol=1e-12)
     assert np.allclose(analysis(X, pr, pc), Ur.conj().T @ np.asarray(X) @ Uc.conj(), atol=1e-12)
     assert jnp.allclose(synthesis(analysis(X, pr, pc), pr, pc), X, atol=1e-11)
