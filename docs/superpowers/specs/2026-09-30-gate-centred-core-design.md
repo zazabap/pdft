@@ -75,7 +75,7 @@ The single-precision failure comes from XLA lowering float32 matmuls to TF32 on 
 
 ### 3.3 The cost, per basis
 
-Steady-state time and first-call time (tracing plus compilation) of an L1 gradient, as is → explicit.
+Steady-state time and first-call time (tracing plus compilation) of an L1 gradient, as is → explicit. The first-call columns are cold: the first time that graph was ever compiled on the machine. Section 3.4 separates cold from warm.
 
 | Basis, size | GPU per gradient | GPU first call | CPU per gradient | CPU first call |
 |---|---|---|---|---|
@@ -88,9 +88,40 @@ Steady-state time and first-call time (tracing plus compilation) of an L1 gradie
 
 Reading:
 
-- **One-qubit gates (`QFTBasis`):** a clear win on the GPU at every size (up to 5.7x per gradient, 10x on the forward transform at 512x512). On the CPU it is about 1.4x slower at small sizes and slightly faster at 512x512. Compilation takes about twice as long.
-- **Dense two-qubit gates (`RichBasis`):** the explicit form is a 16-term sum per gate. It is 5x faster per gradient at 512x512 on the GPU, but compilation is up to 20x slower, and on the CPU at small sizes the gradient is 1.5 to 3.5x slower. As measured, this form is not acceptable for `U4`; see open question Q1.
-- The whole test suite takes 30 s instead of 11 s with every kind explicit, which is compilation of many small circuits.
+- **One-qubit gates (`QFTBasis`):** a clear win on the GPU at every size (up to 5.7x per gradient, 10x on the forward transform at 512x512). On the CPU it is about 1.4x slower at small sizes and slightly faster at 512x512. Cold compilation takes about twice as long.
+- **Dense two-qubit gates (`RichBasis`):** the explicit form is a 16-term sum per gate. It is 5x faster per gradient at 512x512 on the GPU, but cold compilation is up to 20x slower, and on the CPU at small sizes the gradient is 1.5 to 3.5x slower. The steady-state slowdown on the CPU is the part that caching cannot help; see open question Q1.
+- The whole test suite takes 30 s instead of 11 s with every kind explicit and a cold cache, which is compilation of many small circuits.
+
+### 3.4 Compilation: what it is, and what the existing cache recovers
+
+Compilation time is proportional to the size of the traced graph. A circuit is unrolled gate by gate into one flat graph, and XLA compiles every operation in it, at roughly 0.6 to 1 ms per operation on this machine.
+
+| L1 gradient at 512x512 | operations in the lowered graph | trace and lower (Python) | XLA compile, cold |
+|---|---|---|---|
+| `QFTBasis`, as is | 847 | 0.11 s | 0.82 s |
+| `RichBasis`, as is | 556 | 0.11 s | 0.60 s |
+| `QFTBasis`, explicit | 2,522 | 0.19 s | 1.95 s |
+| `RichBasis`, explicit | 23,281 | 1.44 s | 14.46 s |
+
+The explicit two-qubit form is slow to compile only because it emits about 40 times more operations.
+
+**The package already caches compiled code on disk.** `pdft/__init__.py:33` turns on JAX's persistent compilation cache at import (`~/.cache/pdft/jax-compile-cache`, every compile stored, `PDFT_DISABLE_COMPILE_CACHE=1` to opt out). So the cold cost is paid once per machine per graph, not once per run. First call of the same gradient:
+
+| | as is, no cache | as is, warm | explicit, no cache | explicit, warm |
+|---|---|---|---|---|
+| `QFTBasis` 512x512, GPU | 1.16 s | 0.30 s | 2.11 s | 0.31 s |
+| `RichBasis` 512x512, GPU | 0.82 s | 0.26 s | 15.3 s | 2.2 s |
+| `QFTBasis` 64x64, CPU | 0.27 s | 0.07 s | 0.77 s | 0.14 s |
+| `RichBasis` 64x64, CPU | 0.22 s | 0.06 s | 3.73 s | 0.85 s |
+
+What the cache does not recover:
+
+- **Tracing.** The cache key is the lowered graph, so Python still traces and lowers the circuit in every process: 1.44 s of the 2.2 s warm figure for `RichBasis` at 512x512. Only a smaller graph reduces this.
+- **Any change to the graph.** A new image size, batch size, dtype, loss or solver depth is a new key and a cold compile.
+- **CI.** The workflows cache pip only, so every CI run is cold.
+- **Steady-state time.** Caching has no effect on how fast the compiled code runs.
+
+Without the disk cache a second instance of the same circuit in the same process recompiles from scratch (0.71 s as is, 15.9 s explicit, for `RichBasis` at 512x512), because each basis instance owns its own jitted closures. A program-keyed applier (section 4.2) shares compiled code and the trace across instances in a process regardless of the disk cache.
 
 ## 4. Design
 
@@ -125,7 +156,7 @@ def apply_program(program: Program, tensors, x: Array, *, inverse: bool = False)
 - **Batch axes.** Leading axes of `x` are carried through. `BlockedBasis` can then express its block axes as batch axes instead of wrapping the inner closure in a `vmap`.
 - **Precision.** The working dtype follows the image: complex64 for float32 or complex64 input, complex128 otherwise. The existing `apply_circuit` keeps its cast to complex128, so nothing that exists today changes type.
 - **Inverse.** `inverse=True` walks the reversed program with the transposed-leg convention and the caller conjugates the tensors, exactly as today (`inverse_code(conj.(tensors)...)` in Julia). A convenience `adjoint=True` may do both.
-- **Compilation.** Jitted with the program static, so compiled code is shared by every basis instance with the same program. This is an inner-function jit, consistent with the rule not to jit `train_basis` itself.
+- **Compilation.** Jitted with the program static, so the trace and the compiled code are shared by every basis instance with the same program. This is an inner-function jit, consistent with the rule not to jit `train_basis` itself. The package's existing disk cache keeps working unchanged and carries compiled code across processes (section 3.4); restoring that directory in CI would remove the cold cost there.
 - **Arithmetic.** One-qubit gates use the explicit two-slice form. `CP` keeps its broadcast multiply. `U4` and `CRY` are decided by Q1.
 - **Back-compatibility.** `basis.code` and `basis.inv_code` remain, as thin closures over `apply_program` on the `(2,) * (m + n)` layout, so `loss_function`, `train_basis`, `train_basis_batched` and `BlockedBasis` keep their signatures.
 
@@ -212,9 +243,9 @@ Step 2 is deliberately separate from step 1: the structural change is verified b
 
 ## 7. Risks and open questions
 
-**Q1. Arithmetic for dense two-qubit gates.** The 16-term explicit form costs up to 20x in compilation and is slower on the CPU at small sizes (section 3.3). Options: keep `tensordot` for `U4` and require the exact-matmul context for float32; or apply the gate on a merged axis of length 4, which needs far fewer slice and stack operations and may compile much faster. Decide in step 2 from measurements of both.
+**Q1. Arithmetic for dense two-qubit gates.** The 16-term explicit form emits about 40 times more operations. With the package's disk cache warm that costs about 2 s at first call instead of 0.3 s, mostly tracing; cold it costs 15 s once per machine and graph, and on every CI run (section 3.4). The cost caching cannot remove is the CPU steady state at small sizes, 1.5 to 3.5x slower (section 3.3). Options: keep `tensordot` for `U4` and require the exact-matmul context for float32; or apply the gate on a merged axis of length 4, which needs far fewer slice and stack operations. Decide in step 2 from measurements of both.
 
-**Q2. One-qubit arithmetic on the CPU at small sizes.** About 1.4x slower per gradient at 64x64 and twice the compilation, against 5 to 10x faster on the GPU at 512x512. The package's Julia-parity work runs small and on the CPU. Before committing, measure end-to-end wall-clock of the parity examples and of one `pdft-benchmarks` configuration. If it matters, the arithmetic can be selected per call rather than fixed.
+**Q2. One-qubit arithmetic on the CPU at small sizes.** About 1.4x slower per gradient at 64x64, against 5 to 10x faster on the GPU at 512x512. Compilation doubles when cold and is unchanged when warm. The package's Julia-parity work runs small and on the CPU. Before committing, measure end-to-end wall-clock of the parity examples and of one `pdft-benchmarks` configuration. If it matters, the arithmetic can be selected per call rather than fixed.
 
 **Q3. Rounding-level changes.** Step 2 moves results at 1e-16. All 280 tests pass on the CPU under it; the GPU and the benchmarks repository's recorded numbers have not been checked.
 
