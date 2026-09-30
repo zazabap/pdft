@@ -71,6 +71,16 @@ GD on L1 loss is bit-exact for ~50 steps and stays within `atol=1e-3` over 200 s
 
 `get_*_gate_indices` walks the tensor list and tags any 2×2 tensor whose four entries have unit-modulus magnitudes (within `atol=0.15`) as a CP gate, then returns the LAST `n_gates` such positions. After training, individual entries can drift slightly off the unit circle; the moderate tolerance accommodates that. If you tighten the tolerance, do so in tandem with a regression test on a trained basis.
 
+### 10. `circuit/gates.py` is not a Julia port, and its conventions differ from the einsum side
+
+`circuit/gates.py` carries the QFT circuit as its gate parameters (`{"g", "phi"}`: one-qubit gates and four phases per wire pair) and applies them to the image directly, with no tensors and no matrix. There are no goldens for it; its correctness criteria are the property tests in `tests/circuit/test_gates.py`. Three conventions are load-bearing:
+
+- **Sign: `U(theta0) == conj(DFT_ortho)`.** The QFT uses `e^{+2 pi i kx/N}`, so the circuit at the textbook angles is the *conjugate* of NumPy's orthonormal DFT. `test_theta0_is_the_conjugate_dft` pins it. Do not "fix" it.
+- **Wire 0 is the most significant bit, and the circuit ends with a bit reversal.** That is the opposite of Yao's little-endian order in §2, which `QFTBasis` keeps. The two are the same circuit read in opposite gate order.
+- **The four phases of gate `(p, q)`, `p > q`, are indexed `phi[i][2*b_p + b_q]`**, with `i` the position in `gate_pairs(n)`. The phase-only circuit uses slot 3 alone, which is symmetric in the two wires, so only a test at random four-phases can catch a swapped index.
+
+The per-axis operator signature `apply(x, params, adjoint, axis)` is the contract everything built on the kernel relies on; register widths are read off shapes (`register_width`), never passed.
+
 ## Repo layout
 
 ```
@@ -78,11 +88,12 @@ src/pdft/
 ├── manifolds.py            Mathematical core (UnitaryManifold, PhaseManifold, batched ops)
 ├── loss.py                 L1Norm, MSELoss, topk_truncate, loss_function (public)
 ├── profiling.py            Cross-cutting profiling helpers
+├── coherence.py            mu for a basis or a closure, the flat-modulus certificate and its sampled check
 ├── bases/
 │   ├── base.py             AbstractSparseBasis + bases_allclose + 4 basis dataclasses
 │   ├── circuit/            QFT, EntangledQFT, TEBD, MERA, Rich, RealRich + freeze_as_blocked
 │   └── block/              BlockedBasis (Rich/RealRich re-exported from circuit for back-compat)
-├── circuit/                Einsum builder (builder.py) + JIT closure cache (cache.py)
+├── circuit/                Einsum builder (builder.py) + JIT closure cache (cache.py) + gate-by-gate kernel (gates.py, not a Julia port)
 ├── optimizers/             core, gd (RiemannianGD + Armijo), adam (RiemannianAdam), loop
 ├── training/               schedules, single (train_basis), batched, adam_step, eval_loop
 ├── io/                     serialize (JSON), compression

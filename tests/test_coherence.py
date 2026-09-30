@@ -11,17 +11,24 @@ from pdft.bases import (
     TEBDBasis,
 )
 from pdft.circuit.builder import controlled_phase_diag, is_compact_cp
+from pdft.circuit.gates import apply_gates, hadamards, n_params, theta0, theta_to_params
 from pdft.coherence import (
+    axis_operator,
     certify_flat_modulus,
     coherence,
     dense_operator,
     diagonal_tensor_indices,
+    flat_modulus_deviation,
     is_flat_modulus,
+    operator_coherence,
+    sampled_flat_modulus,
 )
 
 # (3, 3) keeps the dense 64x64 operator cheap while exercising both registers.
 M = N = 3
 ALL_BASES = [QFTBasis, EntangledQFTBasis, TEBDBasis, RichBasis, RealRichBasis]
+# One axis of the gate kernel: a 32x32 operator.
+WIRES = 5
 
 
 def _rand_unitary(key, d):
@@ -145,3 +152,54 @@ def test_certificate_is_falsy_when_the_basis_is_not_flat():
     cert = certify_flat_modulus(b, frozen_indices=list(range(len(b.tensors))))
     assert not cert
     assert "not flat-modulus" in cert.reason
+
+
+# --------------------------------------------------------------------------
+# operators given as closures
+
+
+def _kernel(params):
+    return lambda e: apply_gates(e, params, axis=0)
+
+
+def test_axis_operator_is_the_matrix_of_the_closure():
+    p = theta_to_params(theta0(WIRES) + 0.3)
+    u = axis_operator(_kernel(p), WIRES)
+    e = jnp.zeros(2**WIRES, jnp.complex128).at[3].set(1.0)
+    assert jnp.allclose(u[:, 3], apply_gates(e, p), atol=1e-12)
+    assert jnp.allclose(jnp.conj(u).T @ u, jnp.eye(2**WIRES), atol=1e-12)
+
+
+def test_operator_coherence_is_the_same_mu_and_traceable(rng):
+    q, _ = np.linalg.qr(rng.standard_normal((16, 16)) + 1j * rng.standard_normal((16, 16)))
+    u = jnp.asarray(q)
+    assert float(operator_coherence(u)) == coherence(None, operator=u)
+    assert float(jax.jit(operator_coherence)(u)) == pytest.approx(coherence(None, operator=u))
+    assert float(flat_modulus_deviation(u)) > 0.05 and not is_flat_modulus(None, operator=u)
+    dft = axis_operator(_kernel(theta_to_params(theta0(WIRES))), WIRES)
+    assert float(flat_modulus_deviation(dft)) < 1e-12 and is_flat_modulus(None, operator=dft)
+
+
+def test_sampled_flat_modulus_over_the_parameter_space(rand_general):
+    """The proposition on the gate kernel: the phase-only and four-phase
+    circuits stay flat; freeing the one-qubit gates leaves the complex Hadamard
+    set, else the claim would be vacuous."""
+
+    def sample_phases(rng):
+        return jnp.asarray(rng.uniform(-np.pi, np.pi, n_params(WIRES)))
+
+    def sample_diagonals(rng):
+        return {"g": hadamards(WIRES), "phi": rand_general(rng, WIRES)["phi"]}
+
+    flat = {
+        "phases": sampled_flat_modulus(
+            lambda th: _kernel(theta_to_params(th)), WIRES, sample_phases, trials=4
+        ),
+        "diagonals": sampled_flat_modulus(_kernel, WIRES, sample_diagonals, trials=4),
+    }
+    for cert in flat.values():
+        assert cert["holds"] and cert["worst_deviation"] < 1e-12
+        assert abs(cert["worst_mu"] - 1.0) < 1e-12
+        assert cert["trials"] == 4 and cert["n"] == WIRES
+    free = sampled_flat_modulus(_kernel, WIRES, lambda rng: rand_general(rng, WIRES), trials=4)
+    assert not free["holds"] and free["worst_mu"] > 1.5

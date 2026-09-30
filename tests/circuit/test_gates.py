@@ -2,8 +2,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import pdft.completion.transform as T
-from pdft.completion.coherence import dense_operator
+import pdft.circuit.gates as T
+from pdft.coherence import axis_operator
 
 n = 5
 N = 2**n
@@ -23,7 +23,7 @@ def test_register_bookkeeping():
 def test_theta0_is_the_conjugate_dft():
     """The QFT sign convention: the circuit at theta0 is conj(DFT_ortho), not DFT_ortho."""
     p = T.theta_to_params(T.theta0(n))
-    U0 = np.asarray(dense_operator(lambda e: T.apply_gates(e, p, axis=0), n))
+    U0 = np.asarray(axis_operator(lambda e: T.apply_gates(e, p, axis=0), n))
     F = np.fft.fft(np.eye(N), axis=0, norm="ortho")
     assert np.abs(U0 - F.conj()).max() < 1e-12 and np.abs(U0 - F).max() > 0.1
 
@@ -37,7 +37,7 @@ def test_theta_to_params(rng, rand_theta):
 
 def test_kernel_is_unitary_and_the_adjoint_inverts(rng, rand_general):
     p = rand_general(rng, n)
-    U = np.asarray(dense_operator(lambda e: T.apply_gates(e, p, axis=0), n))
+    U = np.asarray(axis_operator(lambda e: T.apply_gates(e, p, axis=0), n))
     assert np.abs(U.conj().T @ U - np.eye(N)).max() < 1e-11
     x = jnp.asarray(rng.standard_normal(N) + 1j * rng.standard_normal(N))
     assert jnp.allclose(T.apply_gates(T.apply_gates(x, p), p, adjoint=True), x, atol=1e-11)
@@ -47,8 +47,8 @@ def test_separable_pair_matches_the_dense_matrices_on_a_rectangular_image(rng, r
     pr, pc = rand_general(rng, 4), rand_general(rng, 3)
     analysis, synthesis = T.separable(T.apply_gates)
     X = jnp.asarray(rng.standard_normal((16, 8)) + 1j * rng.standard_normal((16, 8)))
-    Ur = np.asarray(dense_operator(lambda e: T.apply_gates(e, pr, axis=0), 4))
-    Uc = np.asarray(dense_operator(lambda e: T.apply_gates(e, pc, axis=0), 3))
+    Ur = np.asarray(axis_operator(lambda e: T.apply_gates(e, pr, axis=0), 4))
+    Uc = np.asarray(axis_operator(lambda e: T.apply_gates(e, pc, axis=0), 3))
     assert np.allclose(synthesis(X, pr, pc), Ur @ np.asarray(X) @ Uc.T, atol=1e-12)
     assert np.allclose(analysis(X, pr, pc), Ur.conj().T @ np.asarray(X) @ Uc.conj(), atol=1e-12)
     assert jnp.allclose(synthesis(analysis(X, pr, pc), pr, pc), X, atol=1e-11)

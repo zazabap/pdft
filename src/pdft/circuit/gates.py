@@ -1,21 +1,27 @@
-"""The circuit kernel and the per-axis operators every family is built from.
+"""The QFT circuit applied gate by gate, and the per-axis operators built on it.
 
-A transform family is one function ``apply(x, params, adjoint, axis)`` that
-applies an operator, or its adjoint, along one axis of an image whose length
-is ``2**n``. This module holds the operators (the gate circuit and a dense
-matrix; the phase-only circuit is the special case in
-:mod:`pdft.completion.families.phases`), the DFT anchor every family starts
-from, and ``separable``, the 2-D analysis and synthesis pair of any operator.
-Register widths are never passed: an axis of length ``2**n`` is the
-``n``-wire register, and ``register_width`` reads it off the shape.
+:class:`pdft.QFTBasis` stores the circuit as one tensor per gate and contracts
+them with an einsum. This module carries the same circuit as its parameters,
+the one-qubit gates ``g`` and the four phases ``phi`` of each two-qubit gate,
+and applies them to the image directly: no matrix is formed, any register
+width works, and the image's dtype sets the precision. It is not part of the
+Julia port and has no goldens; the property tests in
+``tests/circuit/test_gates.py`` are its correctness criterion.
+
+A per-axis operator is one function ``apply(x, params, adjoint, axis)`` that
+applies an operator, or its adjoint, along one axis of length ``2**n``.
+``apply_gates`` is the circuit, ``apply_dense`` a matrix, and ``separable``
+gives the 2-D analysis and synthesis pair of any such operator. Register
+widths are never passed: an axis of length ``2**n`` is the ``n``-wire
+register, and ``register_width`` reads it off the shape.
 
 The circuit is a product of one-qubit gates ``g`` (one per wire) and diagonal
 two-qubit gates with four phases ``phi`` (one per wire pair), followed by a
 bit reversal. At the textbook values, Hadamards and phases
 ``(0, 0, 0, 2 pi / 2^(p-q+1))``, the product is the DFT in the QFT sign
 convention, ``U(theta0) == conj(DFT_ortho)``, and every factor is unitary for
-every parameter value. :class:`pdft.QFTBasis` carries the same circuit as one
-tensor per gate; :mod:`pdft.completion.bridge` converts between the two.
+every parameter value. The phase-only circuit, one angle per gate, is the
+special case ``theta_to_params(theta)``.
 """
 
 from __future__ import annotations
@@ -27,17 +33,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-Array = jax.Array
+from .builder import HADAMARD
 
-_H2 = jnp.asarray(np.array([[1.0, 1.0], [1.0, -1.0]]) / np.sqrt(2.0), dtype=jnp.complex128)
+Array = jax.Array
 
 
 def complex_dtype(x: Array):
     """The complex type ``x`` is carried in: single precision for float32 inputs, double otherwise.
 
     The transform is unitary, so it neither amplifies nor accumulates error
-    across gates; single precision halves the memory of every carry the
-    unrolled solver retains.
+    across gates; single precision halves the memory of every intermediate a
+    gradient through it retains.
     """
     return jnp.complex64 if x.dtype in (jnp.float32, jnp.complex64) else jnp.complex128
 
@@ -74,8 +80,8 @@ def theta0(n: int, dtype=jnp.float64) -> Array:
 
 
 def hadamards(n: int) -> Array:
-    """One Hadamard per wire: the fixed one-qubit gates of the phase-only families."""
-    return jnp.broadcast_to(_H2, (n, 2, 2))
+    """One Hadamard per wire: the fixed one-qubit gates of the phase-only circuit."""
+    return jnp.broadcast_to(HADAMARD, (n, 2, 2))
 
 
 def theta_to_params(theta: Array) -> dict:
@@ -154,9 +160,9 @@ def apply_gates(x: Array, params: dict, adjoint: bool = False, axis: int = -1) -
 def apply_dense(x: Array, U: Array, adjoint: bool = False, axis: int = -1) -> Array:
     """Apply a matrix ``U``, or ``U^H``, along one axis.
 
-    The dense counterpart of the circuits, for the free-unitary and the
-    transform-learning families. A real matrix keeps a real image real, and
-    the matrix takes the image's precision so the solver's carry type is fixed.
+    The dense counterpart of the circuit, for a transform given as a matrix.
+    A real matrix keeps a real image real, and the matrix takes the image's
+    precision, so the output type is fixed by the image alone.
     """
     M = jnp.conj(U).T if adjoint else U
     M = M.astype(complex_dtype(x) if jnp.iscomplexobj(M) else jnp.real(x).dtype)
