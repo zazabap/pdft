@@ -70,6 +70,28 @@ def test_grad_mask_pins_entries(images):
     assert params["r"][0] != theta0(n)[0]
 
 
+def test_adam_loop_descends_on_a_complex_leaf(images):
+    """A complex leaf moves towards the minimiser in its real and imaginary
+    parts alike; an unconjugated ``jax.grad`` descends in one and ascends in
+    the other."""
+    target = jnp.asarray([0.5 - 1.0j, -2.0 + 0.3j])
+
+    def loss_fn(params, X, obs):
+        return jnp.sum(jnp.abs(params["z"] - target) ** 2)
+
+    params, hist = TR.adam_loop(
+        jnp.asarray(images()),
+        {"z": jnp.zeros(2, jnp.complex128)},
+        loss_fn,
+        lr=5e-2,
+        steps=120,
+        p=0.5,
+        verbose=False,
+    )
+    assert hist[-1]["loss"] < 1e-2 * hist[0]["loss"]
+    assert jnp.allclose(params["z"], target, atol=0.1)
+
+
 def test_non_finite_gradient_raises(images):
     def loss_fn(params, X, obs):
         return jnp.sqrt(jnp.sum(params["r"]) - 1e9)  # nan

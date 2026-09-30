@@ -91,12 +91,20 @@ def adam_loop(
     ``monitor(params)`` adds fields to the logged records. Raises on a
     non-finite gradient rather than training on garbage. Returns
     ``(params, history)``.
+
+    The gradient is conjugated before it reaches Adam. For a complex leaf
+    ``jax.grad`` returns the conjugate of the Euclidean gradient, and stepping
+    along it unconjugated descends in the real parts while ascending in the
+    imaginary ones; real leaves are untouched.
     """
     opt_state = adam_init(params)
 
     @jax.jit
     def step(params, opt_state, X, obs):
         loss, grads = jax.value_and_grad(loss_fn)(params, X, obs)
+        # jax.grad of a real loss in a complex input is the conjugate Wirtinger
+        # derivative; conjugating recovers the Euclidean gradient.
+        grads = jax.tree.map(jnp.conj, grads)
         if grad_mask is not None:
             grads = jax.tree.map(jnp.multiply, grads, grad_mask)
         updates, opt_state = adam_update(grads, opt_state, lr)

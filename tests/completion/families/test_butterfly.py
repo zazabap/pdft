@@ -5,6 +5,7 @@ import pytest
 from pdft.completion.families import butterfly as B
 from pdft.completion.families.phases import apply_u
 from pdft.completion.protocol import evaluate_params
+from pdft.completion.training import adam_loop, task_loss
 from pdft.completion.transform import theta0
 
 n = 4
@@ -50,6 +51,25 @@ def test_bookkeeping():
         B.init_butterfly(3, "affine")
     with pytest.raises(ValueError, match="another register"):
         B.apply_butterfly(jnp.zeros(32), B.init_butterfly(n))
+
+
+def test_free_blocks_descend_through_the_shared_loop(images, rng):
+    """The free blocks are the one complex leaf Adam moves. A check from
+    exactly the DFT does not expose the direction (top-k ties mask the slope),
+    so this starts from a perturbed point and holds the batch fixed."""
+    imgs = jnp.asarray(images(n))
+    obs = jnp.asarray(rng.random(imgs.shape) < 0.5)
+    blk = B.init_butterfly(n, "free")["blk"]
+    par = {}
+    for a in ("r", "c"):
+        noise = rng.standard_normal(blk.shape) + 1j * rng.standard_normal(blk.shape)
+        par[a] = {"blk": blk + 0.05 * jnp.asarray(noise)}
+
+    def loss_fn(params, X, o):
+        return task_loss(B.reconstruct_butterfly, params, imgs, obs, 16, 4)
+
+    _, hist = adam_loop(imgs, par, loss_fn, lr=1e-3, steps=8, p=0.5, verbose=False)
+    assert hist[-1]["loss"] < hist[0]["loss"]
 
 
 @pytest.mark.parametrize("mode", B.MODES)

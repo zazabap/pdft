@@ -145,7 +145,13 @@ moment and takes a complex square root, exact on GPU; eagerly outside jit the
 two part by rounding (~1e-15). Do not "simplify" the arithmetic: the order of
 operations is the guarantee. `tests/completion/test_adam.py` compares against
 optax when it happens to be importable (it is not a dev dependency) and
-against the textbook formula always. Every trainer draws its batches from `training.minibatches`, so the
+against the textbook formula always. Like optax, `adam_update` takes the
+gradient as given, so `training.adam_loop` conjugates `jax.grad`'s output
+first (§1 again): without it a complex leaf, the free-block butterfly,
+descends in its real parts and ascends in its imaginary ones, and the run
+diverges. `test_train.py::test_adam_loop_descends_on_a_complex_leaf` and
+`test_butterfly.py::test_free_blocks_descend_through_the_shared_loop` pin it;
+real leaves are untouched, bit for bit. Every trainer draws its batches from `training.minibatches`, so the
 batch/mask draw order, and with it every seed, is defined once; the Adam-trained
 families also share `training.adam_loop`, and the Cayley trainers
 (`families.riemannian`, `general.train_c`) share only the schedule.

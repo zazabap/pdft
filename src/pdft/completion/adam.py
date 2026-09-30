@@ -17,6 +17,9 @@ Complex leaves (the free-block butterfly) get a complex first moment and the
 elementwise ``|g|^2`` as the second, as in optax. Optax carries that second
 moment in the complex dtype and takes a complex square root of it, which on
 CPU differs from the real square root here by an ulp; the test allows that.
+Like optax, ``adam_update`` takes the gradient as given, so for a complex leaf
+the caller passes the Euclidean gradient, ``conj(jax.grad(...))``, which
+:func:`pdft.completion.training.adam_loop` does.
 """
 
 from __future__ import annotations
