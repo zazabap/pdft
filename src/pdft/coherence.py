@@ -54,6 +54,12 @@ taking the same `frozen_indices` that `train_basis_batched` accepts, so the
 question "does this training run preserve incoherence?" can be answered before
 the run rather than measured after it.
 
+The same quantity is available for a transform that is applied by a closure
+rather than stored as a basis, such as the gate kernel in `pdft.circuit.gates`:
+`operator_coherence` and `flat_modulus_deviation` measure any explicit matrix
+and stay traceable so a loss may carry mu, and `sampled_flat_modulus` checks
+the guarantee over drawn parameter values.
+
 Discovered while applying this package's basis family to image *completion*,
 where the reversal matters: the transform that compresses an image best is not
 the one that completes it best.
@@ -61,12 +67,15 @@ the one that completes it best.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from .circuit.builder import is_compact_cp
+from .circuit.gates import axis_operator
 
 Array = jax.Array
 
@@ -76,7 +85,10 @@ __all__ = [
     "coherence",
     "dense_operator",
     "diagonal_tensor_indices",
+    "flat_modulus_deviation",
     "is_flat_modulus",
+    "operator_coherence",
+    "sampled_flat_modulus",
 ]
 
 
@@ -103,13 +115,17 @@ def coherence(basis, operator: Array | None = None) -> float:
     Pass `operator` to reuse a matrix from `dense_operator`.
     """
     u = dense_operator(basis) if operator is None else operator
-    return float(u.shape[0] * jnp.max(jnp.abs(u) ** 2))
+    return float(operator_coherence(u))
 
 
 def is_flat_modulus(basis, operator: Array | None = None, atol: float = 1e-8) -> bool:
-    """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard."""
+    """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard.
+
+    `atol` bounds `flat_modulus_deviation`, the largest departure of any
+    entry's modulus from ``N^{-1/2}``, with no relative slack on top.
+    """
     u = dense_operator(basis) if operator is None else operator
-    return bool(jnp.allclose(jnp.abs(u), u.shape[0] ** -0.5, atol=atol))
+    return bool(flat_modulus_deviation(u) <= atol)
 
 
 def diagonal_tensor_indices(basis) -> list[int]:
@@ -201,3 +217,59 @@ def certify_flat_modulus(
         ),
         mu=mu,
     )
+
+
+def operator_coherence(u: Array) -> Array:
+    """``mu`` of an explicit matrix, as a traceable scalar.
+
+    `coherence` takes a basis and returns a Python float; this is the same
+    quantity kept inside JAX, so a loss may carry ``lam * mu`` under `jax.jit`.
+    """
+    return u.shape[0] * jnp.max(jnp.abs(u) ** 2)
+
+
+def flat_modulus_deviation(u: Array) -> Array:
+    """``max_ij | |U_ij| - N^{-1/2} |``, the residual of the guarantee.
+
+    Reported rather than thresholded wherever a number is quoted: it says how
+    exactly the guarantee holds, not merely that it does. Traceable.
+    """
+    return jnp.max(jnp.abs(jnp.abs(u) - u.shape[0] ** -0.5))
+
+
+def sampled_flat_modulus(
+    family: Callable,
+    n: int,
+    sampler: Callable,
+    trials: int = 8,
+    atol: float = 1e-12,
+    seed: int = 0,
+) -> dict:
+    """Check the guarantee over drawn parameter values of a closure family.
+
+    ``sampler(rng)`` draws a parameter value and ``family(params)`` returns the
+    closure applying that transform along axis 0, which
+    `pdft.circuit.gates.axis_operator` turns into the ``2^n x 2^n`` matrix of
+    one axis. The check holds when every draw is flat-modulus, which is what
+    distinguishes a transform that happens to be incoherent from a family that
+    cannot leave the complex Hadamard set. `certify_flat_modulus` proves the
+    same thing from a basis's structure; this measures it, for families that
+    have no tensor list. The coherence of a separable 2-D transform is the
+    product of its two axes' values.
+
+    Returns the verdict, the worst deviation and the worst mu seen, so a
+    failure says how far it drifted.
+    """
+    rng = np.random.default_rng(seed)
+    worst_dev, worst_mu = 0.0, 0.0
+    for _ in range(trials):
+        u = axis_operator(family(sampler(rng)), n)
+        worst_dev = max(worst_dev, float(flat_modulus_deviation(u)))
+        worst_mu = max(worst_mu, float(operator_coherence(u)))
+    return {
+        "holds": worst_dev <= atol,
+        "worst_deviation": worst_dev,
+        "worst_mu": worst_mu,
+        "trials": trials,
+        "n": n,
+    }

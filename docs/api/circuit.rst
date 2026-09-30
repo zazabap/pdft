@@ -26,3 +26,28 @@ Turns a Yao-style gate list into a JAX einsum, and caches the contraction path a
    extract_phase_from_cp
    is_compact_cp
    select_last_n_cp_indices
+
+.. rubric:: The gate-by-gate kernel
+
+.. currentmodule:: pdft.circuit.gates
+
+.. automodule:: pdft.circuit.gates
+   :no-members:
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   apply_gates
+   apply_dense
+   separable
+   gate_matrix
+   axis_operator
+   theta0
+   theta_to_params
+   hadamards
+   gate_pairs
+   n_params
+   n_from_params
+   register_width
+   bitreverse
