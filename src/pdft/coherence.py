@@ -119,9 +119,13 @@ def coherence(basis, operator: Array | None = None) -> float:
 
 
 def is_flat_modulus(basis, operator: Array | None = None, atol: float = 1e-8) -> bool:
-    """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard."""
+    """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard.
+
+    `atol` bounds `flat_modulus_deviation`, the largest departure of any
+    entry's modulus from ``N^{-1/2}``, with no relative slack on top.
+    """
     u = dense_operator(basis) if operator is None else operator
-    return bool(jnp.allclose(jnp.abs(u), u.shape[0] ** -0.5, atol=atol))
+    return bool(flat_modulus_deviation(u) <= atol)
 
 
 def diagonal_tensor_indices(basis) -> list[int]:

@@ -179,6 +179,17 @@ def test_operator_coherence_is_the_same_mu_and_traceable(rng):
     assert float(flat_modulus_deviation(dft)) < 1e-12 and is_flat_modulus(None, operator=dft)
 
 
+def test_is_flat_modulus_has_no_hidden_relative_tolerance():
+    """``atol`` bounds the residual itself. A relative slack of 1e-5 on top
+    would be 1.25e-6 at 64 pixels, a hundred times the default ``atol``, and
+    would call this operator flat."""
+    u = dense_operator(QFTBasis(m=M, n=N))
+    bent = u.at[0, 0].set(u[0, 0] * (1 + 5e-6))
+    assert float(flat_modulus_deviation(bent)) == pytest.approx(5e-6 / 8, rel=1e-3)
+    assert not is_flat_modulus(None, operator=bent)
+    assert is_flat_modulus(None, operator=bent, atol=1e-6)
+
+
 def test_sampled_flat_modulus_over_the_parameter_space(rand_general):
     """The proposition on the gate kernel: the phase-only and four-phase
     circuits stay flat; freeing the one-qubit gates leaves the complex Hadamard
