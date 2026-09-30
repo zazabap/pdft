@@ -110,7 +110,9 @@ def apply_gates(x: Array, params: dict, adjoint: bool = False, axis: int = -1) -
     Wire 0 is the most significant bit of the index. Forward, for each wire
     ``q`` in turn: ``g[q]``, then the two-qubit gates ``(p, q)`` with
     ``p > q``; finally the bit reversal. The adjoint undoes each factor in
-    reverse order.
+    reverse order. Gate ``i = (p, q)`` multiplies by ``exp(1j * phi[i][2 * b_p
+    + b_q])`` with ``b_p`` and ``b_q`` the bits of its two wires; the
+    phase-only circuit uses slot 3 alone.
     """
     n = register_width(x.shape[axis])
     cdtype = complex_dtype(x)
@@ -162,10 +164,12 @@ def apply_dense(x: Array, U: Array, adjoint: bool = False, axis: int = -1) -> Ar
 
     The dense counterpart of the circuit, for a transform given as a matrix.
     A real matrix keeps a real image real, and the matrix takes the image's
-    precision, so the output type is fixed by the image alone.
+    precision, so the output type is fixed by the image alone. An integer or
+    boolean image is carried in double precision, as ``apply_gates`` carries it.
     """
     M = jnp.conj(U).T if adjoint else U
-    M = M.astype(complex_dtype(x) if jnp.iscomplexobj(M) else jnp.real(x).dtype)
+    cdtype = complex_dtype(x)
+    M = M.astype(cdtype if jnp.iscomplexobj(M) else jnp.finfo(cdtype).dtype)
     return jnp.moveaxis(jnp.tensordot(M, jnp.moveaxis(x, axis, 0), axes=1), 0, axis)
 
 

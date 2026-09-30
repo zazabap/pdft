@@ -43,6 +43,23 @@ def test_kernel_is_unitary_and_the_adjoint_inverts(rng, rand_general):
     assert jnp.allclose(T.apply_gates(T.apply_gates(x, p), p, adjoint=True), x, atol=1e-11)
 
 
+def test_four_phase_index_order():
+    """Gate ``(p, q)`` reads ``phi[i][2 * b_p + b_q]``. With identity one-qubit
+    gates the circuit is that diagonal followed by the bit reversal, so each
+    basis vector picks up exactly one slot. The phase-only circuit cannot catch
+    a swapped index: it uses slot 3, which is symmetric in the two wires."""
+    phi = np.array([[0.1, 0.2, 0.3, 0.4]])
+    p = {
+        "g": jnp.broadcast_to(jnp.eye(2, dtype=jnp.complex128), (2, 2, 2)),
+        "phi": jnp.asarray(phi),
+    }
+    U = np.asarray(axis_operator(lambda e: T.apply_gates(e, p, axis=0), 2))
+    for idx in range(4):
+        b_q, b_p = idx >> 1, idx & 1  # the one gate is (p, q) = (1, 0), and wire 0 is the MSB
+        assert np.isclose(U[T.bitrev_index(2)[idx], idx], np.exp(1j * phi[0, 2 * b_p + b_q]))
+    assert np.count_nonzero(np.abs(U) > 1e-12) == 4
+
+
 def test_separable_pair_matches_the_dense_matrices_on_a_rectangular_image(rng, rand_general):
     pr, pc = rand_general(rng, 4), rand_general(rng, 3)
     analysis, synthesis = T.separable(T.apply_gates)
@@ -95,3 +112,9 @@ def test_apply_dense_is_the_matrix_action(rng):
     W = jnp.asarray(np.linalg.qr(rng.standard_normal((8, 8)))[0])
     assert T.apply_dense(x, W, axis=0).dtype == jnp.float64  # a real matrix keeps a real image real
     assert T.apply_dense(x.astype(jnp.float32), U, axis=0).dtype == jnp.complex64
+    assert T.apply_dense(x.astype(jnp.float32), W, axis=0).dtype == jnp.float32
+    # an integer or boolean image must not pull the matrix into its own dtype
+    counts = jnp.arange(40).reshape(8, 5)
+    assert jnp.allclose(T.apply_dense(counts, W, axis=0), W @ counts.astype(jnp.float64))
+    mask = counts % 3 == 0
+    assert jnp.allclose(T.apply_dense(mask, W, axis=0), W @ mask.astype(jnp.float64))
