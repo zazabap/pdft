@@ -34,7 +34,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax import tree_util
 
-from ...circuit.builder import HADAMARD, Gate, compile_circuit
+from ...circuit.builder import Gate, compile_circuit, two_registers
+from .qft import qft_gates_1d
 
 Array = jax.Array
 
@@ -52,28 +53,21 @@ def _real_rich_qft_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
     O(d) reachable via Cayley retraction with real updates.
     """
     eye_u4 = _real_eye_u4()
-    gates: list[Gate] = []
-    for j in range(1, n_qubits + 1):
-        q = offset + j
-        gates.append(Gate(kind="H", qubits=(q,), tensor=HADAMARD, phase=0.0))
-        for target in range(j + 1, n_qubits + 1):
-            t = offset + target
-            gates.append(
-                Gate(
-                    kind="U4",
-                    qubits=(t, q),
-                    tensor=eye_u4,
-                    phase=0.0,
-                )
-            )
-    return gates
+
+    def identity(q_ctrl: int, q_tgt: int, phi: float) -> Gate:
+        # The QFT phase of the slot is not used: every slot starts at the identity.
+        return Gate(kind="U4", qubits=(q_ctrl, q_tgt), tensor=eye_u4, phase=0.0)
+
+    return qft_gates_1d(n_qubits, offset, identity)
+
+
+def real_rich_gates(m: int, n: int) -> list[Gate]:
+    """The gate sequence of the real-rich (H + real-orthogonal 2-qubit) circuit."""
+    return two_registers(_real_rich_qft_gates_1d, m, n)
 
 
 def _real_rich_code(m: int, n: int, *, inverse: bool):
-    if m < 1 or n < 1:
-        raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
-    gates = _real_rich_qft_gates_1d(m, offset=0) + _real_rich_qft_gates_1d(n, offset=m)
-    return compile_circuit(gates, m, n, inverse=inverse)
+    return compile_circuit(real_rich_gates(m, n), m, n, inverse=inverse)
 
 
 @dataclass

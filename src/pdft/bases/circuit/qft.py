@@ -26,6 +26,9 @@ from ...circuit.builder import (
     apply_circuit,
     compile_circuit,
     controlled_phase_diag,
+    cp_gate,
+    hadamard_gate,
+    two_registers,
 )
 
 Array = jax.Array
@@ -39,39 +42,41 @@ __all__ = [
     "ft_mat",
     "ift_mat",
     "qft_code",
+    "qft_gates",
+    "qft_gates_1d",
 ]
 
 
-def _qft_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
+def qft_gates_1d(
+    n_qubits: int, offset: int, two_qubit: Callable[[int, int, float], Gate] = cp_gate
+) -> list[Gate]:
     """Emit the 1D QFT gate sequence on qubits (offset+1, ..., offset+n_qubits).
 
-    Matches upstream src/entangled_qft.jl:64-78 exactly.
+    Matches upstream src/entangled_qft.jl:64-78 exactly. ``two_qubit(q_ctrl,
+    q_tgt, phi)`` builds the gate between a qubit and each later one; the
+    default is the controlled phase of the QFT itself, and the bases that keep
+    this topology but train another gate there pass their own.
     """
     gates: list[Gate] = []
     for j in range(1, n_qubits + 1):
-        q = offset + j
-        gates.append(Gate(kind="H", qubits=(q,), tensor=HADAMARD, phase=0.0))
+        gates.append(hadamard_gate(offset + j))
         for target in range(j + 1, n_qubits + 1):
-            k = target - j + 1
-            t = offset + target
-            phi = 2 * jnp.pi / (2**k)
-            gates.append(
-                Gate(
-                    kind="CP",
-                    qubits=(t, q),
-                    tensor=controlled_phase_diag(float(phi)),
-                    phase=float(phi),
-                )
-            )
+            phi = float(2 * jnp.pi / 2 ** (target - j + 1))
+            gates.append(two_qubit(offset + target, offset + j, phi))
     return gates
+
+
+_qft_gates_1d = qft_gates_1d
+
+
+def qft_gates(m: int, n: int) -> list[Gate]:
+    """The gate sequence of the 2D QFT on (2^m, 2^n) images."""
+    return two_registers(qft_gates_1d, m, n)
 
 
 def qft_code(m: int, n: int, *, inverse: bool = False) -> tuple[Callable[..., Array], list[Array]]:
     """Return `(einsum_fn, initial_tensors)` for 2D QFT on (2^m, 2^n) images."""
-    if m < 1 or n < 1:
-        raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
-    gates = _qft_gates_1d(m, offset=0) + _qft_gates_1d(n, offset=m)
-    return compile_circuit(gates, m, n, inverse=inverse)
+    return compile_circuit(qft_gates(m, n), m, n, inverse=inverse)
 
 
 def ft_mat(tensors: list[Array], code: Callable, m: int, n: int, pic: Array) -> Array:

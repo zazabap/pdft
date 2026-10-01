@@ -32,42 +32,29 @@ import jax
 import jax.numpy as jnp
 from jax import tree_util
 
-from ...circuit.builder import HADAMARD, Gate, compile_circuit, u4_from_phase
+from ...circuit.builder import Gate, compile_circuit, two_registers, u4_gate
+from .qft import qft_gates_1d
 
 Array = jax.Array
 
 
 def _rich_qft_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
-    """Same QFT topology as qft._qft_gates_1d, but with U(4) gates instead of CP.
+    """Same QFT topology as qft.qft_gates_1d, but with U(4) gates instead of CP.
 
     Each U(4) gate is initialised to the 4x4 unitary equivalent of the
     standard QFT phase (so the basis is bit-identical to QFTBasis at init).
     """
-    gates: list[Gate] = []
-    for j in range(1, n_qubits + 1):
-        q = offset + j
-        gates.append(Gate(kind="H", qubits=(q,), tensor=HADAMARD, phase=0.0))
-        for target in range(j + 1, n_qubits + 1):
-            k = target - j + 1
-            t = offset + target
-            phi = float(2 * jnp.pi / (2**k))
-            gates.append(
-                Gate(
-                    kind="U4",
-                    qubits=(t, q),  # control, target
-                    tensor=u4_from_phase(phi),
-                    phase=phi,
-                )
-            )
-    return gates
+    return qft_gates_1d(n_qubits, offset, u4_gate)
+
+
+def rich_gates(m: int, n: int) -> list[Gate]:
+    """The gate sequence of the rich (H + U(4)) circuit on (2^m, 2^n) images."""
+    return two_registers(_rich_qft_gates_1d, m, n)
 
 
 def _rich_code(m: int, n: int, *, inverse: bool):
     """Build the rich (H + U(4)) circuit einsum + initial tensor list."""
-    if m < 1 or n < 1:
-        raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
-    gates = _rich_qft_gates_1d(m, offset=0) + _rich_qft_gates_1d(n, offset=m)
-    return compile_circuit(gates, m, n, inverse=inverse)
+    return compile_circuit(rich_gates(m, n), m, n, inverse=inverse)
 
 
 @dataclass
