@@ -13,7 +13,7 @@ the family modules there and ``pdft.bases.base`` both build on it.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import ClassVar, Protocol, runtime_checkable
 
@@ -160,14 +160,22 @@ class CircuitBasis(BasisTransforms):
         self.n = n
         compiled, initial = compile_program(gates, m, n)
         self.tensors = list(tensors) if tensors is not None else initial
+        # A ``CircuitCode`` that is passed in defines the circuit: the program
+        # is read from it, and when it comes alone its counterpart is derived
+        # from it (the other direction, the same arithmetic), so the two cannot
+        # disagree when a basis is rebuilt with another instance's code.
+        if code is None and isinstance(inv_code, CircuitCode):
+            code = _other_direction(inv_code)
         self.code = code if code is not None else CircuitCode(compiled)
-        # A code that is passed in defines the circuit. The program is read
-        # from it and the inverse defaults to that program's, so neither can
-        # disagree with it when a basis is rebuilt with another instance's code.
         self.program = getattr(self.code, "program", compiled)
-        self.inv_code = (
-            inv_code if inv_code is not None else CircuitCode(self.program, inverse=True)
-        )
+        if inv_code is None:
+            own = self.code if isinstance(self.code, CircuitCode) else CircuitCode(compiled)
+            inv_code = _other_direction(own)
+        self.inv_code = inv_code
+
+
+def _other_direction(code: CircuitCode) -> CircuitCode:
+    return replace(code, inverse=not code.inverse)
 
 
 def _flatten(basis: CircuitBasis):

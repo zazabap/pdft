@@ -262,13 +262,6 @@ class Program:
 
 def compile_program(gates: list[Gate], m: int, n: int) -> tuple[Program, list[Array]]:
     """The program of a gate sequence on ``m + n`` qubits, and its tensors in stored order."""
-    for i, g in enumerate(gates):
-        expected = GATE_SHAPES.get(g["kind"])
-        if expected is not None and tuple(g["tensor"].shape) != expected:
-            raise ValueError(
-                f"gate {i} of kind {g['kind']!r} needs a tensor of shape {expected}, "
-                f"got {tuple(g['tensor'].shape)}"
-            )
     perm = _hadamard_first_perm([g["tensor"] for g in gates])
     slot = [0] * len(gates)
     for position, step in enumerate(perm):
@@ -380,7 +373,7 @@ class CircuitCode:
     compiled applier and have equal pytree structures. ``slices`` selects the
     arithmetic of the one-qubit gates, see ``_one_qubit``; to use it on a
     basis, construct the basis with ``code=dataclasses.replace(basis.code,
-    slices=True)`` and the same for ``inv_code``.
+    slices=True)`` (for a ``BlockedBasis``, construct its inner basis so).
     """
 
     program: Program
