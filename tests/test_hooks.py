@@ -18,7 +18,7 @@ from pdft.bases.circuit.entangled_qft import extract_entangle_phases, get_entang
 from pdft.circuit import GATE_KINDS, REGISTERS, bit_reverse, is_compact_cp, register_width
 from pdft.manifolds import PhaseManifold, Unitary2qManifold, UnitaryManifold, classify_manifold
 
-from .characterisation.cases import BASES
+from .basis_cases import BASES
 
 
 def _image(shape, seed=0):

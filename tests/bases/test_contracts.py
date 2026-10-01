@@ -1,9 +1,10 @@
 """What every basis has in common, asserted once over the whole case registry.
 
-The per-basis test files check most of this one class at a time. The refactor
-replaces the shared machinery of all of them at once, so these run the same
-assertions over every registered case, including the ones no per-basis file
-covers.
+The per-basis test files check most of this one class at a time. The bases
+share one implementation, so these run the same assertions over every
+registered case, including the ones no per-basis file covers: the pytree, the
+round trip at generic tensors, the two arithmetics, and the precision and
+shape each family's transforms accept and return.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import pdft
 from pdft.bases import bases_allclose
 from pdft.bases.block.block import BlockCode
 
-from .cases import BASES, case_rng, complex_normal, generic
+from ..basis_cases import BASES, case_rng, complex_normal, generic
 
 CASES = list(BASES)
 
@@ -106,7 +107,7 @@ def test_code_maps_over_a_stack_of_images(case):
             np.testing.assert_allclose(mapped[i], code(*tensors, stack[i]), rtol=0, atol=1e-12)
 
 
-# Two ways a transform reaches its circuit, both as on `main`. The strict
+# Two ways a transform reaches its circuit. The strict
 # bases check the image's shape and work in double precision. Rich, RealRich
 # and Blocked do neither: any image with the right number of elements is
 # reshaped, and the precision is whatever the tensors and the image promote to.
