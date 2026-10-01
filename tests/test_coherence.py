@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import pdft
 from pdft.bases import (
     BlockedBasis,
     DCT4Basis,
@@ -12,6 +13,7 @@ from pdft.bases import (
     RealRichBasis,
     RichBasis,
     TEBDBasis,
+    cp_phases,
 )
 from pdft.circuit.builder import controlled_phase_diag, is_compact_cp
 from pdft.coherence import (
@@ -263,3 +265,27 @@ def test_a_basis_without_a_program_is_classified_by_its_tensors():
     assert coherence(duck) == pytest.approx(1.0, abs=1e-12)
     assert not certify_flat_modulus(duck)
     assert certify_flat_modulus(duck, frozen_indices=[0, 1, 2, 3])
+
+
+def test_a_rebuilt_dense_basis_is_not_certified_as_diagonal():
+    """A basis rebuilt with another instance's dense gates and codes, without repeating
+    the option that made them dense, must not be read as having diagonal gates: that
+    would certify `mu == 1` for a configuration that trains dense unitaries."""
+    dense = pdft.TEBDBasis(m=2, n=2, parametrization="u4")
+    rebuilt = pdft.TEBDBasis(
+        m=2, n=2, tensors=dense.tensors, code=dense.code, inv_code=dense.inv_code
+    )
+    hadamards = rebuilt.program.tensor_indices(kind="H")
+    assert rebuilt.program == dense.program and hadamards == [0, 1, 2, 3]
+    assert diagonal_tensor_indices(rebuilt) == []
+    assert cp_phases(rebuilt).shape == (0,)
+    certificate = pdft.certify_flat_modulus(rebuilt, frozen_indices=hadamards)
+    assert not certificate and certificate.offending_indices == [4, 5, 6, 7]
+
+    front = pdft.EntangledQFTBasis(m=2, n=2, entangle_position="front", seed=1)
+    rebuilt = pdft.EntangledQFTBasis(
+        m=2, n=2, tensors=front.tensors, code=front.code, inv_code=front.inv_code
+    )
+    assert rebuilt.program.tensor_indices(register="both") == front.program.tensor_indices(
+        register="both"
+    )

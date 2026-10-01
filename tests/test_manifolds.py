@@ -17,6 +17,8 @@ from pdft.manifolds import (
     unstack_tensors,
 )
 
+from .helpers import random_unitary
+
 
 def test_batched_matmul_shape():
     A = jnp.ones((3, 4, 5), dtype=jnp.complex128)
@@ -159,12 +161,10 @@ def test_phase_manifold_retract_preserves_unit_modulus():
 
 
 def _unitaries(d, count, seed, real=False):
+    """A ``(d, d, count)`` batch of points, the layout the manifolds work on."""
     rng = np.random.default_rng(seed)
-    out = []
-    for _ in range(count):
-        a = rng.normal(size=(d, d)) + (0 if real else 1j * rng.normal(size=(d, d)))
-        out.append(np.linalg.qr(a)[0])
-    return jnp.asarray(np.stack(out, axis=-1), dtype=jnp.complex128)
+    points = [random_unitary(rng, d, real=real) for _ in range(count)]
+    return jnp.asarray(np.stack(points, axis=-1), dtype=jnp.complex128)
 
 
 def _tangent(shape, seed):

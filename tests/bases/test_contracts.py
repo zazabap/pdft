@@ -17,10 +17,13 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import bases_allclose
+from pdft.bases import bases_allclose, program_of
 from pdft.bases.block.block import BlockCode
+from pdft.circuit import GATE_KINDS, REGISTERS, is_compact_cp
+from pdft.circuit.builder import GATE_SHAPES
+from pdft.manifolds import PhaseManifold, Unitary2qManifold, UnitaryManifold, classify_manifold
 
-from ..basis_cases import BASES, case_rng, complex_normal, generic
+from ..helpers import BASES, case_rng, complex_normal, generic
 
 CASES = list(BASES)
 
@@ -182,3 +185,31 @@ def test_the_loss_keeps_the_precision_of_its_operands(case):
         assert all(g.dtype == jnp.complex64 for g in gradient)
     with pytest.raises(ValueError, match="pic shape must be"):
         pdft.loss_function(list(basis.tensors), m, n, basis.code, image.reshape(-1), pdft.L1Norm())
+
+
+@pytest.mark.parametrize("case", sorted(BASES))
+def test_kinds_and_registers_partition_the_tensors(case):
+    basis = BASES[case]()
+    program = program_of(basis)
+    everything = list(range(len(basis.tensors)))
+    assert sorted(i for kind in GATE_KINDS for i in program.tensor_indices(kind=kind)) == everything
+    assert sorted(i for r in REGISTERS for i in program.tensor_indices(register=r)) == everything
+    for kind in GATE_KINDS:
+        for i in program.tensor_indices(kind=kind):
+            assert basis.tensors[i].shape == GATE_SHAPES[kind]
+
+
+@pytest.mark.parametrize("case", sorted(BASES))
+def test_the_gate_kind_implies_the_manifold_the_optimiser_picks(case):
+    """``classify_manifold`` goes by tensor values, as upstream does. At the
+    initial tensors of every basis that agrees with the gate kind."""
+    implied = {
+        "H": UnitaryManifold(d=2),
+        "CRY": UnitaryManifold(d=2),
+        "U4": Unitary2qManifold(),
+        "CP": PhaseManifold(),
+    }
+    basis = BASES[case]()
+    for (kind, _), tensor in zip(program_of(basis).sorted_steps, basis.tensors):
+        assert classify_manifold(tensor) == implied[kind]
+        assert is_compact_cp(tensor) == (kind == "CP")

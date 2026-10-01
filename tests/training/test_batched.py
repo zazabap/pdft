@@ -17,6 +17,8 @@ import pytest
 import pdft
 from pdft.training import cosine_with_warmup, train_basis_batched
 
+from ..helpers import complex_image
+
 # ---------------------------------------------------------------------------
 # _cosine_with_warmup
 # ---------------------------------------------------------------------------
@@ -698,3 +700,23 @@ def test_gd_takes_its_learning_rate_from_the_schedule():
     assert flat[0] == decayed[0] and flat != decayed
     # the instance's own lr plays no part
     assert run(0.002, pdft.RiemannianGD(lr=123.0)) == decayed
+
+
+def test_freezing_the_one_qubit_gates_trains_only_the_phases():
+    basis = pdft.QFTBasis(m=2, n=2)
+    hadamards = basis.program.tensor_indices(kind="H")
+    images = [np.asarray(complex_image((4, 4), seed).real) for seed in range(4)]
+    result = pdft.train_basis_batched(
+        basis,
+        dataset=images,
+        loss=pdft.L1Norm(),
+        epochs=2,
+        batch_size=2,
+        frozen_indices=hadamards,
+        seed=0,
+    )
+    trained = result.basis
+    for i, (before, after) in enumerate(zip(basis.tensors, trained.tensors)):
+        assert jnp.array_equal(before, after) == (i in hadamards)
+    # which is the configuration that cannot leave mu == 1
+    assert pdft.certify_flat_modulus(trained, frozen_indices=hadamards)

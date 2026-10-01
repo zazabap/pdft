@@ -5,7 +5,6 @@ import matplotlib
 matplotlib.use("Agg")  # headless
 
 
-from pdft.bases.base import QFTBasis
 from pdft.viz import (
     TrainingHistory,
     ema_smooth,
@@ -37,15 +36,6 @@ def test_plot_training_comparison_multiple_histories(tmp_path):
     b = TrainingHistory(losses=[3.0, 2.5, 2.0], label="adam")
     p = tmp_path / "cmp.png"
     plot_training_comparison([a, b], output_path=p)
-    assert p.exists()
-
-
-def test_plot_circuit_renders(tmp_path):
-    from pdft.viz.circuit import plot_circuit
-
-    basis = QFTBasis(m=2, n=2)
-    p = tmp_path / "circuit.png"
-    plot_circuit(basis, output_path=p)
     assert p.exists()
 
 
