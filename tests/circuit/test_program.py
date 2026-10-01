@@ -5,6 +5,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import pdft
 from pdft.bases.circuit.qft import _qft_gates_1d
@@ -14,6 +15,8 @@ from pdft.circuit.builder import (
     Gate,
     Program,
     _run,
+    apply_circuit,
+    apply_program,
     compile_circuit,
     compile_program,
     controlled_phase_diag,
@@ -89,3 +92,51 @@ def test_inverse_walks_the_steps_backwards_with_swapped_legs():
     back = inverse(*[jnp.conj(t) for t in tensors], out)
     np.testing.assert_allclose(back, pic, atol=1e-12)
     assert not jnp.allclose(forward(*[jnp.conj(t) for t in tensors], out), pic, atol=1e-6)
+
+
+def _image(rng, shape):
+    return jnp.asarray(rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
+
+
+def test_apply_program_is_apply_circuit_on_one_double_precision_image():
+    program, tensors = compile_program(_gates(), 1, 1)
+    x = _image(np.random.default_rng(2), (2, 2))
+    code = CircuitCode(program)
+    assert jnp.array_equal(
+        apply_program(program, tensors, x), apply_circuit(tensors, code, 1, 1, x)
+    )
+
+
+def test_apply_program_carries_leading_axes():
+    gates = _qft_gates_1d(2, 0) + _qft_gates_1d(3, 2)
+    program, tensors = compile_program(gates, 2, 3)
+    stack = _image(np.random.default_rng(3), (2, 5, 4, 8))
+    out = apply_program(program, tensors, stack)
+    assert out.shape == stack.shape
+    for i in range(2):
+        for j in range(5):
+            assert jnp.array_equal(out[i, j], apply_program(program, tensors, stack[i, j]))
+
+
+def test_apply_program_follows_the_precision_of_the_image():
+    program, tensors = compile_program(_gates(), 1, 1)
+    x = jnp.asarray(np.random.default_rng(4).random((2, 2)))
+    double = apply_program(program, tensors, x)
+    single = apply_program(program, tensors, x.astype(jnp.float32))
+    assert double.dtype == jnp.complex128 and single.dtype == jnp.complex64
+    assert apply_program(program, tensors, x.astype(jnp.complex64)).dtype == jnp.complex64
+    np.testing.assert_allclose(single, double, atol=1e-6)
+
+
+def test_apply_program_refuses_another_image_size():
+    program, tensors = compile_program(_gates(), 1, 1)
+    with pytest.raises(ValueError, match="image shape"):
+        apply_program(program, tensors, jnp.zeros((4, 2)))
+
+
+def test_apply_program_inverse_with_conjugated_tensors_is_the_adjoint():
+    program, tensors = compile_program(_gates(), 1, 1)
+    x = _image(np.random.default_rng(5), (3, 2, 2))
+    out = apply_program(program, tensors, x)
+    back = apply_program(program, [jnp.conj(t) for t in tensors], out, inverse=True)
+    np.testing.assert_allclose(back, x, atol=1e-12)

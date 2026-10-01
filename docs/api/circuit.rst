@@ -18,8 +18,9 @@ Turns a Yao-style gate list into a JAX einsum, and caches the contraction path a
    compile_program
    CircuitCode
    compile_circuit
-   build_circuit_einsum
+   apply_program
    apply_circuit
+   build_circuit_einsum
    optimize_code_cached
    sorted_gate_program
    Gate

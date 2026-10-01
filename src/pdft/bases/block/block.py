@@ -35,70 +35,58 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import tree_util
 
 Array = jax.Array
 
 
-# ---------------------------------------------------------------------------
-# Block-aware einsum closure
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class BlockCode:
+    """``code(*tensors, image)`` of a blocked basis: the inner code on every block.
 
+    The image has the outer ``(2,) * (m_outer + n_outer)`` layout (Yao
+    little-endian, see ``pdft.circuit.builder._axis_of_qubit``):
 
-def _make_block_code(
-    inner_code: Callable[..., Array],
-    *,
-    m_inner: int,
-    n_inner: int,
-    block_log_m: int,
-    block_log_n: int,
-) -> Callable[..., Array]:
-    """Return a callable with the same signature as ``inner_code`` that operates
-    on a (2,)^(m_outer+n_outer) image by vmap-ing ``inner_code`` over the
-    block-index axes.
+        [0..block_log_m)               block-index ROW qubits (msbs)
+        [block_log_m..m_outer)         within-block ROW qubits (lsbs)
+        [m_outer..m_outer+block_log_n) block-index COL qubits (msbs)
+        [m_outer+block_log_n..)        within-block COL qubits (lsbs)
 
-    Outer axis layout (Yao little-endian, see _circuit.build_circuit_einsum):
-        [0..block_log_m)              -- block-index ROW qubits (msbs)
-        [block_log_m..m_outer)        -- within-block ROW qubits (lsbs, m_inner of them)
-        [m_outer..m_outer+block_log_n) -- block-index COL qubits (msbs)
-        [m_outer+block_log_n..)        -- within-block COL qubits (lsbs, n_inner of them)
+    The block-index axes are moved to the front and the inner code is vmapped
+    over them, which works for any inner code, another ``BlockCode`` included.
+    A frozen dataclass rather than a closure, so that it compares by value like
+    the inner ``CircuitCode`` and two equal blocked bases have equal pytree
+    structures.
     """
-    m_outer = m_inner + block_log_m
-    n_outer = n_inner + block_log_n
-    n_blocks = 2 ** (block_log_m + block_log_n)
-    inner_shape = (2,) * (m_inner + n_inner)
-    outer_shape = (2,) * (m_outer + n_outer)
 
-    # Permutation: block-index axes (rows then cols) to the front, within-block
-    # axes (rows then cols) trailing. The trailing layout matches the inner
-    # einsum's expected (2,)^(m_inner+n_inner) shape.
-    perm = (
-        list(range(block_log_m))  # block row axes
-        + list(range(m_outer, m_outer + block_log_n))  # block col axes
-        + list(range(block_log_m, m_outer))  # within row axes
-        + list(range(m_outer + block_log_n, m_outer + n_outer))  # within col axes
-    )
-    inv_perm = [0] * len(perm)
-    for i, p in enumerate(perm):
-        inv_perm[p] = i
+    inner: Callable[..., Array]
+    m_inner: int
+    n_inner: int
+    block_log_m: int
+    block_log_n: int
 
-    leading_block_shape = (2,) * (block_log_m + block_log_n)
-
-    def block_code(*args: Any) -> Array:
-        *tensors, image = args
+    def __call__(self, *operands: Any) -> Array:
+        *tensors, image = operands
+        m_outer = self.m_inner + self.block_log_m
+        n_outer = self.n_inner + self.block_log_n
+        inner_shape = (2,) * (self.m_inner + self.n_inner)
+        outer_shape = (2,) * (m_outer + n_outer)
         if image.shape != outer_shape:
             raise ValueError(f"BlockedBasis expected image shape {outer_shape}, got {image.shape}")
-        x = jnp.transpose(image, perm)
-        x_flat = x.reshape((n_blocks,) + inner_shape)
-
-        def apply_one(img_one: Array) -> Array:
-            return inner_code(*tensors, img_one)
-
-        out_flat = jax.vmap(apply_one)(x_flat)
-        out = out_flat.reshape(leading_block_shape + inner_shape)
-        return jnp.transpose(out, inv_perm)
-
-    return block_code
+        # Block-index axes (rows then cols) to the front, within-block axes
+        # (rows then cols) trailing, which is the layout the inner code expects.
+        perm = (
+            list(range(self.block_log_m))
+            + list(range(m_outer, m_outer + self.block_log_n))
+            + list(range(self.block_log_m, m_outer))
+            + list(range(m_outer + self.block_log_n, m_outer + n_outer))
+        )
+        blocks = jnp.transpose(image, perm).reshape((-1,) + inner_shape)
+        out = jax.vmap(lambda block: self.inner(*tensors, block))(blocks)
+        block_axes = (2,) * (self.block_log_m + self.block_log_n)
+        back = [int(axis) for axis in np.argsort(perm)]
+        return jnp.transpose(out.reshape(block_axes + inner_shape), back)
 
 
 # ---------------------------------------------------------------------------
@@ -153,26 +141,9 @@ class BlockedBasis:
         self.inner = inner
         self.block_log_m = block_log_m
         self.block_log_n = block_log_n
-        if code is None or inv_code is None:
-            built_code = _make_block_code(
-                inner.code,
-                m_inner=inner.m,
-                n_inner=inner.n,
-                block_log_m=block_log_m,
-                block_log_n=block_log_n,
-            )
-            built_inv = _make_block_code(
-                inner.inv_code,
-                m_inner=inner.m,
-                n_inner=inner.n,
-                block_log_m=block_log_m,
-                block_log_n=block_log_n,
-            )
-            self.code = code if code is not None else built_code
-            self.inv_code = inv_code if inv_code is not None else built_inv
-        else:
-            self.code = code
-            self.inv_code = inv_code
+        shape = (inner.m, inner.n, block_log_m, block_log_n)
+        self.code = code if code is not None else BlockCode(inner.code, *shape)
+        self.inv_code = inv_code if inv_code is not None else BlockCode(inner.inv_code, *shape)
 
     # ---- AbstractSparseBasis interface (matches QFTBasis) ----
 

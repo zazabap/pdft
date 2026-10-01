@@ -58,7 +58,12 @@ def test_pytree_leaves_are_the_tensors_in_order(case):
 
 @pytest.mark.parametrize("case", CASES)
 def test_two_instances_are_the_same_basis(case):
-    assert bases_allclose(BASES[case](), BASES[case](), atol=0.0)
+    """Same tensors, and the same pytree structure: the code a basis carries
+    compares by its program, so a second instance does not retrace or recompile."""
+    a, b = BASES[case](), BASES[case]()
+    assert bases_allclose(a, b, atol=0.0)
+    assert a.code == b.code and a.inv_code == b.inv_code
+    assert jax.tree_util.tree_structure(a) == jax.tree_util.tree_structure(b)
 
 
 @pytest.mark.parametrize("case", CASES)

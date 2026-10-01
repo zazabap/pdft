@@ -244,85 +244,62 @@ def _axis_of_qubit(q: int, m: int, n: int) -> int:
     raise ValueError(f"qubit index {q} out of range (1..{m + n})")
 
 
-def _walk(program: Program, inverse: bool, tensors: tuple, pic: Array) -> Array:
-    """Apply the program to ``pic``, shape ``(2,) * (m + n)``, one gate at a time.
+def _one_qubit(pic: Array, ax: int, T: Array, inverse: bool) -> Array:
+    """Apply the one-qubit gate ``T[out, in]`` to axis ``ax`` of ``pic``.
 
-    ``tensors`` is in stored (Hadamard-first) order. ``inverse`` walks the
-    steps backwards with each gate's legs swapped, which is the transpose of
-    the circuit; the caller conjugates the tensors to make it the adjoint,
-    as Julia's ``inverse_code(conj.(tensors)...)`` does.
+    ``inverse`` applies the transpose of ``T``. Combined with the caller's
+    ``conj(T)`` this is the true adjoint ``conj(T.T)``; for a symmetric
+    Hadamard the leg swap changes nothing, but for a trained, non-symmetric
+    gate the round trip fails without it. The contraction asks for exact
+    matmul precision: in single precision XLA otherwise lowers it to TF32 on
+    recent GPUs, which costs three digits.
+    """
+    out = jnp.tensordot(T, pic, axes=[[0 if inverse else 1], [ax]], precision="highest")
+    return jnp.moveaxis(out, 0, ax)
+
+
+def _walk(program: Program, inverse: bool, tensors: tuple, pic: Array) -> Array:
+    """Apply the program to ``pic``, shape ``(..., *(2,) * (m + n))``, one gate at a time.
+
+    Leading axes of ``pic`` are batch axes. ``tensors`` is in stored
+    (Hadamard-first) order. ``inverse`` walks the steps backwards with each
+    gate's legs swapped, which is the transpose of the circuit; the caller
+    conjugates the tensors to make it the adjoint, as Julia's
+    ``inverse_code(conj.(tensors)...)`` does.
     """
     m, n = program.m, program.n
+    lead = pic.ndim - (m + n)
     order = range(len(program.steps))
     for i in reversed(order) if inverse else order:
         kind, qubits = program.steps[i]
         T = tensors[program.slot[i]]
+        axes = [lead + _axis_of_qubit(q, m, n) for q in qubits]
         if kind == "H":
-            (q,) = qubits
-            ax = _axis_of_qubit(q, m, n)
-            # Forward: H[out, in] · pic[..., ax=in, ...] -> pic[..., ax=out, ...]
-            #   contract on T's axis 1 (the "in" leg).
-            # Inverse: apply the transpose of T. Combined with the caller's
-            #   conj(T) (loss._scalar_loss conjugates tensors before passing
-            #   them to the inverse closure), this realises the true adjoint
-            #   T† = conj(T.T). For symmetric H this collapses to conj(T),
-            #   but for trained / non-symmetric H tensors the leg-swap is
-            #   essential — without it the round-trip T† T x ≠ x. The U4
-            #   handler below uses the same forward/inverse axis convention.
-            contract_in = 0 if inverse else 1
-            pic = jnp.tensordot(T, pic, axes=[[contract_in], [ax]])
-            pic = jnp.moveaxis(pic, 0, ax)
+            pic = _one_qubit(pic, axes[0], T, inverse)
         elif kind == "CP":
-            q_ctrl, q_tgt = qubits
-            ax_c = _axis_of_qubit(q_ctrl, m, n)
-            ax_t = _axis_of_qubit(q_tgt, m, n)
-            # T[c, t] is the diagonal of CP. pic *= T broadcast onto (ax_c, ax_t).
-            broadcast_shape = [1] * pic.ndim
-            broadcast_shape[ax_c] = 2
-            broadcast_shape[ax_t] = 2
-            # T's axis 0 should land at ax_c, axis 1 at ax_t. If ax_c < ax_t,
-            # the natural reshape works; if ax_c > ax_t, we transpose first
-            # so the smaller dimension index sees T's first axis.
-            T_oriented = T if ax_c < ax_t else T.T
-            pic = pic * T_oriented.reshape(broadcast_shape)
+            # T[c, t] is the diagonal of the gate, broadcast onto its two wires.
+            # A reshape puts T's first axis on the lower-numbered axis, so T is
+            # transposed when the control sits on the higher one.
+            ax_c, ax_t = axes
+            shape = [1] * pic.ndim
+            shape[ax_c] = shape[ax_t] = 2
+            pic = pic * (T if ax_c < ax_t else T.T).reshape(shape)
         elif kind == "U4":
-            q_ctrl, q_tgt = qubits
-            ax_c = _axis_of_qubit(q_ctrl, m, n)
-            ax_t = _axis_of_qubit(q_tgt, m, n)
-            # Forward: T[oc, ot, ic, it] · pic[..., ax_c=ic, ax_t=it, ...]
-            #          -> pic[..., ax_c=oc, ax_t=ot, ...]
-            # Inverse (transpose, not adjoint): T[oc, ot, ic, it]
-            #          · pic[..., ax_c=oc, ax_t=ot, ...]
-            #          -> pic[..., ax_c=ic, ax_t=it, ...]
-            # The conjugate flip for the true unitary inverse is applied by
-            # the caller (loss._scalar_loss conjugates tensors before
-            # calling the inverse closure), matching the legacy
-            # build_circuit_einsum behaviour.
-            contract_axes = [[0, 1], [ax_c, ax_t]] if inverse else [[2, 3], [ax_c, ax_t]]
-            pic = jnp.tensordot(T, pic, axes=contract_axes)
-            pic = jnp.moveaxis(pic, [0, 1], [ax_c, ax_t])
+            # T[oc, ot, ic, it]: forward contracts the input legs, inverse the
+            # output legs (the transpose; the caller conjugates).
+            legs = [0, 1] if inverse else [2, 3]
+            pic = jnp.tensordot(T, pic, axes=[legs, axes], precision="highest")
+            pic = jnp.moveaxis(pic, [0, 1], axes)
         elif kind == "CRY":
-            # Controlled rotation: T is a (2, 2) block applied to the target
-            # on the control = 1 branch only (control passes through). Apply
-            # the block to the control = 1 half *only*: slicing the control
-            # axis touches 2**(m+n-1) amplitudes and recombines, instead of
-            # rotating the whole state and discarding the control = 0 half via
-            # a full-size jnp.where mask (which both doubled the contraction
-            # and materialised a 2**(m+n) masked intermediate per step — the
-            # dominant cost at large registers). Same forward/inverse leg
-            # convention as the H handler; the caller conjugates tensors for
-            # the true adjoint on the inverse path.
-            q_ctrl, q_tgt = qubits
-            ax_c = _axis_of_qubit(q_ctrl, m, n)
-            ax_t = _axis_of_qubit(q_tgt, m, n)
-            contract_in = 0 if inverse else 1
-            pic0 = jnp.take(pic, 0, axis=ax_c)  # control = 0 (passthrough)
-            pic1 = jnp.take(pic, 1, axis=ax_c)  # control = 1 (rotated)
-            # target axis index after the control axis is sliced out
-            ax_t1 = ax_t if ax_t < ax_c else ax_t - 1
-            rot = jnp.tensordot(T, pic1, axes=[[contract_in], [ax_t1]])
-            rot = jnp.moveaxis(rot, 0, ax_t1)
-            pic = jnp.stack([pic0, rot], axis=ax_c)
+            # A (2, 2) block applied to the target where the control is 1 and
+            # nothing where it is 0. Slicing the control axis touches half the
+            # amplitudes, instead of rotating everything and masking half away.
+            ax_c, ax_t = axes
+            passed = jnp.take(pic, 0, axis=ax_c)
+            rotated = jnp.take(pic, 1, axis=ax_c)
+            # the target's axis once the control axis is sliced out
+            rotated = _one_qubit(rotated, ax_t if ax_t < ax_c else ax_t - 1, T, inverse)
+            pic = jnp.stack([passed, rotated], axis=ax_c)
         else:
             raise AssertionError(f"unknown gate kind: {kind}")
     return pic
@@ -333,7 +310,7 @@ _run = jax.jit(_walk, static_argnames=("program", "inverse"))
 
 @dataclass(frozen=True)
 class CircuitCode:
-    """``code(*tensors, pic)``: a program applied to ``pic`` of shape ``(2,) * (m + n)``.
+    """``code(*tensors, pic)``: a program applied to ``pic`` of shape ``(..., *(2,) * (m + n))``.
 
     The callable a basis keeps as ``code`` and ``inv_code``. It compares and
     hashes by its program, so two bases with the same circuit share one
@@ -346,6 +323,26 @@ class CircuitCode:
     def __call__(self, *operands: Array) -> Array:
         *tensors, pic = operands
         return _run(self.program, self.inverse, tuple(tensors), pic)
+
+
+def apply_program(program: Program, tensors, x: Array, *, inverse: bool = False) -> Array:
+    """Apply a program to an image, or to a stack of images.
+
+    ``x`` has shape ``(..., 2**m, 2**n)``; leading axes are batch axes. The
+    working precision follows the image: complex64 for a float32 or complex64
+    image, complex128 otherwise, and the tensors are cast to it. For the
+    adjoint pass conjugated tensors with ``inverse=True``.
+
+    ``apply_circuit`` is the fixed-precision, single-image entry point every
+    basis has always used; this is the same walk without those two limits.
+    """
+    m, n = program.m, program.n
+    if x.shape[-2:] != (2**m, 2**n):
+        raise ValueError(f"image shape must end in ({2**m}, {2**n}), got {x.shape}")
+    dtype = jnp.complex64 if x.dtype in (jnp.float32, jnp.complex64) else jnp.complex128
+    pic = x.astype(dtype).reshape(x.shape[:-2] + (2,) * (m + n))
+    out = _run(program, inverse, tuple(t.astype(dtype) for t in tensors), pic)
+    return out.reshape(x.shape)
 
 
 def compile_circuit(
