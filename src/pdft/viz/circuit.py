@@ -60,6 +60,8 @@ def plot_circuit(
     if title is None:
         gates = " + ".join(f"{count} {kind}" for kind, count in counts.items())
         title = f"{type(basis).__name__}(m={basis.m}, n={basis.n}): {gates}"
+        if (program.m, program.n) != (basis.m, basis.n):
+            title += f" on each (m={program.m}, n={program.n}) block"
     ax.set_title(title)
     ax.grid(True, alpha=0.3, axis="x")
     save(fig, output_path)

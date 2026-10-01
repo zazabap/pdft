@@ -180,8 +180,8 @@ def _blockedbasis_flatten(b: BlockedBasis):
     """Flatten by recursing into inner via JAX's pytree machinery.
 
     This delegates inner reconstruction to JAX's tree_unflatten, which
-    works for ANY pytree-registered inner — including nested wrappers
-    like StackedBasis whose constructor doesn't take (m, n, tensors, ...).
+    works for ANY pytree-registered inner — including a nested
+    BlockedBasis, whose constructor doesn't take (m, n, tensors, ...).
     """
     inner_leaves, inner_treedef = jax.tree_util.tree_flatten(b.inner)
     aux = (inner_treedef, b.block_log_m, b.block_log_n, b.code, b.inv_code)

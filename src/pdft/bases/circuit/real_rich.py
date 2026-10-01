@@ -27,19 +27,12 @@ on a real-valued objective.
 from __future__ import annotations
 
 import jax
-import jax.numpy as jnp
-import numpy as np
 
-from ...circuit.builder import Gate, two_registers
+from ...circuit.builder import Gate, identity_tensor, two_registers
 from ..core import CircuitBasis
 from .qft import qft_gates_1d
 
 Array = jax.Array
-
-
-def _real_eye_u4() -> Array:
-    """4x4 identity reshaped to (2, 2, 2, 2), as real complex128."""
-    return jnp.asarray(np.eye(4).reshape(2, 2, 2, 2), dtype=jnp.complex128)
 
 
 def _real_rich_qft_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
@@ -49,7 +42,7 @@ def _real_rich_qft_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
     (a real-orthogonal matrix). Both are within the connected component of
     O(d) reachable via Cayley retraction with real updates.
     """
-    eye_u4 = _real_eye_u4()
+    eye_u4 = identity_tensor("U4")
 
     def identity(q_ctrl: int, q_tgt: int, phi: float) -> Gate:
         # The QFT phase of the slot is not used: every slot starts at the identity.

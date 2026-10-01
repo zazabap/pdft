@@ -89,7 +89,9 @@ class CircuitBasis(BasisTransforms):
     ``code`` and ``inv_code`` are the program's forward and inverse appliers;
     they compare by program, so they and ``program`` are left out of the
     generated ``__eq__`` and ``repr``. Use ``bases_allclose`` for semantic
-    comparison.
+    comparison. ``program`` is derived, never passed in, which keeps
+    ``dataclasses.replace(basis, tensors=...)`` working on the bases whose
+    fields are all constructor arguments.
 
     Every subclass is registered as a JAX pytree: the leaves are ``tensors``,
     in order, and everything else is aux data. That is the contract
@@ -104,7 +106,7 @@ class CircuitBasis(BasisTransforms):
     m: int
     n: int
     tensors: list[Array]
-    program: Program = field(compare=False, repr=False)
+    program: Program = field(init=False, compare=False, repr=False)
     code: object = field(compare=False, repr=False)
     inv_code: object = field(compare=False, repr=False)
 
@@ -142,12 +144,14 @@ class CircuitBasis(BasisTransforms):
         """Compile ``gates`` and set the shared fields; an argument left ``None`` gets the circuit's own."""
         self.m = m
         self.n = n
-        self.program, initial = compile_program(gates, m, n)
+        compiled, initial = compile_program(gates, m, n)
         self.tensors = list(tensors) if tensors is not None else initial
-        self.code = code if code is not None else CircuitCode(self.program)
-        self.inv_code = (
-            inv_code if inv_code is not None else CircuitCode(self.program, inverse=True)
-        )
+        self.code = code if code is not None else CircuitCode(compiled)
+        self.inv_code = inv_code if inv_code is not None else CircuitCode(compiled, inverse=True)
+        # A code that is passed in defines the circuit, so the program is read
+        # from it: the two cannot then disagree when a basis is rebuilt with
+        # another instance's code.
+        self.program = getattr(self.code, "program", compiled)
 
 
 def _flatten(basis: CircuitBasis):

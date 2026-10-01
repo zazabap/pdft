@@ -158,3 +158,71 @@ def test_mera_emits_disentanglers_then_isometries_per_layer():
 def test_the_julia_transform_names_are_one_function():
     assert ft_mat is ift_mat is apply_circuit
     assert dct4_ft_mat is dct4_ift_mat is apply_circuit
+
+
+def test_controlled_puts_the_block_where_the_control_is_one():
+    from pdft.circuit.builder import controlled
+
+    rng = np.random.default_rng(0)
+    block = jnp.asarray(rng.normal(size=(2, 2)) + 1j * rng.normal(size=(2, 2)))
+    matrix = np.asarray(controlled(block)).reshape(
+        4, 4
+    )  # rows (out_c, out_t), columns (in_c, in_t)
+    expected = np.zeros((4, 4), dtype=complex)
+    expected[:2, :2] = np.eye(2)
+    expected[2:, 2:] = np.asarray(block)
+    np.testing.assert_array_equal(matrix, expected)
+    # the three gates built from it
+    np.testing.assert_array_equal(
+        np.asarray(u4_from_phase(0.7)).reshape(4, 4), np.diag([1, 1, 1, np.exp(0.7j)])
+    )
+    from pdft.bases.circuit.dct4 import _cnot_u4, _cry_u4, _ry
+
+    np.testing.assert_array_equal(
+        np.asarray(_cnot_u4()).reshape(4, 4),
+        np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]]),
+    )
+    np.testing.assert_array_equal(np.asarray(_cry_u4(0.4))[1, :, 1, :], np.asarray(_ry(0.4)))
+
+
+@pytest.mark.parametrize("inverse", [False, True])
+def test_identity_tensors_make_every_gate_kind_do_nothing(inverse):
+    from pdft.circuit.builder import GATE_KINDS, GATE_SHAPES, CircuitCode, Program, identity_tensor
+
+    assert tuple(GATE_SHAPES) == GATE_KINDS
+    steps = (("H", (1,)), ("CP", (1, 3)), ("U4", (3, 2)), ("CRY", (2, 4)), ("H", (4,)))
+    program = Program(2, 2, steps, tuple(range(len(steps))))
+    tensors = [identity_tensor(kind) for kind, _ in steps]
+    assert [t.shape for t in tensors] == [GATE_SHAPES[kind] for kind, _ in steps]
+    rng = np.random.default_rng(1)
+    pic = jnp.asarray(rng.normal(size=(2, 2, 2, 2)) + 1j * rng.normal(size=(2, 2, 2, 2)))
+    np.testing.assert_array_equal(CircuitCode(program, inverse=inverse)(*tensors, pic), pic)
+    with pytest.raises(AssertionError, match="unknown gate kind: SWAP"):
+        identity_tensor("SWAP")
+
+
+def test_phase_list_defaults_to_zeros_and_checks_the_length():
+    from pdft.circuit.builder import phase_list
+
+    assert phase_list(None, 3, "three phases") == [0.0, 0.0, 0.0]
+    assert phase_list(range(3), 3, "three phases") == [0.0, 1.0, 2.0]
+    assert all(isinstance(p, float) for p in phase_list(np.arange(2), 2, "two"))
+    with pytest.raises(ValueError, match="^three phases, got 2$"):
+        phase_list([1, 2], 3, "three phases")
+
+
+def test_dct4_twiddles_record_their_angle_in_both_forms():
+    from pdft.bases.circuit.dct4 import _dct4_gates_1d
+
+    dense = _dct4_gates_1d(3, offset=0, parametrization="o4")
+    blocks = _dct4_gates_1d(3, offset=0, parametrization="controlled")
+    assert [g["qubits"] for g in dense] == [g["qubits"] for g in blocks]
+    twiddles = [(a, b) for a, b in zip(dense, blocks) if b["kind"] == "CRY"]
+    assert len(twiddles) == 3 and all(a["kind"] == "U4" for a, _ in twiddles)
+    for a, b in twiddles:
+        assert a["phase"] == b["phase"] > 0
+        # the dense form is the block, controlled
+        np.testing.assert_array_equal(np.asarray(a["tensor"])[1, :, 1, :], np.asarray(b["tensor"]))
+    assert [g["kind"] for g in dense if g["kind"] != "U4"] == [
+        g["kind"] for g in blocks if g["kind"] not in ("U4", "CRY")
+    ]

@@ -35,5 +35,6 @@ Trainable sparsifying bases. Circuit bases (QFT, entangled QFT, TEBD, MERA, Rich
    entangled_qft_code
    tebd_code
    mera_code
+   dct4_code
    ft_mat
    ift_mat

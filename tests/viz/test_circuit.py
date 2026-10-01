@@ -38,3 +38,13 @@ def test_custom_title_and_file(tmp_path):
     fig = plot_circuit(pdft.TEBDBasis(m=2, n=2), output_path=path, title="rings")
     assert path.exists() and fig.axes[0].get_title() == "rings"
     matplotlib.pyplot.close(fig)
+
+
+def test_a_blocked_basis_is_titled_with_the_block_it_tiles():
+    basis = pdft.BlockedBasis(pdft.QFTBasis(m=2, n=1), 1, 2)
+    fig = plot_circuit(basis)
+    assert fig.axes[0].get_title() == (
+        "BlockedBasis(m=3, n=3): 3 H + 1 CP on each (m=2, n=1) block"
+    )
+    assert "block" not in plot_circuit(pdft.QFTBasis(m=2, n=1)).axes[0].get_title()
+    matplotlib.pyplot.close("all")

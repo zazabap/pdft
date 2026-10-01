@@ -133,3 +133,27 @@ def test_mse_reconstruction_uses_the_adjoint_at_non_symmetric_tensors():
             lambda ts: loss_function(ts, *args[1:], MSELoss(k=5), inverse_code=basis.inv_code)
         )(tensors)
         assert all(bool(jnp.all(jnp.isfinite(g))) for g in gradient)
+
+
+def test_basis_loss_and_mean_loss_are_loss_function_over_a_basis():
+    import numpy as np
+
+    import pdft
+    from pdft.loss import basis_loss, mean_loss
+
+    basis = pdft.RichBasis(m=2, n=2)
+    rng = np.random.default_rng(1)
+    images = jnp.asarray(rng.normal(size=(3, 4, 4)) + 1j * rng.normal(size=(3, 4, 4)))
+    tensors = [t + 0.01 * (i + 1) for i, t in enumerate(basis.tensors)]
+    for loss in (L1Norm(), MSELoss(k=5)):
+        per_image = basis_loss(basis, loss)
+        direct = [
+            loss_function(tensors, 2, 2, basis.code, image, loss, inverse_code=basis.inv_code)
+            for image in images
+        ]
+        assert [float(per_image(tensors, image)) for image in images] == [float(v) for v in direct]
+        # the tensors are the argument: the basis's own are not read
+        assert float(per_image(basis.tensors, images[0])) != float(direct[0])
+        assert float(mean_loss(basis, loss)(tensors, images)) == pytest.approx(
+            float(np.mean([float(v) for v in direct])), rel=1e-14
+        )

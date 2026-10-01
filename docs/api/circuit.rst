@@ -28,10 +28,15 @@ Turns a Yao-style gate list into a JAX einsum, and caches the contraction path a
    HADAMARD
    hadamard_gate
    phase_gate
+   cp_gate
+   u4_gate
    two_registers
    hadamards_then_layers
+   check_qubits
    controlled_phase_diag
    u4_from_phase
+   controlled
+   identity_tensor
    extract_phase_from_cp
    extract_phases
    is_compact_cp

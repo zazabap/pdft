@@ -6,7 +6,6 @@ identity and returns the frozen tensor indices, so that
     train_basis_batched(frozen_basis, frozen_indices=frozen, ...)
 
 reproduces BlockedBasis(inner, block_log_m, block_log_n) training dynamics.
-See docs/superpowers/specs/2026-05-24-circuit-rich-frozen-blocked-design.md.
 
 Gradient-norm clipping note: frozen slots have their Euclidean gradient zeroed
 before manifold projection, so their Riemannian gradient is zero and they
@@ -22,7 +21,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from ...circuit.builder import controlled_phase_diag
+from ...circuit.builder import identity_tensor
 from ..core import with_tensors
 
 Array = jax.Array
@@ -30,15 +29,7 @@ Array = jax.Array
 __all__ = ["freeze_as_blocked"]
 
 
-def _identity_for_kind(kind: str) -> Array:
-    """Identity-acting tensor for a gate kind, as complex128."""
-    if kind == "H":
-        return jnp.eye(2, dtype=jnp.complex128)
-    if kind == "U4":
-        return jnp.eye(4, dtype=jnp.complex128).reshape(2, 2, 2, 2)
-    if kind == "CP":
-        return controlled_phase_diag(0.0)  # diag(1,1,1,1) in compact 2x2 form
-    raise AssertionError(f"unknown gate kind: {kind}")
+_identity_for_kind = identity_tensor
 
 
 def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[Any, list[int]]:

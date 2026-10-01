@@ -127,11 +127,7 @@ def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
     (axes: out_ctrl, out_tgt, in_ctrl, in_tgt). We reshape to 4x4 and apply
     the standard unitarity check.
     """
-    if t.ndim != 4 or t.shape != (2, 2, 2, 2):
-        return False
-    M = jnp.reshape(t, (4, 4))
-    I_mat = jnp.eye(4, dtype=t.dtype)
-    return bool(jnp.allclose(M @ jnp.conj(M).T, I_mat, atol=atol))
+    return t.shape == (2, 2, 2, 2) and is_unitary_general(jnp.reshape(t, (4, 4)), atol)
 
 
 # Forward declarations — the manifold dataclasses are defined below, so
@@ -169,12 +165,7 @@ def group_by_manifold(tensors: list[Array]) -> dict:
     """
     groups: dict[AbstractRiemannianManifold, list[int]] = {}
     for i, t in enumerate(tensors):
-        m = classify_manifold(t)
-        existing = next((k for k in groups if k == m), None)
-        if existing is None:
-            groups[m] = [i]
-        else:
-            groups[existing].append(i)
+        groups.setdefault(classify_manifold(t), []).append(i)
     return groups
 
 

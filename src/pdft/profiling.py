@@ -43,9 +43,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .loss import AbstractLoss
-from .manifolds import group_by_manifold
-from .training.adam_step import _build_jit_adam_step
+from .loss import AbstractLoss, mean_loss
+from .optimizers import RiemannianAdam
+from .training.adam_step import _build_jit_adam_step, init_adam_moments
 from .training.schedules import cosine_with_warmup as _cosine_with_warmup
 
 
@@ -190,38 +190,20 @@ def profile_training(
         else:
             imgs = imgs[:needed]
 
-        # Build the JIT'd Adam step (same one train_basis_batched uses).
+        # The JIT'd Adam step train_basis_batched uses, at the optimizer's defaults.
+        defaults = RiemannianAdam()
         step_fn = _build_jit_adam_step(
             basis,
             loss,
-            beta1=0.9,
-            beta2=0.999,
-            eps=1e-8,
+            beta1=defaults.beta1,
+            beta2=defaults.beta2,
+            eps=defaults.eps,
             max_grad_norm=max_grad_norm,
         )
-        # Init Adam moments.
-        groups = group_by_manifold(list(basis.tensors))
-        m_state, v_state = [], []
-        from .manifolds import stack_tensors
-
-        for _, idxs in groups.items():
-            pb = stack_tensors(list(basis.tensors), list(idxs))
-            m_state.append(jnp.zeros_like(pb))
-            v_state.append(jnp.zeros(pb.shape, dtype=jnp.float64))
-
-        # Optional val closure mirrors training.py:402.
-        from .loss import loss_function as _lf
+        m_state, v_state = init_adam_moments(basis.tensors)
 
         m_qb, n_qb = basis.m, basis.n
-        code, inv_code = basis.code, basis.inv_code
-
-        def _per_image_loss(tensors, img):
-            return _lf(tensors, m_qb, n_qb, code, img, loss, inverse_code=inv_code)
-
-        _batched_val = jax.vmap(_per_image_loss, in_axes=(None, 0))
-        _val_eval = (
-            jax.jit(lambda ts, b: jnp.mean(_batched_val(ts, b))) if val_imgs is not None else None
-        )
+        _val_eval = jax.jit(mean_loss(basis, loss)) if val_imgs is not None else None
 
         report = ProfileReport(
             basis_class=type(basis).__name__,
