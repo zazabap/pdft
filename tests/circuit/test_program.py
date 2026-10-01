@@ -140,3 +140,23 @@ def test_apply_program_inverse_with_conjugated_tensors_is_the_adjoint():
     out = apply_program(program, tensors, x)
     back = apply_program(program, [jnp.conj(t) for t in tensors], out, inverse=True)
     np.testing.assert_allclose(back, x, atol=1e-12)
+
+
+def test_slices_are_a_distinct_code_computing_the_same_thing():
+    """The opt-in arithmetic of the one-qubit gates agrees with the default to
+    rounding, in both directions and both precisions, at tensors with no symmetry."""
+    rng = np.random.default_rng(6)
+    gates = _gates() + [Gate(kind="CRY", qubits=(2, 1), tensor=HADAMARD, phase=0.0)]
+    program, tensors = compile_program(gates, 1, 1)
+    tensors = [t * jnp.asarray(1 + 0.2 * rng.standard_normal(t.shape)) for t in tensors]
+    assert CircuitCode(program, slices=True) != CircuitCode(program)
+    x = _image(rng, (4, 2, 2))
+    for inverse in (False, True):
+        default = apply_program(program, tensors, x, inverse=inverse)
+        sliced = apply_program(program, tensors, x, inverse=inverse, slices=True)
+        np.testing.assert_allclose(sliced, default, rtol=1e-13, atol=1e-13)
+        single = apply_program(
+            program, tensors, x.astype(jnp.complex64), inverse=inverse, slices=True
+        )
+        assert single.dtype == jnp.complex64
+        np.testing.assert_allclose(single, default, rtol=1e-5, atol=1e-5)

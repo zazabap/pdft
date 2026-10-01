@@ -8,12 +8,15 @@ covers.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from pdft.bases import bases_allclose
+from pdft.bases.block.block import BlockCode
 
 from .cases import BASES, case_rng, complex_normal, generic
 
@@ -64,6 +67,26 @@ def test_two_instances_are_the_same_basis(case):
     assert bases_allclose(a, b, atol=0.0)
     assert a.code == b.code and a.inv_code == b.inv_code
     assert jax.tree_util.tree_structure(a) == jax.tree_util.tree_structure(b)
+
+
+def _with_slices(code):
+    """The same code with the slice arithmetic for its one-qubit gates."""
+    if isinstance(code, BlockCode):
+        return replace(code, inner=_with_slices(code.inner))
+    return replace(code, slices=True)
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_slice_arithmetic_matches_the_default(case):
+    """The opt-in arithmetic changes how one-qubit gates are computed, not what."""
+    rng = case_rng(case)
+    basis = generic(BASES[case](), rng)
+    pic = jnp.asarray(complex_normal(rng, basis.image_size)).reshape((2,) * (basis.m + basis.n))
+    conj = [jnp.conj(t) for t in basis.tensors]
+    for code, tensors in ((basis.code, basis.tensors), (basis.inv_code, conj)):
+        np.testing.assert_allclose(
+            _with_slices(code)(*tensors, pic), code(*tensors, pic), rtol=1e-12, atol=1e-12
+        )
 
 
 @pytest.mark.parametrize("case", CASES)
