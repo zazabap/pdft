@@ -6,9 +6,7 @@ import pytest
 import pdft
 from pdft.bases import (
     BlockedBasis,
-    DCT4Basis,
     EntangledQFTBasis,
-    MERABasis,
     QFTBasis,
     RealRichBasis,
     RichBasis,
@@ -26,6 +24,8 @@ from pdft.coherence import (
     operator_coherence,
     sampled_flat_modulus,
 )
+
+from .helpers import CIRCUIT_CLASSES
 
 # (3, 3) keeps the dense 64x64 operator cheap while exercising both registers.
 M = N = 3
@@ -197,7 +197,7 @@ def test_is_flat_modulus_has_no_relative_slack():
     assert is_flat_modulus(None, off, atol=2e-6)
 
 
-@pytest.mark.parametrize("ctor", [*ALL_BASES, DCT4Basis, MERABasis])
+@pytest.mark.parametrize("ctor", CIRCUIT_CLASSES)
 def test_diagonal_tensors_by_gate_kind_match_the_value_test_at_initialisation(ctor):
     b = ctor(m=2, n=2)
     by_value = [i for i, t in enumerate(b.tensors) if is_compact_cp(t)]

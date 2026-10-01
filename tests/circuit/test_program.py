@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 import pdft
-from pdft.bases.circuit.qft import _qft_gates_1d
+from pdft.bases.circuit.qft import qft_gates_1d
 from pdft.circuit import REGISTERS
 from pdft.circuit.builder import (
     CircuitCode,
+    Gate,
     Program,
     _run,
     compile_circuit,
     compile_program,
+    u4_from_phase,
 )
 
-from ..helpers import small_circuit
+from ..helpers import complex_image, small_circuit
 
 
 def test_compile_program_keeps_temporal_steps_and_stores_hadamards_first():
@@ -33,7 +33,7 @@ def test_compile_program_keeps_temporal_steps_and_stores_hadamards_first():
 
 
 def test_sorted_steps_is_the_stored_order():
-    gates = _qft_gates_1d(3, 0) + _qft_gates_1d(3, 3)
+    gates = qft_gates_1d(3, 0) + qft_gates_1d(3, 3)
     program, tensors = compile_program(gates, 3, 3)
     stored = program.sorted_steps
     assert len(stored) == len(tensors) == len(gates)
@@ -59,17 +59,6 @@ def test_code_compares_by_program_and_direction():
     assert isinstance(forward, CircuitCode)
     assert forward == again and hash(forward) == hash(again)
     assert forward != inverse and forward.program == inverse.program
-
-
-def test_two_instances_of_a_basis_share_structure_and_compiled_code():
-    a, b = pdft.QFTBasis(m=2, n=3), pdft.QFTBasis(m=2, n=3)
-    assert a.code == b.code and a.inv_code == b.inv_code
-    assert jax.tree_util.tree_structure(a) == jax.tree_util.tree_structure(b)
-    x = jnp.asarray(np.random.default_rng(0).standard_normal((4, 8)))
-    a.forward_transform(x)
-    compiled = _run._cache_size()
-    b.forward_transform(x)
-    assert _run._cache_size() == compiled
 
 
 def test_tensor_indices_by_kind_on_the_qft():
@@ -101,3 +90,20 @@ def test_tensor_indices_refuses_an_unknown_kind_or_register():
         program.tensor_indices(kind="h")
     with pytest.raises(ValueError, match="register must be one of"):
         program.tensor_indices(register="rows")
+
+
+def test_two_instances_of_a_basis_share_one_compiled_applier():
+    """Equal codes, and so one entry in the jit cache for both."""
+    a, b = pdft.QFTBasis(m=2, n=3), pdft.QFTBasis(m=2, n=3)
+    x = complex_image((4, 8))
+    a.forward_transform(x)
+    compiled = _run._cache_size()
+    b.forward_transform(x)
+    assert a.code == b.code and _run._cache_size() == compiled
+
+
+def test_compile_program_refuses_a_tensor_of_the_wrong_shape():
+    gates = small_circuit()
+    gates[2] = Gate(kind="CP", qubits=(2, 1), tensor=u4_from_phase(0.7), phase=0.7)
+    with pytest.raises(ValueError, match=r"gate 2 of kind 'CP' needs a tensor of shape \(2, 2\)"):
+        compile_program(gates, 1, 1)

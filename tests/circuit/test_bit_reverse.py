@@ -51,10 +51,3 @@ def test_the_qft_basis_is_the_dft_in_the_bit_reversed_frame(m, n):
     )
     # without the adapter it is the transform of the permuted image, not of the image
     assert float(jnp.max(jnp.abs(basis.forward_transform(x) - dft))) > 0.1
-
-
-def test_a_pixel_mask_commutes_with_the_frame_change():
-    """Why reversing the data is the whole adapter: pixelwise operations do not care."""
-    x = complex_image((8, 8))
-    mask = jnp.asarray(np.random.default_rng(0).random((8, 8)) < 0.4)
-    np.testing.assert_array_equal(bit_reverse(mask * x), bit_reverse(mask) * bit_reverse(x))

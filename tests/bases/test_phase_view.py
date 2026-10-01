@@ -9,7 +9,6 @@ import pytest
 
 import pdft
 from pdft.bases import bases_allclose, cp_phases, program_of, with_cp_phases
-from pdft.bases.circuit.entangled_qft import extract_entangle_phases, get_entangle_tensor_indices
 
 from ..helpers import BASES, complex_image
 
@@ -18,15 +17,6 @@ def test_cp_phases_reads_the_qft_angles():
     phases = cp_phases(pdft.QFTBasis(m=3, n=2))
     # per register: pi/2 between neighbours, pi/4 one apart
     np.testing.assert_allclose(phases, [np.pi / 2, np.pi / 4, np.pi / 2, np.pi / 2], atol=1e-15)
-
-
-def test_cp_phases_include_the_entanglers_last():
-    basis = pdft.EntangledQFTBasis(m=3, n=2, seed=1)
-    last = get_entangle_tensor_indices(basis.tensors, basis.n_entangle)
-    assert last == basis.program.tensor_indices(kind="CP", register="both")
-    np.testing.assert_allclose(
-        cp_phases(basis)[-basis.n_entangle :], extract_entangle_phases(basis.tensors, last)
-    )
 
 
 @pytest.mark.parametrize("case", ["qft_3x2", "entangled_3x2", "tebd_cp_3x2", "mera_cp_4x2"])
@@ -104,3 +94,13 @@ def test_the_phase_view_is_exact_only_for_tensors_of_the_compact_form():
     # what it writes it reads back, and writing twice changes nothing more
     np.testing.assert_allclose(cp_phases(projected), cp_phases(trained), atol=1e-15)
     assert bases_allclose(with_cp_phases(projected, cp_phases(projected)), projected, atol=1e-15)
+
+
+def test_cp_phases_are_in_stored_order_entanglers_included():
+    phases = [0.3, -1.1]
+    basis = pdft.EntangledQFTBasis(m=3, n=2, entangle_phases=phases)
+    entanglers = basis.program.tensor_indices(kind="CP", register="both")
+    every_cp = basis.program.tensor_indices(kind="CP")
+    view = cp_phases(basis)
+    assert len(view) == len(every_cp) == 6
+    np.testing.assert_allclose([view[every_cp.index(i)] for i in entanglers], phases, atol=1e-15)

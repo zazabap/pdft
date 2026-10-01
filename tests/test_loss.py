@@ -7,7 +7,7 @@ from pdft.bases.circuit.qft import qft_code
 from pdft.circuit.builder import GATE_SHAPES
 from pdft.loss import L1Norm, MSELoss, loss_function, topk_truncate
 
-from .helpers import random_unitary
+from .helpers import complex_normal, random_unitary
 
 
 def test_l1norm_is_stateless():
@@ -119,7 +119,7 @@ def test_mse_reconstruction_uses_the_adjoint_at_non_symmetric_tensors():
                 shape = GATE_SHAPES[kind]
                 d = round(np.prod(shape) ** 0.5)
                 tensors.append(jnp.asarray(random_unitary(rng, d)).reshape(shape))
-        pic = jnp.asarray(rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4)))
+        pic = jnp.asarray(complex_normal(rng, (4, 4)))
         args = (tensors, 2, 2, basis.code, pic)
         full = loss_function(*args, MSELoss(k=16), inverse_code=basis.inv_code)
         assert float(full) < 1e-24
@@ -143,7 +143,7 @@ def test_basis_loss_and_mean_loss_are_loss_function_over_a_basis():
 
     basis = pdft.RichBasis(m=2, n=2)
     rng = np.random.default_rng(1)
-    images = jnp.asarray(rng.normal(size=(3, 4, 4)) + 1j * rng.normal(size=(3, 4, 4)))
+    images = jnp.asarray(complex_normal(rng, (3, 4, 4)))
     tensors = [t + 0.01 * (i + 1) for i, t in enumerate(basis.tensors)]
     for loss in (L1Norm(), MSELoss(k=5)):
         per_image = basis_loss(basis, loss)

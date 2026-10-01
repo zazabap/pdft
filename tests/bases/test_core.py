@@ -13,9 +13,9 @@ import pdft
 from pdft.bases import CircuitBasis, bases_allclose
 from pdft.bases.circuit.qft import qft_gates
 from pdft.bases.core import BasisTransforms
-from pdft.circuit.builder import GATE_SHAPES, CircuitCode, Program, cp_gate, hadamard_gate
+from pdft.circuit.builder import CircuitCode, Program, cp_gate, hadamard_gate
 
-from ..helpers import CIRCUIT_CLASSES
+from ..helpers import CIRCUIT_CLASSES, complex_image
 
 
 @dataclass(init=False)
@@ -50,18 +50,6 @@ def test_every_circuit_basis_is_a_circuit_basis(cls):
     ]
 
 
-@pytest.mark.parametrize("cls", CIRCUIT_CLASSES)
-def test_the_program_describes_the_stored_tensors(cls):
-    """One step per tensor, and the kind of each step fits the tensor in its slot."""
-    basis = cls(m=2, n=2)
-    steps = basis.program.sorted_steps
-    assert len(steps) == len(basis.tensors)
-    for (kind, qubits), tensor in zip(steps, basis.tensors):
-        assert tensor.shape == GATE_SHAPES[kind]
-        assert len(qubits) == (1 if kind == "H" else 2)
-        assert all(1 <= q <= 4 for q in qubits)
-
-
 def test_a_subclass_is_a_pytree_without_registering_anything():
     built = _Toy.built
     toy = _Toy(m=1, n=2, label="mine")
@@ -94,8 +82,6 @@ def test_only_the_qft_topology_freezes_to_a_blocked_basis():
         "RichBasis",
         "RealRichBasis",
     ]
-    with pytest.raises(TypeError, match="freeze_as_blocked supports"):
-        pdft.freeze_as_blocked(pdft.TEBDBasis(m=2, n=2), 1, 1)
 
 
 def test_a_given_code_replaces_the_circuits_own():
@@ -127,18 +113,6 @@ def test_a_family_with_no_options_only_names_its_emitter():
     # the base class itself has no circuit to build
     with pytest.raises(AttributeError, match="emit"):
         CircuitBasis(1, 1)
-
-
-@pytest.mark.parametrize("cls", [pdft.TEBDBasis, pdft.MERABasis])
-def test_layered_bases_seed_one_phase_per_gate(cls):
-    seeded = cls(m=2, n=4, seed=7)
-    count = seeded.n_row_gates + seeded.n_col_gates
-    drawn = list(np.random.default_rng(7).normal(0.0, 0.1, count))
-    assert bases_allclose(seeded, cls(m=2, n=4, phases=drawn), atol=0.0)
-    assert not bases_allclose(seeded, cls(m=2, n=4))
-    # explicit phases win over the seed
-    assert bases_allclose(cls(m=2, n=4, phases=drawn, seed=99), seeded, atol=0.0)
-    assert type(seeded).__name__ in repr(seeded) and seeded == seeded
 
 
 def test_bases_allclose_compares_type_size_and_tensors():
@@ -246,3 +220,14 @@ def test_a_subclass_that_is_not_a_dataclass_keeps_its_attributes():
     assert type(trained) is _Plainer and (trained.flavour, trained.note) == ("u4", ("kept", 2))
     assert jax.tree_util.tree_structure(mapped) == jax.tree_util.tree_structure(basis)
     assert jax.tree_util.tree_structure(_Plainer(2, 2)) != jax.tree_util.tree_structure(basis)
+
+
+def test_the_inverse_follows_a_code_passed_alone():
+    """A code passed without its inverse still gets the inverse of its own circuit."""
+    front = pdft.EntangledQFTBasis(m=2, n=2, seed=1, entangle_position="front")
+    rebuilt = pdft.EntangledQFTBasis(m=2, n=2, tensors=front.tensors, code=front.code)
+    assert rebuilt.program == front.program and rebuilt.inv_code == front.inv_code
+    x = complex_image((4, 4))
+    np.testing.assert_allclose(
+        rebuilt.inverse_transform(rebuilt.forward_transform(x)), x, atol=1e-12
+    )

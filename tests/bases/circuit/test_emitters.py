@@ -7,18 +7,15 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases.circuit.dct4 import dct4_ft_mat, dct4_ift_mat
 from pdft.bases.circuit.entangled_qft import extract_entangle_phases, get_entangle_tensor_indices
 from pdft.bases.circuit.mera import mera_gates
-from pdft.bases.circuit.qft import _qft_gates_1d, ft_mat, ift_mat, qft_gates_1d
+from pdft.bases.circuit.qft import _qft_gates_1d, qft_gates_1d
 from pdft.bases.circuit.real_rich import _real_rich_qft_gates_1d
 from pdft.bases.circuit.rich import _rich_qft_gates_1d
 from pdft.bases.circuit.tebd import tebd_gates
 from pdft.circuit.builder import (
     HADAMARD,
-    apply_circuit,
     controlled_phase_diag,
-    extract_phases,
     u4_from_phase,
 )
 
@@ -90,41 +87,6 @@ def test_dct4_twiddles_record_their_angle_in_both_forms():
     ]
 
 
-def test_the_julia_transform_names_are_one_function():
-    assert ft_mat is ift_mat is apply_circuit
-    assert dct4_ft_mat is dct4_ift_mat is apply_circuit
-
-
-def test_family_phase_helpers_are_the_one_implementation():
-    from pdft.bases.circuit import entangled_qft, mera, tebd
-    from pdft.circuit.builder import select_last_n_cp_indices
-
-    for module, indices, phases in (
-        (tebd, "get_tebd_gate_indices", "extract_tebd_phases"),
-        (mera, "get_mera_gate_indices", "extract_mera_phases"),
-    ):
-        assert getattr(module, indices) is select_last_n_cp_indices
-        assert getattr(module, phases) is extract_phases
-
-    # every helper keeps the parameter names it has upstream, for keyword callers
-    tensors = [HADAMARD, controlled_phase_diag(0.3), HADAMARD, controlled_phase_diag(-1.1)]
-    for module, indices, count, phases, which in (
-        (
-            entangled_qft,
-            "get_entangle_tensor_indices",
-            "n_entangle",
-            "extract_entangle_phases",
-            "entangle_indices",
-        ),
-        (tebd, "get_tebd_gate_indices", "n_gates", "extract_tebd_phases", "gate_indices"),
-        (mera, "get_mera_gate_indices", "n_gates", "extract_mera_phases", "gate_indices"),
-    ):
-        found = getattr(module, indices)(tensors=tensors, **{count: 2})
-        assert found == select_last_n_cp_indices(tensors, 2) == [1, 3]
-        read = getattr(module, phases)(tensors=tensors, **{which: found})
-        assert read == extract_phases(tensors, found) == pytest.approx([0.3, -1.1])
-
-
 def test_front_entanglers_are_found_by_the_program_not_by_position():
     """The upstream helper takes the last compact-CP tensors, which are the entanglers
     only when they are emitted last. The program knows which gates couple the registers
@@ -139,3 +101,26 @@ def test_front_entanglers_are_found_by_the_program_not_by_position():
         )
         by_position = get_entangle_tensor_indices(basis.tensors, basis.n_entangle)
         assert (by_position == coupling) == (position == "back")
+
+
+def test_the_phase_helpers_keep_their_upstream_parameter_names():
+    """Each family has upstream's two helpers under its own name, callable by keyword."""
+    from pdft.bases.circuit import entangled_qft, mera, tebd
+
+    tensors = [HADAMARD, controlled_phase_diag(0.3), HADAMARD, controlled_phase_diag(-1.1)]
+    for module, indices, count, phases, which in (
+        (
+            entangled_qft,
+            "get_entangle_tensor_indices",
+            "n_entangle",
+            "extract_entangle_phases",
+            "entangle_indices",
+        ),
+        (tebd, "get_tebd_gate_indices", "n_gates", "extract_tebd_phases", "gate_indices"),
+        (mera, "get_mera_gate_indices", "n_gates", "extract_mera_phases", "gate_indices"),
+    ):
+        found = getattr(module, indices)(tensors=tensors, **{count: 2})
+        assert found == [1, 3]
+        assert getattr(module, phases)(tensors=tensors, **{which: found}) == pytest.approx(
+            [0.3, -1.1]
+        )

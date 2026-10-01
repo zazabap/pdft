@@ -2,7 +2,9 @@
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
+import pdft
 from pdft.optimizers import RiemannianAdam, optimize
 
 
@@ -63,3 +65,41 @@ def test_adam_reduces_loss_on_training():
     losses = np.asarray(result.loss_history)
     assert np.isfinite(losses).all()
     assert losses[-1] < losses[0]
+
+
+def test_adam_update_is_the_textbook_step_on_the_manifold():
+    from pdft.manifolds import PhaseManifold
+    from pdft.optimizers.adam import _adam_update, _zero_moments
+    from pdft.training.adam_step import init_adam_moments
+
+    rng = np.random.default_rng(0)
+    points = jnp.asarray(np.exp(1j * rng.uniform(-3, 3, (2, 2, 3))))
+    manifold = PhaseManifold()
+    rgrad = manifold.project(points, jnp.asarray(rng.normal(size=(2, 2, 3)) + 0j))
+    m0, v0 = _zero_moments(points)
+    assert m0.dtype == points.dtype and v0.dtype == jnp.float64 and not m0.any() and not v0.any()
+    new_points, m1, v1 = _adam_update(
+        manifold,
+        points,
+        rgrad,
+        m0,
+        v0,
+        lr=0.1,
+        beta1=0.9,
+        beta2=0.999,
+        eps=1e-8,
+        bc1=0.1,
+        bc2=0.001,
+    )
+    np.testing.assert_allclose(v1, 0.001 * np.abs(rgrad) ** 2, rtol=1e-14)
+    direction = rgrad / (
+        np.abs(rgrad) + 1e-8
+    )  # (m / bc1) / (sqrt(v / bc2) + eps) at the first step
+    np.testing.assert_allclose(new_points, manifold.retract(points, -direction, 0.1), atol=1e-12)
+    np.testing.assert_allclose(m1, manifold.transport(points, new_points, 0.1 * rgrad), atol=1e-14)
+
+    # one moment pair per manifold group, shaped like the stacked group
+    basis = pdft.RichBasis(m=2, n=2)
+    m_list, v_list = init_adam_moments(basis.tensors)
+    assert [m.shape for m in m_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]
+    assert [v.shape for v in v_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]

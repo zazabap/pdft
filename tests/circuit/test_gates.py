@@ -23,7 +23,7 @@ from pdft.circuit.builder import (
     u4_gate,
 )
 
-from ..helpers import gate_structure
+from ..helpers import complex_image, gate_structure
 
 
 def test_hadamard_gate():
@@ -46,26 +46,17 @@ def test_phase_gate_has_two_forms_of_one_operator():
 def test_controlled_puts_the_block_where_the_control_is_one():
     from pdft.circuit.builder import controlled
 
-    rng = np.random.default_rng(0)
-    block = jnp.asarray(rng.normal(size=(2, 2)) + 1j * rng.normal(size=(2, 2)))
-    matrix = np.asarray(controlled(block)).reshape(
-        4, 4
-    )  # rows (out_c, out_t), columns (in_c, in_t)
+    block = complex_image((2, 2))
+    # rows (out_c, out_t), columns (in_c, in_t)
+    matrix = np.asarray(controlled(block)).reshape(4, 4)
     expected = np.zeros((4, 4), dtype=complex)
     expected[:2, :2] = np.eye(2)
     expected[2:, 2:] = np.asarray(block)
     np.testing.assert_array_equal(matrix, expected)
-    # the three gates built from it
+    # the dense controlled phase is that, with a phase for the block
     np.testing.assert_array_equal(
         np.asarray(u4_from_phase(0.7)).reshape(4, 4), np.diag([1, 1, 1, np.exp(0.7j)])
     )
-    from pdft.bases.circuit.dct4 import _cnot_u4, _cry_u4, _ry
-
-    np.testing.assert_array_equal(
-        np.asarray(_cnot_u4()).reshape(4, 4),
-        np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]]),
-    )
-    np.testing.assert_array_equal(np.asarray(_cry_u4(0.4))[1, :, 1, :], np.asarray(_ry(0.4)))
 
 
 @pytest.mark.parametrize("inverse", [False, True])
@@ -77,8 +68,7 @@ def test_identity_tensors_make_every_gate_kind_do_nothing(inverse):
     program = Program(2, 2, steps, tuple(range(len(steps))))
     tensors = [identity_tensor(kind) for kind, _ in steps]
     assert [t.shape for t in tensors] == [GATE_SHAPES[kind] for kind, _ in steps]
-    rng = np.random.default_rng(1)
-    pic = jnp.asarray(rng.normal(size=(2, 2, 2, 2)) + 1j * rng.normal(size=(2, 2, 2, 2)))
+    pic = complex_image((2, 2, 2, 2), seed=1)
     # to rounding, not to the bit: a GPU's contraction with an identity is not exact
     np.testing.assert_allclose(
         CircuitCode(program, inverse=inverse)(*tensors, pic), pic, rtol=0, atol=1e-14

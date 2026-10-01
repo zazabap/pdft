@@ -3,8 +3,8 @@
 The per-basis test files check most of this one class at a time. The bases
 share one implementation, so these run the same assertions over every
 registered case, including the ones no per-basis file covers: the pytree, the
-round trip at generic tensors, the two arithmetics, and the precision and
-shape each family's transforms accept and return.
+round trip, the two arithmetics, what the program says about the stored
+tensors, and the precision and shape each family's transforms accept and return.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import bases_allclose, program_of
+from pdft.bases import bases_allclose, program_of, with_tensors
 from pdft.bases.block.block import BlockCode
 from pdft.circuit import GATE_KINDS, REGISTERS, is_compact_cp
 from pdft.circuit.builder import GATE_SHAPES
@@ -74,6 +74,15 @@ def test_two_instances_are_the_same_basis(case):
     assert jax.tree_util.tree_structure(a) == jax.tree_util.tree_structure(b)
 
 
+@pytest.mark.parametrize("case", CASES)
+def test_inverse_undoes_forward(case):
+    """At the tensors every basis starts with, which are unitary gates."""
+    basis = BASES[case]()
+    x = jnp.asarray(complex_normal(case_rng(case), basis.image_size))
+    np.testing.assert_allclose(basis.inverse_transform(basis.forward_transform(x)), x, atol=1e-12)
+    np.testing.assert_allclose(basis.forward_transform(basis.inverse_transform(x)), x, atol=1e-12)
+
+
 def _with_slices(code):
     """The same code with the slice arithmetic for its one-qubit gates."""
     if isinstance(code, BlockCode):
@@ -118,8 +127,7 @@ LOOSE = (pdft.RichBasis, pdft.RealRichBasis, pdft.BlockedBasis)
 
 
 def _single_precision(basis):
-    leaves, treedef = jax.tree_util.tree_flatten(basis)
-    return jax.tree_util.tree_unflatten(treedef, [leaf.astype(jnp.complex64) for leaf in leaves])
+    return with_tensors(basis, [t.astype(jnp.complex64) for t in basis.tensors])
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -187,19 +195,22 @@ def test_the_loss_keeps_the_precision_of_its_operands(case):
         pdft.loss_function(list(basis.tensors), m, n, basis.code, image.reshape(-1), pdft.L1Norm())
 
 
-@pytest.mark.parametrize("case", sorted(BASES))
-def test_kinds_and_registers_partition_the_tensors(case):
+@pytest.mark.parametrize("case", CASES)
+def test_the_program_describes_the_stored_tensors(case):
+    """Every tensor has one kind and one register, the shape its kind stores, and qubits of the circuit."""
     basis = BASES[case]()
     program = program_of(basis)
     everything = list(range(len(basis.tensors)))
     assert sorted(i for kind in GATE_KINDS for i in program.tensor_indices(kind=kind)) == everything
     assert sorted(i for r in REGISTERS for i in program.tensor_indices(register=r)) == everything
-    for kind in GATE_KINDS:
-        for i in program.tensor_indices(kind=kind):
-            assert basis.tensors[i].shape == GATE_SHAPES[kind]
+    assert len(program.sorted_steps) == len(basis.tensors)
+    for (kind, qubits), tensor in zip(program.sorted_steps, basis.tensors):
+        assert tensor.shape == GATE_SHAPES[kind]
+        assert len(qubits) == (1 if kind == "H" else 2)
+        assert all(1 <= q <= program.m + program.n for q in qubits)
 
 
-@pytest.mark.parametrize("case", sorted(BASES))
+@pytest.mark.parametrize("case", CASES)
 def test_the_gate_kind_implies_the_manifold_the_optimiser_picks(case):
     """``classify_manifold`` goes by tensor values, as upstream does. At the
     initial tensors of every basis that agrees with the gate kind."""

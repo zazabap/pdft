@@ -4,36 +4,26 @@ from __future__ import annotations
 
 import string
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from pdft.bases.circuit.qft import _qft_gates_1d
+from pdft.bases.circuit.qft import qft_gates_1d
 from pdft.circuit.builder import (
     GATE_SHAPES,
     HADAMARD,
     CircuitCode,
     Gate,
     Program,
+    _walk,
     apply_circuit,
     apply_program,
-    compile_circuit,
     compile_program,
+    hadamard_gate,
 )
 
-from ..helpers import BASES, case_rng, complex_image, complex_normal, small_circuit
-
-
-def test_inverse_walks_the_steps_backwards_with_swapped_legs():
-    """With conjugated tensors the inverse code is the adjoint, so for unitary
-    gates it undoes the forward code; with the forward order it would not."""
-    pic = complex_image((2, 2), seed=1)
-    forward, tensors = compile_circuit(small_circuit(), 1, 1, inverse=False)
-    inverse, _ = compile_circuit(small_circuit(), 1, 1, inverse=True)
-    out = forward(*tensors, pic)
-    back = inverse(*[jnp.conj(t) for t in tensors], out)
-    np.testing.assert_allclose(back, pic, atol=1e-12)
-    assert not jnp.allclose(forward(*[jnp.conj(t) for t in tensors], out), pic, atol=1e-6)
+from ..helpers import BASES, case_rng, complex_image, complex_normal, random_unitary, small_circuit
 
 
 def test_apply_program_is_apply_circuit_on_one_double_precision_image():
@@ -46,7 +36,7 @@ def test_apply_program_is_apply_circuit_on_one_double_precision_image():
 
 
 def test_apply_program_carries_leading_axes():
-    gates = _qft_gates_1d(2, 0) + _qft_gates_1d(3, 2)
+    gates = qft_gates_1d(2, 0) + qft_gates_1d(3, 2)
     program, tensors = compile_program(gates, 2, 3)
     stack = complex_image((2, 5, 4, 8), seed=3)
     out = apply_program(program, tensors, stack)
@@ -164,3 +154,45 @@ def test_the_walk_agrees_with_one_einsum(case, inverse):
     in_order = [stored[slot] for slot in program.slot]
     reference = _as_one_einsum(program.steps, in_order, program.m, program.n, pic, inverse)
     np.testing.assert_allclose(walked, reference, rtol=1e-12, atol=1e-12)
+
+
+def test_inverse_walks_the_steps_backwards_with_swapped_legs():
+    """With conjugated tensors the inverse code is the adjoint, so for unitary gates it
+    undoes the forward code. The gates here have no symmetry, so both halves are needed:
+    with the steps in forward order, or with the legs not swapped, the round trip fails."""
+    rng = np.random.default_rng(1)
+    program, _ = compile_program(small_circuit(), 1, 1)
+    tensors = [
+        jnp.asarray(np.exp(1j * rng.uniform(-3, 3, (2, 2))))
+        if kind == "CP"
+        else jnp.asarray(random_unitary(rng, 4 if kind == "U4" else 2)).reshape(GATE_SHAPES[kind])
+        for kind, _ in program.sorted_steps
+    ]
+    assert not any(
+        jnp.allclose(t, jnp.swapaxes(t.reshape(t.shape[0], -1), 0, 1).reshape(t.shape))
+        for t in tensors
+        if t.ndim == 2
+    )
+    pic = complex_image((2, 2), seed=1)
+    out = CircuitCode(program)(*tensors, pic)
+    adjoint = [jnp.conj(t) for t in tensors]
+    np.testing.assert_allclose(CircuitCode(program, inverse=True)(*adjoint, out), pic, atol=1e-12)
+    # neither the forward walk of the adjoint tensors nor the inverse walk of the plain ones
+    assert not jnp.allclose(CircuitCode(program)(*adjoint, out), pic, atol=1e-6)
+    assert not jnp.allclose(CircuitCode(program, inverse=True)(*tensors, out), pic, atol=1e-6)
+
+
+def test_the_slice_arithmetic_is_what_runs_when_asked_for():
+    """The two arithmetics agree to rounding, so agreement alone cannot show which ran:
+    with slices the one-qubit gates involve no contraction at all."""
+    program, tensors = compile_program([hadamard_gate(1), hadamard_gate(2)], 1, 1)
+    pic = complex_image((2, 2), seed=2)
+
+    def primitives(slices):
+        graph = jax.make_jaxpr(
+            lambda *operands: _walk(program, False, slices, operands[:-1], operands[-1])
+        )(*tensors, pic)
+        return {equation.primitive.name for equation in graph.eqns}
+
+    assert "dot_general" in primitives(False)
+    assert "dot_general" not in primitives(True)

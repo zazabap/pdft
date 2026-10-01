@@ -17,7 +17,7 @@ from pdft.manifolds import (
     unstack_tensors,
 )
 
-from .helpers import random_unitary
+from .helpers import complex_image, random_unitary
 
 
 def test_batched_matmul_shape():
@@ -167,18 +167,13 @@ def _unitaries(d, count, seed, real=False):
     return jnp.asarray(np.stack(points, axis=-1), dtype=jnp.complex128)
 
 
-def _tangent(shape, seed):
-    rng = np.random.default_rng(seed)
-    return jnp.asarray(rng.normal(size=shape) + 1j * rng.normal(size=shape))
-
-
 @pytest.mark.parametrize("d", [2, 4])
 def test_orthogonal_manifold_stays_real_and_orthogonal(d):
     from pdft.manifolds import OrthogonalManifold
 
     manifold = OrthogonalManifold(d=d)
     points = _unitaries(d, 3, seed=d, real=True)
-    direction = manifold.project(points, _tangent(points.shape, seed=1))
+    direction = manifold.project(points, complex_image(points.shape, seed=1))
     assert float(jnp.max(jnp.abs(jnp.imag(direction)))) == 0.0
     moved = manifold.retract(points, direction, 0.3)
     assert float(jnp.max(jnp.abs(jnp.imag(moved)))) == 0.0
@@ -202,7 +197,7 @@ def test_two_qubit_manifolds_are_their_matrix_manifold_through_a_reshape(name):
         }[name]
     )
     mats = _unitaries(4, 3, seed=5, real=name.startswith("Orthogonal"))
-    grads = _tangent(mats.shape, seed=6)
+    grads = complex_image(mats.shape, seed=6)
     stored, stored_grads = mats.reshape(2, 2, 2, 2, 3), grads.reshape(2, 2, 2, 2, 3)
 
     projected = manifold.project(stored, stored_grads)
@@ -231,10 +226,10 @@ def test_transport_is_projection_at_the_new_point_on_every_manifold():
             manifolds.Orthogonal2qManifold(),
             _unitaries(4, 2, seed=4, real=True).reshape(2, 2, 2, 2, 2),
         ),
-        (manifolds.PhaseManifold(), jnp.exp(1j * jnp.real(_tangent((2, 2, 2), seed=5)))),
+        (manifolds.PhaseManifold(), jnp.exp(1j * jnp.real(complex_image((2, 2, 2), seed=5)))),
     ]
     for manifold, points in cases:
-        vector = _tangent(points.shape, seed=9)
+        vector = complex_image(points.shape, seed=9)
         new = manifold.retract(points, manifold.project(points, vector), 0.1)
         assert jnp.array_equal(
             manifold.transport(points, new, vector), manifold.project(new, vector)

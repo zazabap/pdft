@@ -4,9 +4,11 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless
 
+import numpy as np
 import pytest
 
 import pdft
+from pdft.bases import program_of
 from pdft.viz.circuit import plot_circuit
 
 
@@ -23,13 +25,18 @@ def test_plot_shows_one_column_per_gate(make, counts):
     basis = make()
     fig = plot_circuit(basis)
     ax = fig.axes[0]
-    program = getattr(basis, "program", None) or basis.inner.program
+    program = program_of(basis)
     assert counts in ax.get_title() and type(basis).__name__ in ax.get_title()
     # one marker collection per gate, and a wire per qubit of the circuit drawn
     assert len(ax.collections) == len(program.steps)
     assert len(ax.get_yticks()) == program.m + program.n
     two_qubit = sum(1 for _, qubits in program.steps if len(qubits) == 2)
     assert len(ax.lines) == program.m + program.n + two_qubit
+    # column i is the i-th gate to act, drawn on the wires of its qubits
+    for column, (markers, (_, qubits)) in enumerate(zip(ax.collections, program.steps)):
+        x, y = np.asarray(markers.get_offsets()).T
+        assert x.tolist() == [column] * len(qubits)
+        assert sorted(y.tolist()) == sorted(q - 1 for q in qubits)
     matplotlib.pyplot.close(fig)
 
 
