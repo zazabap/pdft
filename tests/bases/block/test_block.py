@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 import pdft
+from pdft.circuit import apply_circuit
 
 
 def _rand_pic(m: int, n: int, seed: int = 0) -> np.ndarray:
@@ -147,10 +148,7 @@ def test_blocked_basis_grad_finite():
     pic = jnp.asarray(_rand_pic(b.m, b.n, seed=11))
 
     def loss_fn(tensors):
-        # Reuse BlockedBasis's code via _apply_circuit to get a real scalar loss.
-        from pdft.loss import _apply_circuit
-
-        out = _apply_circuit(tensors, b.code, b.m, b.n, pic)
+        out = apply_circuit(tensors, b.code, b.m, b.n, pic)
         return jnp.sum(jnp.abs(out) ** 2)
 
     grads = jax.grad(loss_fn)(list(inner.tensors))

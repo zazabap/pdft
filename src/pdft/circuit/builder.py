@@ -1,23 +1,25 @@
-"""Shared circuit-to-einsum builder used by qft, entangled_qft, tebd, mera.
+"""Gates, programs and the one applier every circuit basis runs on.
 
-Each concrete circuit family produces a list of gates (H and compact CP) via
-its own `_gates_...` function, then calls `build_circuit_einsum` to turn
-them into an `(einsum_fn, tensors)` pair with the conventions that match
-Julia's Yao + yao2einsum output:
+A circuit family emits a list of ``Gate``; ``compile_program`` turns the list
+into a ``Program`` (the structure, as hashable data) and the tensors in stored
+order; ``CircuitCode`` applies a program to an image one gate at a time. The
+conventions match Julia's Yao + ``yao2einsum`` output:
 
-- Hadamard tensor is shared (HADAMARD).
-- Controlled-phase tensors are 2x2 diagonal `[[1, 1], [1, exp(i*phi)]]`
-  (Yao's compact tensor network form), *not* 4x4 CP matrices.
-- Tensors are sorted Hadamards-first (matches Julia's `perm_vec`).
-- pic and output leg order uses Yao's little-endian convention: qubit 1
-  maps to the LOWEST-index reshape axis within each block, hence we
-  reverse within-block qubit order for both pic_labels and out_labels.
+- The Hadamard tensor is shared (``HADAMARD``).
+- A controlled phase is the compact 2x2 tensor ``[[1, 1], [1, exp(i*phi)]]``
+  Yao emits for a diagonal gate, not a 4x4 matrix.
+- Tensors are stored Hadamards-first (Julia's ``perm_vec``); a program's
+  ``slot`` maps each gate to its stored tensor.
+- Qubits are little-endian within each register: qubit 1 is the last reshape
+  axis of its block (``_axis_of_qubit``).
+
+Gates are applied one at a time instead of as one einsum, so a circuit is not
+bounded by the 52 einsum labels and needs no contraction path.
 """
 
 from __future__ import annotations
 
-import string
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -47,7 +49,7 @@ class Gate(TypedDict):
     """One gate of a circuit program.
 
     ``kind`` is ``"H"``, ``"CP"``, ``"U4"`` or ``"CRY"``; ``qubits`` are the
-    wires it acts on; ``tensor`` is its einsum tensor; ``phase`` is the angle
+    wires it acts on; ``tensor`` is its tensor; ``phase`` is the angle
     of a CP or CRY gate.
     """
 
@@ -114,6 +116,37 @@ def check_qubits(m: int, n: int) -> None:
         raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
 
 
+def hadamards_then_layers(
+    layer: Callable[[int, int, list[float], Callable[[int, int, float], Gate]], list[Gate]],
+    count: Callable[[int], int],
+    m: int,
+    n: int,
+    phases: Sequence[float] | None,
+    parametrization: str,
+) -> tuple[list[Gate], int, int]:
+    """A Hadamard on every qubit, then one layer of phase gates on each register.
+
+    The shape TEBD and MERA share; they differ in the layer.
+    ``count(n_qubits)`` is the number of gates in a register's layer and
+    ``layer(n_qubits, offset, phases, gate)`` emits them, building each with
+    ``gate(q_ctrl, q_tgt, phi)``. ``phases`` holds the row layer's angles and
+    then the column layer's; ``None`` means all zero. Returns
+    ``(gates, n_row_gates, n_col_gates)``.
+    """
+    check_qubits(m, n)
+    gate = phase_gate(parametrization)
+    n_row, n_col = count(m), count(n)
+    angles = [0.0] * (n_row + n_col) if phases is None else [float(p) for p in phases]
+    if len(angles) != n_row + n_col:
+        raise ValueError(
+            f"phases must have length {n_row + n_col} "
+            f"({n_row} row + {n_col} column gates), got {len(angles)}"
+        )
+    gates = [hadamard_gate(q) for q in range(1, m + n + 1)]
+    gates += layer(m, 0, angles[:n_row], gate) + layer(n, m, angles[n_row:], gate)
+    return gates, n_row, n_col
+
+
 def _hadamard_first_perm(tensor_list: list[Array]) -> list[int]:
     """Indices that sort `tensor_list` Hadamards-first (stable), matching
     Julia's `perm_vec`. Non-Hadamard tensors keep their relative order."""
@@ -164,122 +197,10 @@ def compile_program(gates: list[Gate], m: int, n: int) -> tuple[Program, list[Ar
     return Program(m, n, steps, tuple(slot)), [gates[step]["tensor"] for step in perm]
 
 
-def sorted_gate_program(gates: list[Gate]) -> list[tuple[str, tuple[int, ...]]]:
-    """Return `(kind, qubits)` per tensor in sorted operand order.
-
-    Uses the same Hadamard-first sort `compile_circuit` applies, so the
-    returned order lines up element-for-element with the tensor list a basis
-    stores. Handy for mapping gates (and the qubits they touch) to tensor
-    indices after compilation.
-    """
-    perm = _hadamard_first_perm([g["tensor"] for g in gates])
-    return [(gates[p]["kind"], gates[p]["qubits"]) for p in perm]
-
-
-def build_circuit_einsum(
-    gates: list[Gate],
-    m: int,
-    n: int,
-    *,
-    inverse: bool,
-) -> tuple[str, list[Array], list[tuple[int, ...]]]:
-    """Convert a gate sequence to (subscripts, tensors, shapes).
-
-    `gates` is applied in order to a circuit on `m + n` qubits (1-indexed).
-    For CP gates, the 2x2 tensor shares the current wire labels of its
-    control and target qubits and does NOT introduce new labels (the gate
-    is diagonal).
-
-    Returns the triple needed by `einsum_cache.optimize_code_cached`.
-    The returned tensor list and tensor-shape list are sorted so Hadamards
-    come first (matching Julia's `perm_vec`).
-    """
-    N = m + n
-    pool = list(string.ascii_lowercase + string.ascii_uppercase)
-    next_idx = 0
-
-    def fresh() -> str:
-        nonlocal next_idx
-        if next_idx >= len(pool):
-            raise ValueError(f"too many qubits: need > {len(pool)} einsum labels")
-        ch = pool[next_idx]
-        next_idx += 1
-        return ch
-
-    input_labels = [fresh() for _ in range(N)]
-    wire_state: dict[int, str] = {q + 1: input_labels[q] for q in range(N)}
-
-    tensor_subscripts: list[str] = []
-    tensor_list: list[Array] = []
-    tensor_shapes: list[tuple[int, ...]] = []
-
-    for g in gates:
-        if g["kind"] == "H":
-            (q,) = g["qubits"]
-            in_lbl = wire_state[q]
-            out_lbl = fresh()
-            tensor_subscripts.append(out_lbl + in_lbl)
-            tensor_list.append(g["tensor"])
-            tensor_shapes.append((2, 2))
-            wire_state[q] = out_lbl
-        elif g["kind"] == "CP":
-            q_ctrl, q_tgt = g["qubits"]
-            ctrl_lbl = wire_state[q_ctrl]
-            tgt_lbl = wire_state[q_tgt]
-            tensor_subscripts.append(ctrl_lbl + tgt_lbl)
-            tensor_list.append(g["tensor"])
-            tensor_shapes.append((2, 2))
-        elif g["kind"] == "U4":
-            # General 2-qubit unitary stored as (out_c, out_t, in_c, in_t).
-            # Unlike CP this is NOT diagonal; it INTRODUCES new wire labels
-            # for both qubits' outputs.
-            q_ctrl, q_tgt = g["qubits"]
-            in_c = wire_state[q_ctrl]
-            in_t = wire_state[q_tgt]
-            out_c = fresh()
-            out_t = fresh()
-            tensor_subscripts.append(out_c + out_t + in_c + in_t)
-            tensor_list.append(g["tensor"])
-            tensor_shapes.append((2, 2, 2, 2))
-            wire_state[q_ctrl] = out_c
-            wire_state[q_tgt] = out_t
-        else:
-            # NOTE: "CRY" is handled only by the stepped path (_walk);
-            # the legacy einsum builder does not emit it.
-            raise AssertionError(f"unknown gate kind: {g['kind']}")
-
-    # Hadamard-first sort (matches Julia's perm_vec).
-    perm = _hadamard_first_perm(tensor_list)
-    tensor_list = [tensor_list[i] for i in perm]
-    tensor_subscripts = [tensor_subscripts[i] for i in perm]
-    tensor_shapes = [tensor_shapes[i] for i in perm]
-
-    # Little-endian qubit mapping within each block
-    row_pic = [input_labels[q - 1] for q in range(m, 0, -1)]
-    col_pic = [input_labels[q - 1] for q in range(m + n, m, -1)]
-    pic_labels = "".join(row_pic + col_pic)
-
-    row_out = [wire_state[q] for q in range(m, 0, -1)]
-    col_out = [wire_state[q] for q in range(m + n, m, -1)]
-    out_labels = "".join(row_out + col_out)
-
-    if inverse:
-        lhs = ",".join(tensor_subscripts + [out_labels])
-        rhs = pic_labels
-    else:
-        lhs = ",".join(tensor_subscripts + [pic_labels])
-        rhs = out_labels
-
-    subscripts = f"{lhs}->{rhs}"
-    tensor_shapes.append((2,) * N)  # pic operand
-    return subscripts, tensor_list, tensor_shapes
-
-
 def _axis_of_qubit(q: int, m: int, n: int) -> int:
     """Map a 1-indexed qubit number to its position in the (2,)*N reshape of pic.
 
-    Yao's little-endian convention (matching `build_circuit_einsum`'s
-    `pic_labels` ordering): qubit `m` maps to axis 0, qubit `m-1` to axis 1,
+    Yao's little-endian convention within each register: qubit `m` maps to axis 0, qubit `m-1` to axis 1,
     …, qubit 1 to axis m-1, qubit `m+n` to axis m, …, qubit `m+1` to axis
     m+n-1.
     """
@@ -433,7 +354,11 @@ def apply_circuit(
     n: int,
     pic: Array,
 ) -> Array:
-    """Contract pic through the circuit and reshape back to (2^m, 2^n)."""
+    """Apply ``code`` to one ``(2**m, 2**n)`` image, in double precision.
+
+    Julia's ``ft_mat`` and ``ift_mat``: the inverse is the same call with the
+    inverse code and conjugated tensors.
+    """
     if pic.shape != (2**m, 2**n):
         raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
     reshaped = pic.astype(jnp.complex128).reshape((2,) * (m + n))

@@ -1,16 +1,14 @@
-"""Tests for the legacy `build_circuit_einsum` (single-string-einsum builder).
+"""The gate walk against the single-einsum reference in `einsum_reference`.
 
-`compile_circuit` no longer routes through `build_circuit_einsum` — it uses
-the stepped-tensordot path that handles circuits beyond the 52-character
-label pool. The legacy function is retained as public API (re-exported
-from `pdft.circuit`) so external consumers depending on the
-`(subscripts, tensors, shapes)` triple keep working.
+The package applies a circuit one gate at a time. The reference reads the
+same gate list as one einsum string, with wire labels where the walk has
+axes, so agreement between the two checks what a gate list means twice.
 
-These tests exercise the legacy function directly and pin three things:
+These tests pin:
   - subscripts and shape lists are well-formed for each gate kind,
   - the Hadamard-first operand sort is preserved, and
-  - the resulting einsum, when contracted, agrees with `compile_circuit`
-    on a small circuit (no overlap with the label-pool limit).
+  - the contraction agrees with the walk, forward and inverse, for every
+    family the reference can express, at random non-symmetric tensors.
 """
 
 from __future__ import annotations
@@ -19,13 +17,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from pdft.circuit import build_circuit_einsum, compile_circuit
+import pdft
+from pdft.circuit import CircuitCode, compile_circuit
 from pdft.circuit.builder import (
     HADAMARD,
     Gate,
     controlled_phase_diag,
     u4_from_phase,
 )
+
+from .einsum_reference import build_circuit_einsum, contract
 
 
 def _h_gate(q: int) -> Gate:
@@ -129,18 +130,53 @@ def test_legacy_build_label_pool_exhaustion_raises():
 def test_legacy_build_matches_compile_circuit_numerically():
     """For a small circuit, the legacy big-einsum and the new stepped path
     must produce the same forward output to machine precision."""
-    from pdft.circuit.cache import optimize_code_cached
-
     gates = [_h_gate(1), _h_gate(2), _cp_gate(1, 2, phi=0.7), _u4_gate(1, 2, phi=0.3)]
-    subs, tensors_legacy, shapes = build_circuit_einsum(gates, m=1, n=1, inverse=False)
-    legacy_code = optimize_code_cached(subs, *shapes)
     code_new, tensors_new = compile_circuit(gates, m=1, n=1, inverse=False)
 
     rng = np.random.default_rng(42)
     pic_2d = jnp.asarray(rng.normal(size=(2, 2)).astype(np.float64))
     pic = pic_2d.astype(jnp.complex128).reshape((2, 2))
 
-    out_legacy = legacy_code(*tensors_legacy, pic)
+    out_legacy = contract(gates, 1, 1, pic)
     out_new = code_new(*tensors_new, pic)
 
     np.testing.assert_allclose(np.asarray(out_legacy), np.asarray(out_new), atol=1e-12)
+
+
+FAMILIES = {
+    "qft": lambda: pdft.QFTBasis(m=2, n=3),
+    "entangled": lambda: pdft.EntangledQFTBasis(m=3, n=2, seed=1),
+    "entangled_front": lambda: pdft.EntangledQFTBasis(m=2, n=2, seed=2, entangle_position="front"),
+    "tebd_cp": lambda: pdft.TEBDBasis(m=3, n=2, seed=3),
+    "tebd_u4": lambda: pdft.TEBDBasis(m=2, n=3, seed=4, parametrization="u4"),
+    "mera_cp": lambda: pdft.MERABasis(m=4, n=2, seed=5),
+    "mera_u4": lambda: pdft.MERABasis(m=2, n=4, seed=6, parametrization="u4"),
+    "dct4_o4": lambda: pdft.DCT4Basis(m=3, n=2),
+    "rich": lambda: pdft.RichBasis(m=3, n=2),
+    "real_rich": lambda: pdft.RealRichBasis(m=2, n=3),
+}
+
+
+@pytest.mark.parametrize("family", sorted(FAMILIES))
+@pytest.mark.parametrize("inverse", [False, True])
+def test_walk_matches_the_einsum_for_every_family(family, inverse):
+    """Random tensors, so a gate applied transposed or on the wrong wire shows:
+    both readings are multilinear in the tensors, and neither needs them unitary."""
+    basis = FAMILIES[family]()
+    program = basis.program
+    m, n = program.m, program.n
+    rng = np.random.default_rng(len(family) + inverse)
+
+    def random_like(t):
+        return jnp.asarray(rng.normal(size=t.shape) + 1j * rng.normal(size=t.shape))
+
+    stored = [random_like(t) for t in basis.tensors]
+    gates = [
+        Gate(kind=kind, qubits=qubits, tensor=stored[slot], phase=0.0)
+        for (kind, qubits), slot in zip(program.steps, program.slot)
+    ]
+    pic = random_like(jnp.zeros((2,) * (m + n)))
+
+    walked = CircuitCode(program, inverse=inverse)(*stored, pic)
+    reference = contract(gates, m, n, pic, inverse=inverse)
+    np.testing.assert_allclose(np.asarray(walked), np.asarray(reference), rtol=1e-12, atol=1e-12)

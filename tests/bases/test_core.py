@@ -11,6 +11,7 @@ import pytest
 
 import pdft
 from pdft.bases import CircuitBasis, bases_allclose
+from pdft.bases.circuit.qft import qft_gates
 from pdft.bases.core import BasisTransforms
 from pdft.circuit.builder import CircuitCode, Program, cp_gate, hadamard_gate
 
@@ -119,3 +120,30 @@ def test_a_given_code_replaces_the_circuits_own():
     x = jnp.asarray(np.random.default_rng(1).standard_normal((8, 4)))
     np.testing.assert_allclose(fast.forward_transform(x), plain.forward_transform(x), atol=1e-12)
     np.testing.assert_allclose(fast.inverse_transform(x), plain.inverse_transform(x), atol=1e-12)
+
+
+def test_a_family_with_no_options_only_names_its_emitter():
+    class _Plain(CircuitBasis):
+        emit = staticmethod(qft_gates)
+
+    basis = _Plain(2, 1)
+    reference = pdft.QFTBasis(2, 1)
+    assert basis.program == reference.program and type(basis) is _Plain
+    assert all(jnp.array_equal(a, b) for a, b in zip(basis.tensors, reference.tensors))
+    given = _Plain(2, 1, tensors=[2 * t for t in reference.tensors])
+    assert all(jnp.array_equal(a, 2 * b) for a, b in zip(given.tensors, reference.tensors))
+    # the base class itself has no circuit to build
+    with pytest.raises(AttributeError, match="emit"):
+        CircuitBasis(1, 1)
+
+
+@pytest.mark.parametrize("cls", [pdft.TEBDBasis, pdft.MERABasis])
+def test_layered_bases_seed_one_phase_per_gate(cls):
+    seeded = cls(m=2, n=4, seed=7)
+    count = seeded.n_row_gates + seeded.n_col_gates
+    drawn = list(np.random.default_rng(7).normal(0.0, 0.1, count))
+    assert bases_allclose(seeded, cls(m=2, n=4, phases=drawn), atol=0.0)
+    assert not bases_allclose(seeded, cls(m=2, n=4))
+    # explicit phases win over the seed
+    assert bases_allclose(cls(m=2, n=4, phases=drawn, seed=99), seeded, atol=0.0)
+    assert type(seeded).__name__ in repr(seeded) and seeded == seeded

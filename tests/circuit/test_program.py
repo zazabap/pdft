@@ -20,7 +20,6 @@ from pdft.circuit.builder import (
     compile_circuit,
     compile_program,
     controlled_phase_diag,
-    sorted_gate_program,
     u4_from_phase,
 )
 
@@ -47,10 +46,15 @@ def test_compile_program_keeps_temporal_steps_and_stores_hadamards_first():
 
 
 def test_sorted_steps_is_the_stored_order():
-    gates = _qft_gates_1d(3, 0) + _qft_gates_1d(2, 3)
-    program, tensors = compile_program(gates, 3, 2)
-    assert list(program.sorted_steps) == sorted_gate_program(gates)
-    assert len(program.sorted_steps) == len(tensors)
+    gates = _qft_gates_1d(3, 0) + _qft_gates_1d(3, 3)
+    program, tensors = compile_program(gates, 3, 3)
+    stored = program.sorted_steps
+    assert len(stored) == len(tensors) == len(gates)
+    assert [kind for kind, _ in stored] == ["H"] * 6 + ["CP"] * 6
+    assert [qubits for _, qubits in stored[:6]] == [(1,), (2,), (3,), (4,), (5,), (6,)]
+    assert [qubits for _, qubits in stored[6:]] == [(2, 1), (3, 1), (3, 2), (5, 4), (6, 4), (6, 5)]
+    # the stored order is the temporal one, read through ``slot``
+    assert all(stored[slot] == step for step, slot in zip(program.steps, program.slot))
 
 
 def test_a_program_is_a_value():

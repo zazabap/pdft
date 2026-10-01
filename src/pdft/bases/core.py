@@ -12,7 +12,7 @@ the family modules there and ``pdft.bases.base`` both build on it.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, fields
 from functools import partial
 from typing import ClassVar, Protocol, runtime_checkable
@@ -88,6 +88,10 @@ class CircuitBasis(BasisTransforms):
     in order, and everything else is aux data. That is the contract
     ``train_basis`` relies on. Unflattening restores the fields without
     running the constructor, so no gate list is rebuilt.
+
+    A family whose circuit depends on ``m`` and ``n`` alone sets ``emit`` to
+    its gate emitter and is done. One with options of its own defines a
+    constructor that emits its gates and hands them to ``_init``.
     """
 
     m: int
@@ -102,6 +106,18 @@ class CircuitBasis(BasisTransforms):
     # what makes resetting the gates on the other qubits to the identity
     # equivalent to a blocked basis; see ``freeze_as_blocked``.
     freezes_to_blocked: ClassVar[bool] = False
+
+    emit: ClassVar[Callable[[int, int], list[Gate]]]
+
+    def __init__(
+        self,
+        m: int,
+        n: int,
+        tensors: Sequence[Array] | None = None,
+        code: object | None = None,
+        inv_code: object | None = None,
+    ):
+        self._init(self.emit(m, n), m, n, tensors, code, inv_code)
 
     def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)

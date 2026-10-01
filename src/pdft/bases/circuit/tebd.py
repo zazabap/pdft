@@ -25,11 +25,9 @@ import jax
 
 from ...circuit.builder import (
     Gate,
-    check_qubits,
     compile_circuit,
     extract_phases,
-    hadamard_gate,
-    phase_gate,
+    hadamards_then_layers,
     select_last_n_cp_indices,
 )
 
@@ -47,6 +45,20 @@ __all__ = [
 # Mirrors of upstream src/tebd.jl:124-160.
 get_tebd_gate_indices = select_last_n_cp_indices
 extract_tebd_phases = extract_phases
+
+
+def _n_tebd_gates(n_qubits: int) -> int:
+    """Number of gates in the ring of one register: one per qubit, the wrap-around included."""
+    return n_qubits
+
+
+def _ring(
+    n_qubits: int, offset: int, phases: Sequence[float], gate: Callable[[int, int, float], Gate]
+) -> list[Gate]:
+    """The ring of one register: ``(i, i+1)`` for ``i = 1..n-1``, then the wrap-around ``(n, 1)``."""
+    return [
+        gate(offset + i, offset + i % n_qubits + 1, phi) for i, phi in enumerate(phases, start=1)
+    ]
 
 
 def tebd_gates(
@@ -70,45 +82,7 @@ def tebd_gates(
     (dense two-qubit, ``U(4)`` — the canonical TEBD gate). Both start from
     the same operator for a given ``phases``; see the module docstring.
     """
-    check_qubits(m, n)
-    ring_gate = phase_gate(parametrization)
-
-    n_row_gates = m
-    n_col_gates = n
-    n_gates = n_row_gates + n_col_gates
-
-    if phases is None:
-        phases_list = [0.0] * n_gates
-    else:
-        phases_list = [float(p) for p in phases]
-    if len(phases_list) != n_gates:
-        raise ValueError(
-            f"phases must have length n_row_gates + n_col_gates = {n_gates}, got {len(phases_list)}"
-        )
-
-    # Layer 1: Hadamards on all qubits
-    gates = [hadamard_gate(q) for q in range(1, m + n + 1)]
-
-    gate_idx = 0
-
-    # Layer 2a: Row ring — (i, i+1) for i=1..m-1
-    for i in range(1, m):
-        gates.append(ring_gate(i, i + 1, phases_list[gate_idx]))
-        gate_idx += 1
-    # Wrap-around: (m, 1)
-    gates.append(ring_gate(m, 1, phases_list[gate_idx]))
-    gate_idx += 1
-
-    # Layer 2b: Col ring — (m+i, m+i+1) for i=1..n-1
-    for i in range(1, n):
-        gates.append(ring_gate(m + i, m + i + 1, phases_list[gate_idx]))
-        gate_idx += 1
-    # Wrap-around: (m+n, m+1)
-    gates.append(ring_gate(m + n, m + 1, phases_list[gate_idx]))
-    gate_idx += 1
-
-    assert gate_idx == n_gates
-    return gates, n_row_gates, n_col_gates
+    return hadamards_then_layers(_ring, _n_tebd_gates, m, n, phases, parametrization)
 
 
 def tebd_code(
@@ -119,7 +93,7 @@ def tebd_code(
     inverse: bool = False,
     parametrization: str = "cp",
 ) -> tuple[Callable[..., Array], list[Array], int, int]:
-    """Return `(einsum_fn, initial_tensors, n_row_gates, n_col_gates)`; see `tebd_gates`."""
+    """Return `(code, initial_tensors, n_row_gates, n_col_gates)`; see `tebd_gates`."""
     gates, n_row_gates, n_col_gates = tebd_gates(
         m, n, phases=phases, parametrization=parametrization
     )

@@ -2,7 +2,7 @@
 
 Optional `plot` extra. Imported by examples and benchmarks; not depended
 on by core. `viz.loss` plots loss histories; `viz.circuit` draws the
-einsum schematic for a basis.
+gate sequence of a basis.
 """
 
 from .circuit import plot_circuit

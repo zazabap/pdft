@@ -26,8 +26,6 @@ on a real-valued objective.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -77,17 +75,8 @@ class RealRichBasis(CircuitBasis):
     basis and a natural baseline for natural-image transforms.
     """
 
+    emit = staticmethod(real_rich_gates)
     freezes_to_blocked = True
-
-    def __init__(
-        self,
-        m: int,
-        n: int,
-        tensors: Sequence[Array] | None = None,
-        code: object | None = None,
-        inv_code: object | None = None,
-    ):
-        self._init(real_rich_gates(m, n), m, n, tensors, code, inv_code)
 
 
 __all__ = ["RealRichBasis"]

@@ -75,15 +75,10 @@ def qft_gates(m: int, n: int) -> list[Gate]:
 
 
 def qft_code(m: int, n: int, *, inverse: bool = False) -> tuple[Callable[..., Array], list[Array]]:
-    """Return `(einsum_fn, initial_tensors)` for 2D QFT on (2^m, 2^n) images."""
+    """Return `(code, initial_tensors)` for 2D QFT on (2^m, 2^n) images."""
     return compile_circuit(qft_gates(m, n), m, n, inverse=inverse)
 
 
-def ft_mat(tensors: list[Array], code: Callable, m: int, n: int, pic: Array) -> Array:
-    """Apply 2D QFT circuit to a (2^m, 2^n) image."""
-    return apply_circuit(tensors, code, m, n, pic)
-
-
-def ift_mat(tensors: list[Array], code: Callable, m: int, n: int, pic: Array) -> Array:
-    """Apply 2D inverse QFT circuit. Caller must have conjugated the tensors."""
-    return apply_circuit(tensors, code, m, n, pic)
+# Julia's names for applying a circuit to an image. The inverse is the same
+# call with the inverse code and conjugated tensors, so one function is both.
+ft_mat = ift_mat = apply_circuit

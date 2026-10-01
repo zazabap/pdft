@@ -7,16 +7,21 @@ import numpy as np
 import pytest
 
 import pdft  # noqa: F401  (enables x64)
-from pdft.bases.circuit.qft import _qft_gates_1d, qft_gates, qft_gates_1d
+from pdft.bases.circuit.dct4 import dct4_ft_mat, dct4_ift_mat
+from pdft.bases.circuit.mera import mera_gates
+from pdft.bases.circuit.qft import _qft_gates_1d, ft_mat, ift_mat, qft_gates, qft_gates_1d
 from pdft.bases.circuit.real_rich import _real_rich_qft_gates_1d
 from pdft.bases.circuit.rich import _rich_qft_gates_1d
+from pdft.bases.circuit.tebd import tebd_gates
 from pdft.circuit.builder import (
     HADAMARD,
+    apply_circuit,
     check_qubits,
     controlled_phase_diag,
     cp_gate,
     extract_phases,
     hadamard_gate,
+    hadamards_then_layers,
     phase_gate,
     two_registers,
     u4_from_phase,
@@ -95,3 +100,61 @@ def test_family_phase_helpers_are_the_one_implementation():
     ):
         assert getattr(module, indices) is select_last_n_cp_indices
         assert getattr(module, phases) is extract_phases
+
+
+def test_hadamards_then_layers_splits_the_phases_between_the_registers():
+    calls = []
+
+    def layer(n_qubits, offset, phases, gate):
+        calls.append((n_qubits, offset, list(phases)))
+        return [gate(offset + 1, offset + 2, phi) for phi in phases]
+
+    def count(n_qubits):
+        return n_qubits - 1
+
+    gates, n_row, n_col = hadamards_then_layers(layer, count, 3, 2, [0.1, 0.2, 0.3], "u4")
+    assert (n_row, n_col) == (2, 1)
+    assert calls == [(3, 0, [0.1, 0.2]), (2, 3, [0.3])]
+    hadamards = [("H", (q,)) for q in range(1, 6)]
+    assert _structure(gates) == hadamards + [("U4", (1, 2))] * 2 + [("U4", (4, 5))]
+    assert [g["phase"] for g in gates[5:]] == [0.1, 0.2, 0.3]
+
+    zeros, _, _ = hadamards_then_layers(layer, count, 3, 2, None, "cp")
+    assert _structure(zeros) == hadamards + [("CP", (1, 2))] * 2 + [("CP", (4, 5))]
+    assert [g["phase"] for g in zeros[5:]] == [0.0] * 3
+
+    with pytest.raises(ValueError, match=r"length 3 \(2 row \+ 1 column gates\), got 2"):
+        hadamards_then_layers(layer, count, 3, 2, [0.1, 0.2], "cp")
+    with pytest.raises(ValueError, match="parametrization must be 'cp' or 'u4'"):
+        hadamards_then_layers(layer, count, 3, 2, None, "dense")
+    with pytest.raises(ValueError, match="must be >= 1"):
+        hadamards_then_layers(layer, count, 0, 2, None, "cp")
+
+
+def test_tebd_emits_a_ring_per_register():
+    gates, n_row, n_col = tebd_gates(3, 2, phases=[1, 2, 3, 4, 5])
+    assert (n_row, n_col) == (3, 2)
+    assert _structure(gates[:5]) == [("H", (q,)) for q in range(1, 6)]
+    # (i, i+1) along the register, then the wrap-around back to its first qubit
+    assert [g["qubits"] for g in gates[5:]] == [(1, 2), (2, 3), (3, 1), (4, 5), (5, 4)]
+    assert [g["phase"] for g in gates[5:]] == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert {g["kind"] for g in tebd_gates(2, 2, parametrization="u4")[0][4:]} == {"U4"}
+
+
+def test_mera_emits_disentanglers_then_isometries_per_layer():
+    gates, n_row, n_col = mera_gates(4, 1, phases=range(6))
+    assert (n_row, n_col) == (6, 0)
+    assert [g["qubits"] for g in gates[5:]] == [(2, 3), (4, 1), (1, 2), (3, 4), (2, 4), (1, 3)]
+    assert [g["phase"] for g in gates[5:]] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    # a one-qubit register gets no layer; the other one starts after it
+    gates, n_row, n_col = mera_gates(1, 2)
+    assert (n_row, n_col) == (0, 2) and [g["qubits"] for g in gates[3:]] == [(3, 2), (2, 3)]
+    with pytest.raises(ValueError, match="m must be a power of 2 when >= 2, got m=3"):
+        mera_gates(3, 2)
+    with pytest.raises(ValueError, match="n must be a power of 2 when >= 2, got n=6"):
+        mera_gates(2, 6)
+
+
+def test_the_julia_transform_names_are_one_function():
+    assert ft_mat is ift_mat is apply_circuit
+    assert dct4_ft_mat is dct4_ift_mat is apply_circuit

@@ -187,16 +187,10 @@ def dct4_gates(m: int, n: int, *, parametrization: str = "o4") -> list[Gate]:
 def dct4_code(
     m: int, n: int, *, inverse: bool = False, parametrization: str = "o4"
 ) -> tuple[Callable[..., Array], list[Array]]:
-    """Return `(einsum_fn, initial_tensors)` for 2D DCT-IV; see `dct4_gates`."""
+    """Return `(code, initial_tensors)` for 2D DCT-IV; see `dct4_gates`."""
     gates = dct4_gates(m, n, parametrization=parametrization)
     return compile_circuit(gates, m, n, inverse=inverse)
 
 
-def dct4_ft_mat(tensors: list[Array], code: Callable, m: int, n: int, pic: Array) -> Array:
-    """Apply 2D DCT-IV circuit to a (2^m, 2^n) image."""
-    return apply_circuit(tensors, code, m, n, pic)
-
-
-def dct4_ift_mat(tensors: list[Array], code: Callable, m: int, n: int, pic: Array) -> Array:
-    """Apply 2D inverse DCT-IV circuit. Caller must have conjugated the tensors."""
-    return apply_circuit(tensors, code, m, n, pic)
+# The DCT-IV spellings of ``ft_mat`` / ``ift_mat``; see ``pdft.bases.circuit.qft``.
+dct4_ft_mat = dct4_ift_mat = apply_circuit
