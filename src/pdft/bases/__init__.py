@@ -7,11 +7,13 @@ Two families:
 - ``bases.block`` — BlockedBasis over arbitrary block partitions (Rich/RealRich
   are re-exported here for back-compat; they live in circuit).
 
-The abstract base class and bases_allclose helper live in bases.base.
+The machinery every basis shares (CircuitBasis, the transforms, bases_allclose)
+lives in bases.core; the concrete circuit bases in bases.base.
 """
 
 from .base import (
     AbstractSparseBasis,
+    CircuitBasis,
     DCT4Basis,
     EntangledQFTBasis,
     MERABasis,
@@ -36,6 +38,7 @@ from .circuit import (
 __all__ = [
     "AbstractSparseBasis",
     "BlockedBasis",
+    "CircuitBasis",
     "DCT4Basis",
     "EntangledQFTBasis",
     "MERABasis",

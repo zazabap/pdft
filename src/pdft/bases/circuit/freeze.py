@@ -22,7 +22,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from ...circuit.builder import controlled_phase_diag, sorted_gate_program
+from ...circuit.builder import controlled_phase_diag
 
 Array = jax.Array
 
@@ -49,34 +49,19 @@ def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[A
     The outer (block-index) gates are reset to identity; inner gates keep the
     input basis's tensor values.
 
-    Supports ``QFTBasis``, ``RichBasis``, ``RealRichBasis``.
+    Supports ``QFTBasis``, ``RichBasis``, ``RealRichBasis``: the bases that
+    declare ``freezes_to_blocked``, where the gates on the kept qubits of a
+    register are the whole circuit of a smaller register. The gates and the
+    qubits they touch are read from the basis's own program.
 
     ``block_log_m == block_log_n == 0`` is a valid no-op: no qubits are
     block-index qubits, so nothing is frozen and ``frozen_indices`` is empty
     (the returned basis is a tensor-copy of the input).
     """
-    # Lazy imports avoid a real bases.base <-> bases.circuit import cycle.
-    # base.py runs `from .circuit.qft import qft_code` at module load; importing
-    # that submodule first executes bases/circuit/__init__.py, which imports
-    # THIS module. A module-top `from ..base import QFTBasis` would then touch
-    # base.py while it is still partially initialised (before QFTBasis exists)
-    # and raise ImportError. Verified: hoisting these to the top breaks
-    # `import pdft`. Keep them inside the function.
-    from ..base import QFTBasis
-    from .qft import _qft_gates_1d
-    from .real_rich import RealRichBasis, _real_rich_qft_gates_1d
-    from .rich import RichBasis, _rich_qft_gates_1d
-
-    gate_builders = {
-        QFTBasis: _qft_gates_1d,
-        RichBasis: _rich_qft_gates_1d,
-        RealRichBasis: _real_rich_qft_gates_1d,
-    }
     btype = type(basis)
-    if btype not in gate_builders:
+    if not getattr(btype, "freezes_to_blocked", False):
         raise TypeError(
-            "freeze_as_blocked supports QFTBasis, RichBasis, RealRichBasis; "
-            f"got {btype.__name__}"
+            f"freeze_as_blocked supports QFTBasis, RichBasis, RealRichBasis; got {btype.__name__}"
         )
     if block_log_m < 0 or block_log_n < 0:
         raise ValueError(
@@ -97,9 +82,7 @@ def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[A
         range(m + n - block_log_n + 1, m + n + 1)
     )
 
-    builder = gate_builders[btype]
-    gates = builder(m, offset=0) + builder(n, offset=m)
-    program = sorted_gate_program(gates)
+    program = basis.program.sorted_steps
     if len(program) != len(basis.tensors):
         raise AssertionError(
             f"gate program length {len(program)} != tensor count {len(basis.tensors)}"

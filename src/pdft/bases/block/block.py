@@ -18,8 +18,8 @@ inner basis.
 Implementation strategy: BlockedBasis exposes ``m, n, tensors, code, inv_code``
 just like any other basis, so the existing training pipeline
 (``train_basis_batched``, ``loss_function``, ``_build_jit_adam_step``) works
-unchanged. The trick is in ``code``/``inv_code``: they are closures that
-permute axes, vmap the inner code over the block-index dims, and permute back.
+unchanged. The trick is in ``code``/``inv_code``: a ``BlockCode`` permutes the
+axes, vmaps the inner code over the block-index dims, and permutes back.
 
 Yao little-endian convention preserved: block-index qubits are the
 HIGHER-numbered qubits per dimension (qubits m_inner+1..m_outer for rows),
@@ -37,6 +37,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import tree_util
+
+from ..core import BasisTransforms
 
 Array = jax.Array
 
@@ -95,7 +97,7 @@ class BlockCode:
 
 
 @dataclass
-class BlockedBasis:
+class BlockedBasis(BasisTransforms):
     """Wraps an inner parametric basis as a within-block transform.
 
     Parameters
@@ -145,7 +147,7 @@ class BlockedBasis:
         self.code = code if code is not None else BlockCode(inner.code, *shape)
         self.inv_code = inv_code if inv_code is not None else BlockCode(inner.inv_code, *shape)
 
-    # ---- AbstractSparseBasis interface (matches QFTBasis) ----
+    # m, n and tensors come from the inner basis; BasisTransforms derives the rest.
 
     @property
     def m(self) -> int:
@@ -161,40 +163,12 @@ class BlockedBasis:
         return self.inner.tensors
 
     @property
-    def inv_tensors(self) -> list[Array]:
-        return self.inner.tensors
-
-    @property
-    def image_size(self) -> tuple[int, int]:
-        return (2**self.m, 2**self.n)
-
-    @property
-    def num_parameters(self) -> int:
-        return self.inner.num_parameters
-
-    @property
     def num_blocks(self) -> int:
         return 2 ** (self.block_log_m + self.block_log_n)
 
     @property
     def block_shape(self) -> tuple[int, int]:
         return (2**self.inner.m, 2**self.inner.n)
-
-    def forward_transform(self, pic: Array) -> Array:
-        from ...loss import _apply_circuit
-
-        return _apply_circuit(self.tensors, self.code, self.m, self.n, pic)
-
-    def inverse_transform(self, pic: Array) -> Array:
-        from ...loss import _apply_circuit
-
-        return _apply_circuit(
-            [jnp.conj(t) for t in self.tensors],
-            self.inv_code,
-            self.m,
-            self.n,
-            pic,
-        )
 
 
 # ---------------------------------------------------------------------------
