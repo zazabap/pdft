@@ -96,8 +96,8 @@ def dense_operator(basis) -> Array:
     Column j is the transform of the image that is 1 at pixel j and 0
     elsewhere, so the result is (2^m 2^n) x (2^m 2^n).
 
-    This is a diagnostic, not a code path: it costs N^2 transforms of an
-    N-pixel image and is meant for small m, n. Nothing in training needs it ---
+    This is a diagnostic, not a code path: it costs N transforms of an
+    N-pixel image (N^2 numbers) and is meant for small m, n. Nothing in training needs it ---
     `certify_flat_modulus` gives the parameter-space guarantee without forming
     it.
     """
@@ -205,6 +205,11 @@ def certify_flat_modulus(
 
     Frozen non-diagonal gates are fine: a fixed Hadamard is what the
     proposition assumes. It is *training* them that voids it.
+
+    The proposition's other hypothesis, one Hadamard per wire, is not
+    checked. Every basis in the package satisfies it; for a circuit of your
+    own with two Hadamards on a wire the certificate can hold where
+    `sampled_flat_modulus` shows it does not.
     """
     operator = dense_operator(basis)
     mu = coherence(basis, operator)

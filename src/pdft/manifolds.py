@@ -145,9 +145,10 @@ def classify_manifold(t: Array) -> AbstractRiemannianManifold:
     Note: ``OrthogonalManifold`` and ``Orthogonal2qManifold`` are defined
     in this module for callers that want an explicit O(d) constraint, but
     nothing selects them: not this function, and no basis or trainer in the
-    package. Tensors that are exactly real stay real through
+    package. A basis whose tensors are all exactly real stays real through
     ``UnitaryManifold`` under a real objective (the Cayley retraction with a
-    real ``W`` preserves it), which is how ``RealRichBasis`` trains.
+    real ``W`` preserves it), which is how ``RealRichBasis`` trains. One
+    complex tensor in the circuit is enough to make the others complex.
     """
     if is_unitary_general(t):
         return UnitaryManifold(d=t.shape[0])

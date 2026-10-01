@@ -122,7 +122,7 @@ def _build_jit_adam_step(
     def step_fn(tensors_list, m_list, v_list, batch, lr, iter_1based):
         # Forward + backward; loss comes "for free" alongside grads.
         loss_val, raw_grads = val_grad_fn(tensors_list, batch)
-        # Wirtinger conjugation: JAX returns ∂f/∂z̄, Julia Zygote returns ∂f/∂z.
+        # Wirtinger conjugation: JAX returns the conjugate of what Julia's Zygote does.
         # See CLAUDE.md §1 — must stay or trajectories drift.
         grads = [jnp.conj(g) for g in raw_grads]
 

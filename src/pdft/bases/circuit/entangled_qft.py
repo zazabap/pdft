@@ -50,8 +50,10 @@ def extract_entangle_phases(tensors: list[Array], entangle_indices: list[int]) -
     return extract_phases(tensors, entangle_indices)
 
 
-# Upstream's name (src/entangled_qft.jl:36-42) for the tensor of an entanglement
-# gate. It is an ordinary controlled phase, in the compact 2x2 form Yao emits.
+# The tensor an entanglement gate is stored as: an ordinary controlled phase, in
+# the compact 2x2 form Yao emits. Upstream exports a function of this name
+# (src/entangled_qft.jl:36-42) that returns `[1 0; 0 e^{i phi}]` instead, which is
+# not what its own circuit contracts.
 entanglement_gate = controlled_phase_diag
 
 

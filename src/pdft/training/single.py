@@ -1,4 +1,4 @@
-"""Single-target training loop: upstream's one-image trainer."""
+"""Single-target training loop: `optimize` on one image, as the Julia goldens harness runs it."""
 
 from __future__ import annotations
 

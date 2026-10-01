@@ -40,9 +40,9 @@ Array = jax.Array
 def _resolve_optimizer(spec, lr: float, max_grad_norm: float | None):
     """Build a fresh optimizer instance with the given lr/max_grad_norm.
 
-    Accepts either a string name (`"gd"`/`"adam"`) or a class
-    (`RiemannianGD`/`RiemannianAdam`); the latter is reconstructed with new
-    `lr` so the cosine schedule can vary the learning rate per step.
+    Accepts either a string name (`"gd"`/`"adam"`) or an instance
+    (`RiemannianGD(...)`/`RiemannianAdam(...)`); the latter is rebuilt with the
+    new `lr` so the cosine schedule can vary the learning rate per step.
     """
     if isinstance(spec, str):
         name = spec.lower()
@@ -150,7 +150,8 @@ def train_basis_batched(
     frozen_indices : list[int] | None, optional
         List of integer indices into ``basis.tensors``.  Tensors at these
         indices are NOT updated during training — they stay at their initial
-        values throughout.  Each step computes gradients on all tensors
+        values throughout (bit for bit under Adam; under GD a frozen phase
+        tensor can move by one rounding, 1e-16).  Each step computes gradients on all tensors
         normally; the update is then suppressed for frozen indices BEFORE any
         optimizer state is mutated (so Adam's moment buffers for frozen indices
         remain zero).  Useful for experiments that train only a subset of a

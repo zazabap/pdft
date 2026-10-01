@@ -97,7 +97,8 @@ class CircuitBasis(BasisTransforms):
     ``code`` and ``inv_code`` are the program's forward and inverse appliers;
     they compare by program, so they and ``program`` are left out of the
     ``repr``. To compare two bases use ``bases_allclose``: ``==`` compares the
-    tensor lists elementwise and raises on arrays with more than one element.
+    tensor lists and raises as soon as it reaches two distinct arrays (it is
+    ``True`` only when every tensor is the same object).
     ``program`` is derived, never passed in, which keeps
     ``dataclasses.replace(basis, tensors=...)`` working on the bases whose
     fields are all constructor arguments.

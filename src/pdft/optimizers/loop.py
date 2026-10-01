@@ -49,9 +49,10 @@ def optimize(
         _write_back(state)
 
         raw_grads = grad_fn(state.current_tensors)
-        # JAX and Julia's Zygote use opposite Wirtinger conventions for gradients
-        # of real-valued functions of complex inputs: JAX returns ∂f/∂z̄ while
-        # Julia returns ∂f/∂z. These are complex conjugates. To match Julia's
+        # JAX and Julia's Zygote use opposite conventions for the gradient of a
+        # real-valued function of complex inputs: JAX returns ∂f/∂x − i ∂f/∂y
+        # (twice ∂f/∂z), Zygote ∂f/∂x + i ∂f/∂y (twice ∂f/∂z̄, the direction of
+        # steepest ascent). These are complex conjugates. To match Julia's
         # trajectory (and produce correct updates w.r.t. the real manifold
         # structure), we conjugate the raw gradient before projection.
         raw_grads = [jnp.conj(g) for g in raw_grads]

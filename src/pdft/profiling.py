@@ -52,7 +52,7 @@ from .training.schedules import cosine_with_warmup as _cosine_with_warmup
 @dataclass
 class StepRecord:
     step: int
-    phase: str  # "compile" (first step JIT) | "warm" (post-JIT) | "val"
+    phase: str  # "compile" (first step JIT) | "warm" (the first of these compiles again) | "val"
     wall_s: float
     loss: float | None = None
 
@@ -159,7 +159,9 @@ def profile_training(
     HLO trace at `trace_dir` (open with `tensorboard --logdir <dir>`).
 
     The first step's wall-clock is dominated by JIT compile and tagged
-    "compile"; subsequent steps are tagged "warm". Val passes (when
+    "compile"; subsequent steps are tagged "warm". The first "warm" step
+    compiles a second time (its inputs are committed to a device, another jit
+    signature), so leave it out of a timing as well. Val passes (when
     `val_every > 0`) are tagged "val".
     """
     if optimizer.lower() != "adam":

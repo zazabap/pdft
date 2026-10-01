@@ -297,11 +297,11 @@ def _one_qubit(pic: Array, ax: int, T: Array, inverse: bool, slices: bool) -> Ar
     the axis, asking for exact matmul precision: in single precision XLA
     otherwise lowers the contraction to TF32 on recent GPUs, which costs three
     digits. ``slices`` combines the two slices of the axis explicitly, with no
-    contraction at all. Measured on an L1 gradient of ``QFTBasis`` on one
-    machine: on a GPU slices are 2 to 6 times faster at every size (41 ms
-    against 7 ms at 512x512); on a CPU the two are within a factor of two of
-    each other, either way depending on the size, and slices compile more
-    slowly. They also change the low bits. Hence opt-in.
+    contraction at all. Measured on an L1 gradient of ``QFTBasis`` in double
+    precision on one machine: on a GPU slices are 2 to 6 times faster (41 ms
+    against 7 ms at 512x512); on a CPU between twice slower, for small
+    circuits, and about even; and slices compile more slowly. They also
+    change the low bits. Hence opt-in.
     """
     if slices:
         U = T.T if inverse else T
