@@ -90,7 +90,7 @@ Yao numbers qubits from the least significant bit and the QFT circuit has no fin
 QFTBasis(m, n).forward_transform(bit_reverse(x)) == np.fft.ifft2(x, norm="ortho")
 ```
 
-where `circuit.bit_reverse` reverses the bits of the row index and of the column index (`Pi x Pi`, an involution). Two things to keep straight: the sign is numpy's *inverse* transform, and the frame is a fixed pixel permutation of the image. Neither is a bug and neither may be "fixed" in the basis: the Julia goldens encode both. Sparsity does not care about a pixel permutation. Anything defined on the pixels does (a sampling mask drawn from a seed, a figure): apply `bit_reverse` to the image going in and to the reconstruction coming out. `tests/test_hooks.py` pins the identity.
+where `circuit.bit_reverse` reverses the bits of the row index and of the column index (`Pi x Pi`, an involution). Two things to keep straight: the sign is numpy's *inverse* transform, and the frame is a fixed pixel permutation of the image. Neither is a bug and neither may be "fixed" in the basis: the Julia goldens encode both. Sparsity does not care about a pixel permutation. Anything defined on the pixels does (a sampling mask drawn from a seed, a figure): apply `bit_reverse` to the image going in and to the reconstruction coming out. `tests/circuit/test_bit_reverse.py` pins the identity.
 
 ### 12. Model variants are views of a basis, not new representations
 
@@ -185,7 +185,7 @@ After regenerating goldens: also update `__upstream_ref__` in `src/pdft/__init__
 Three layers (per spec section 7):
 
 1. **Parity tests** (`tests/parity/test_*.py`) — load committed `.npz` / `.json` goldens from `reference/goldens/` and assert Python matches Julia. These are the load-bearing correctness tests.
-2. **Property tests** (`tests/test_<module>.py` and `tests/<subpackage>/`) — math-invariant checks (unitarity preserved, round-trip identity, monotone descent, …). Don't depend on Julia. `tests/circuit/einsum_reference.py` is the single-einsum builder the package used before the gate walk, kept as a test-only second implementation: `test_einsum_reference.py` checks the walk against it for every family at random tensors. `tests/bases/test_contracts.py` runs what every basis has in common over one registry of basis configurations (`tests/basis_cases.py`), including the precision and shape each family's transforms accept and return (§13); add a new basis to that registry.
+2. **Property tests** (`tests/test_<module>.py` and `tests/<subpackage>/`) — math-invariant checks (unitarity preserved, round-trip identity, monotone descent, …). Don't depend on Julia. The test tree mirrors `src/`: `tests/circuit/` covers `circuit/builder.py` (`test_gates.py`, `test_program.py`, `test_applier.py`, `test_bit_reverse.py`), `tests/bases/circuit/` the family emitters, `tests/bases/` the shared basis machinery. Name a test file after what it tests, not after the change that added it. `tests/circuit/test_applier.py` checks the gate walk against a single einsum, a second statement of what a gate list means, for every registered circuit at random tensors. `tests/bases/test_contracts.py` runs what every basis has in common over one registry of basis configurations (`BASES` in `tests/helpers.py`), including the precision and shape each family's transforms accept and return (§13); add a new basis to that registry. `tests/helpers.py` also holds the random inputs several files share: use them before writing another.
 3. **Smoke / integration** (`tests/test_smoke.py`, `tests/training/test_integration.py`).
 
 Coverage gate is `--cov-fail-under=90`. Don't add tests that reduce per-module coverage below the line; if a new module legitimately needs more code, also add the property tests for it.
@@ -216,7 +216,7 @@ If you find another mismatch:
 ## What NOT to do
 
 - **Don't add `optax`** as a dependency. The optimizer logic is hand-rolled to match Julia's exact moment-update math. `optax`'s defaults and FP order will diverge from Julia.
-- **Don't bring back a whole-circuit einsum in the package.** Circuits are applied one gate at a time: no contraction path to search, no 52-label limit. The einsum form survives only as the test reference (`tests/circuit/einsum_reference.py`), which uses the `"greedy"` path; `"optimal"` is exponential in tensor count and hangs on the 3×3 QFT (12 tensors).
+- **Don't bring back a whole-circuit einsum in the package.** Circuits are applied one gate at a time: no contraction path to search, no 52-label limit. The einsum form survives only as the oracle in `tests/circuit/test_applier.py`, which uses the `"greedy"` path; `"optimal"` is exponential in tensor count and hangs on the 3×3 QFT (12 tensors).
 - **Don't add explicit JIT to `train_basis`.** It calls a basis-typed loss closure with Python-list pytrees; JIT decisions are best left to inner functions where the static-vs-leaf split is clearer.
 - **Don't introduce backwards-compat shims** for the JSON schema. If the schema changes, bump its version and regenerate goldens.
 - **Don't add ML scaffolding** (no DataLoader, no Trainer-like classes, no Lightning). `train_basis` is upstream's one-target-image loop and `train_basis_batched` its `_train_basis_core`; both are plain functions.
