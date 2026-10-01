@@ -14,7 +14,7 @@ from typing import Protocol, runtime_checkable
 import jax
 import jax.numpy as jnp
 
-from .circuit.builder import apply_circuit
+from .circuit.builder import contract_circuit
 
 Array = jax.Array
 
@@ -111,7 +111,7 @@ def _scalar_loss(
             raise ValueError("MSELoss requires inverse_code to be provided")
         truncated = topk_truncate(pred, loss.k)
         conj_tensors = [jnp.conj(t) for t in tensors]  # type: ignore[arg-type]
-        reconstructed = apply_circuit(conj_tensors, inverse_code, m, n, truncated)  # type: ignore[arg-type]
+        reconstructed = contract_circuit(conj_tensors, inverse_code, m, n, truncated)  # type: ignore[arg-type]
         base = jnp.sum(jnp.abs(target - reconstructed) ** 2)
         # Optional hook for MSELoss subclasses that add regularizers or
         # auxiliary scalar terms while preserving vanilla MSELoss behavior.
@@ -151,7 +151,11 @@ def loss_function(
     inverse_code : callable, optional
         Required for MSELoss; the inverse applier (a basis's ``inv_code``).
     """
-    pred = apply_circuit(tensors, code, m, n, pic)
+    if pic.shape != (2**m, 2**n):
+        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
+    # No cast: with single-precision tensors the loss is computed, and its
+    # gradient taken, in single precision.
+    pred = contract_circuit(tensors, code, m, n, pic)
     return _scalar_loss(pred, pic, loss, tensors, m, n, inverse_code)
 
 

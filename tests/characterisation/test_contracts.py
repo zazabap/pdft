@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import pdft
 from pdft.bases import bases_allclose
 from pdft.bases.block.block import BlockCode
 
@@ -105,9 +106,78 @@ def test_code_maps_over_a_stack_of_images(case):
             np.testing.assert_allclose(mapped[i], code(*tensors, stack[i]), rtol=0, atol=1e-12)
 
 
+# Two ways a transform reaches its circuit, both as on `main`. The strict
+# bases check the image's shape and work in double precision. Rich, RealRich
+# and Blocked do neither: any image with the right number of elements is
+# reshaped, and the precision is whatever the tensors and the image promote to.
+LOOSE = (pdft.RichBasis, pdft.RealRichBasis, pdft.BlockedBasis)
+
+
+def _single_precision(basis):
+    leaves, treedef = jax.tree_util.tree_flatten(basis)
+    return jax.tree_util.tree_unflatten(treedef, [leaf.astype(jnp.complex64) for leaf in leaves])
+
+
 @pytest.mark.parametrize("case", CASES)
 def test_transforms_refuse_another_image_size(case):
     basis = BASES[case]()
     rows, cols = basis.image_size
-    with pytest.raises((ValueError, TypeError)):
-        basis.forward_transform(jnp.zeros((rows * 2, cols)))
+    refusal = TypeError if isinstance(basis, LOOSE) else ValueError
+    for transform in (basis.forward_transform, basis.inverse_transform):
+        with pytest.raises(refusal):
+            transform(jnp.zeros((rows * 2, cols)))
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_images_of_another_shape_with_the_right_size(case):
+    basis = BASES[case]()
+    rows, cols = basis.image_size
+    image = jnp.asarray(case_rng(case).standard_normal((rows, cols)))
+    expected = basis.forward_transform(image)
+    others = [image.reshape(-1), image[None]]
+    if rows != cols:
+        others.append(image.reshape(cols, rows))
+    for other in others:
+        if isinstance(basis, LOOSE):
+            np.testing.assert_array_equal(basis.forward_transform(other), expected)
+        else:
+            with pytest.raises(ValueError, match="pic shape must be"):
+                basis.forward_transform(other)
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_precision_of_the_transforms(case):
+    """Double-precision tensors give complex128 whatever the image. Single-precision
+    tensors stay single precision through the loose bases and are promoted by the
+    strict ones, which cast the image."""
+    basis = BASES[case]()
+    single = _single_precision(basis)
+    real = case_rng(case).standard_normal(basis.image_size)
+    for image_dtype in (jnp.float32, jnp.float64, jnp.complex64, jnp.complex128):
+        image = jnp.asarray(real, dtype=image_dtype)
+        narrow = image_dtype in (jnp.float32, jnp.complex64)
+        for transform in ("forward_transform", "inverse_transform"):
+            assert getattr(basis, transform)(image).dtype == jnp.complex128
+            wanted = jnp.complex64 if isinstance(basis, LOOSE) and narrow else jnp.complex128
+            assert getattr(single, transform)(image).dtype == wanted, (transform, image_dtype)
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_the_loss_keeps_the_precision_of_its_operands(case):
+    """`loss_function` never casts: single-precision tensors and image give a
+    single-precision loss and gradient, for every basis."""
+    basis = BASES[case]()
+    single = _single_precision(basis)
+    m, n = basis.m, basis.n
+    image = jnp.asarray(case_rng(case).standard_normal(basis.image_size), dtype=jnp.float32)
+    for loss in (pdft.L1Norm(), pdft.MSELoss(k=3)):
+
+        def value(tensors, b, loss=loss):
+            return pdft.loss_function(tensors, m, n, b.code, image, loss, inverse_code=b.inv_code)
+
+        assert value(list(single.tensors), single).dtype == jnp.float32
+        assert value(list(basis.tensors), basis).dtype == jnp.float64
+        gradient = jax.grad(value)(list(single.tensors), single)
+        assert all(g.dtype == jnp.complex64 for g in gradient)
+    with pytest.raises(ValueError, match="pic shape must be"):
+        pdft.loss_function(list(basis.tensors), m, n, basis.code, image.reshape(-1), pdft.L1Norm())

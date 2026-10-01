@@ -17,12 +17,15 @@ import json
 import os
 import platform
 import subprocess
+from pathlib import Path
 
 # Snapshots are CPU results; a GPU agrees with them to rounding, not to the bit.
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import jax  # noqa: E402
 import numpy as np  # noqa: E402
+
+import pdft  # noqa: E402
 
 from .cases import SNAPSHOT_PATH, all_records  # noqa: E402
 
@@ -42,7 +45,10 @@ def main() -> None:
     args = parser.parse_args()
     records = all_records()
     meta = {
+        # the commit of the checkout this runs in, and the package that was
+        # actually imported: they differ when PYTHONPATH points elsewhere
         "commit": _commit(),
+        "source": str(Path(pdft.__file__).resolve().parent),
         "jax": jax.__version__,
         "numpy": np.__version__,
         "python": platform.python_version(),

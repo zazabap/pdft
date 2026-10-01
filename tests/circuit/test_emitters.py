@@ -94,12 +94,29 @@ def test_family_phase_helpers_are_the_one_implementation():
     from pdft.circuit.builder import select_last_n_cp_indices
 
     for module, indices, phases in (
-        (entangled_qft, "get_entangle_tensor_indices", "extract_entangle_phases"),
         (tebd, "get_tebd_gate_indices", "extract_tebd_phases"),
         (mera, "get_mera_gate_indices", "extract_mera_phases"),
     ):
         assert getattr(module, indices) is select_last_n_cp_indices
         assert getattr(module, phases) is extract_phases
+
+    # every helper keeps the parameter names it has upstream, for keyword callers
+    tensors = [HADAMARD, controlled_phase_diag(0.3), HADAMARD, controlled_phase_diag(-1.1)]
+    for module, indices, count, phases, which in (
+        (
+            entangled_qft,
+            "get_entangle_tensor_indices",
+            "n_entangle",
+            "extract_entangle_phases",
+            "entangle_indices",
+        ),
+        (tebd, "get_tebd_gate_indices", "n_gates", "extract_tebd_phases", "gate_indices"),
+        (mera, "get_mera_gate_indices", "n_gates", "extract_mera_phases", "gate_indices"),
+    ):
+        found = getattr(module, indices)(tensors=tensors, **{count: 2})
+        assert found == select_last_n_cp_indices(tensors, 2) == [1, 3]
+        read = getattr(module, phases)(tensors=tensors, **{which: found})
+        assert read == extract_phases(tensors, found) == pytest.approx([0.3, -1.1])
 
 
 def test_hadamards_then_layers_splits_the_phases_between_the_registers():
@@ -196,7 +213,10 @@ def test_identity_tensors_make_every_gate_kind_do_nothing(inverse):
     assert [t.shape for t in tensors] == [GATE_SHAPES[kind] for kind, _ in steps]
     rng = np.random.default_rng(1)
     pic = jnp.asarray(rng.normal(size=(2, 2, 2, 2)) + 1j * rng.normal(size=(2, 2, 2, 2)))
-    np.testing.assert_array_equal(CircuitCode(program, inverse=inverse)(*tensors, pic), pic)
+    # to rounding, not to the bit: a GPU's contraction with an identity is not exact
+    np.testing.assert_allclose(
+        CircuitCode(program, inverse=inverse)(*tensors, pic), pic, rtol=0, atol=1e-14
+    )
     with pytest.raises(AssertionError, match="unknown gate kind: SWAP"):
         identity_tensor("SWAP")
 

@@ -26,7 +26,7 @@ import time
 import jax
 import jax.numpy as jnp
 
-from ...circuit.builder import Gate, two_registers, u4_gate
+from ...circuit.builder import Gate, contract_circuit, two_registers, u4_gate
 from ...optimizers import RiemannianAdam, optimize
 from ..core import CircuitBasis
 from .qft import qft_gates_1d
@@ -66,6 +66,7 @@ class RichBasis(CircuitBasis):
 
     emit = staticmethod(rich_gates)
     freezes_to_blocked = True
+    _run = staticmethod(contract_circuit)
 
 
 def _dct_matrix(n: int) -> Array:

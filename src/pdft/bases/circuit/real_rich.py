@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import jax
 
-from ...circuit.builder import Gate, identity_tensor, two_registers
+from ...circuit.builder import Gate, contract_circuit, identity_tensor, two_registers
 from ..core import CircuitBasis
 from .qft import qft_gates_1d
 
@@ -70,6 +70,7 @@ class RealRichBasis(CircuitBasis):
 
     emit = staticmethod(real_rich_gates)
     freezes_to_blocked = True
+    _run = staticmethod(contract_circuit)
 
 
 __all__ = ["RealRichBasis"]

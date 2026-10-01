@@ -247,3 +247,19 @@ def test_sampled_check_draws_on_the_manifold_and_leaves_frozen_tensors_alone():
     assert everything["holds"] and everything["worst_mu"] == pytest.approx(1.0, abs=1e-10)
     # the same seed draws the same points
     assert sampled_flat_modulus(b, trials=2, seed=3) == sampled_flat_modulus(b, trials=2, seed=3)
+
+
+def test_a_basis_without_a_program_is_classified_by_its_tensors():
+    """The coherence functions take any object with the basis interface, as before."""
+
+    class Duck:
+        def __init__(self, basis):
+            self.m, self.n, self.tensors = basis.m, basis.n, list(basis.tensors)
+            self.image_size, self.forward_transform = basis.image_size, basis.forward_transform
+
+    qft = QFTBasis(m=2, n=2)
+    duck = Duck(qft)
+    assert diagonal_tensor_indices(duck) == diagonal_tensor_indices(qft) == [4, 5]
+    assert coherence(duck) == pytest.approx(1.0, abs=1e-12)
+    assert not certify_flat_modulus(duck)
+    assert certify_flat_modulus(duck, frozen_indices=[0, 1, 2, 3])

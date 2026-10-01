@@ -20,6 +20,7 @@ Turns a Yao-style gate list into a JAX einsum, and caches the contraction path a
    compile_circuit
    apply_program
    apply_circuit
+   contract_circuit
    bit_reverse
    register_width
    Gate
