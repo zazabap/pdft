@@ -29,7 +29,7 @@ from ..optimizers import (
     RiemannianGD,
     optimize,
 )
-from .adam_step import _build_jit_adam_step, init_adam_moments
+from .adam_step import adam_stepper
 from .eval_loop import evaluate_and_check_early_stop
 from .result import TrainingResult
 from .schedules import cosine_with_warmup
@@ -214,21 +214,15 @@ def train_basis_batched(
     # learning rate of `spec` is a placeholder: the schedule sets it per step.
     spec = _resolve_optimizer(optimizer, lr=lr_peak, max_grad_norm=max_grad_norm)
     if isinstance(spec, RiemannianAdam):
-        step_fn = _build_jit_adam_step(
+        adam_step = adam_stepper(
             basis,
             loss,
             beta1=spec.beta1,
             beta2=spec.beta2,
             eps=spec.eps,
             max_grad_norm=spec.max_grad_norm,
-            frozen_set=frozen_set if frozen_set else None,
+            frozen_set=frozen_set,
         )
-
-        # The moment buffers are made ONCE and persist across all steps,
-        # matching Julia's design; a per-batch `optimize(max_iter=1)` would
-        # zero them on every batch.
-        m_state, v_state = init_adam_moments(basis.tensors)
-
         pad_count = n_batches * batch_size - len(train_imgs)
 
         def _batches(imgs: list[Array]) -> list[list[Array]]:
@@ -238,16 +232,7 @@ def train_basis_batched(
             return [padded[b * batch_size : (b + 1) * batch_size] for b in range(n_batches)]
 
         def _step(tensors: list[Array], batch_imgs: list[Array], lr_t: float, step: int):
-            nonlocal m_state, v_state
-            tensors, m_state, v_state, loss_val = step_fn(
-                tensors,
-                m_state,
-                v_state,
-                jnp.stack(batch_imgs, axis=0),
-                jnp.asarray(lr_t),
-                jnp.asarray(step, dtype=jnp.int32),
-            )
-            return tensors, loss_val
+            return adam_step(tensors, jnp.stack(batch_imgs, axis=0), lr_t, step)
 
     else:
         # GD path (Armijo line search). The last batch may be short: nothing
@@ -269,7 +254,7 @@ def train_basis_batched(
                 max_iter=1,
                 tol=0.0,
                 record_loss=True,
-                frozen_indices=frozen_set if frozen_set else None,
+                frozen_indices=frozen_set,
             )
             return tensors, step_trace[-1] if len(step_trace) >= 2 else step_trace[0]
 

@@ -70,7 +70,7 @@ class RealRichBasis(CircuitBasis):
 
     emit = staticmethod(real_rich_gates)
     freezes_to_blocked = True
-    _run = staticmethod(contract_circuit)
+    _apply = staticmethod(contract_circuit)
 
 
-__all__ = ["RealRichBasis"]
+__all__ = ["RealRichBasis", "real_rich_gates"]

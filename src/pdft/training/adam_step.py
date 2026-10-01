@@ -37,6 +37,50 @@ def init_adam_moments(tensors) -> tuple[list[Array], list[Array]]:
     return [m for m, _ in moments], [v for _, v in moments]
 
 
+def adam_stepper(
+    basis,
+    loss: AbstractLoss,
+    *,
+    beta1: float,
+    beta2: float,
+    eps: float,
+    max_grad_norm: float | None,
+    frozen_set: frozenset[int] | None = None,
+):
+    """``step(tensors, batch, lr, step_number) -> (tensors, loss)``: the fused step with its moments.
+
+    The moment buffers are made once, at zero, and kept between calls, so
+    they accumulate over the whole run as in Julia; a per-batch
+    ``optimize(max_iter=1)`` would zero them on every batch. ``lr`` and
+    ``step_number`` are plain numbers: they reach the compiled step as traced
+    arrays, so a schedule does not recompile it.
+    """
+    step_fn = _build_jit_adam_step(
+        basis,
+        loss,
+        beta1=beta1,
+        beta2=beta2,
+        eps=eps,
+        max_grad_norm=max_grad_norm,
+        frozen_set=frozen_set,
+    )
+    m_state, v_state = init_adam_moments(basis.tensors)
+
+    def step(tensors: list[Array], batch: Array, lr: float, step_number: int):
+        nonlocal m_state, v_state
+        tensors, m_state, v_state, loss_value = step_fn(
+            tensors,
+            m_state,
+            v_state,
+            batch,
+            jnp.asarray(lr),
+            jnp.asarray(step_number, dtype=jnp.int32),
+        )
+        return tensors, loss_value
+
+    return step
+
+
 def _build_jit_adam_step(
     basis,
     loss: AbstractLoss,

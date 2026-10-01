@@ -1,4 +1,4 @@
-"""Validation eval + early-stopping bookkeeping (shared by Adam and GD batched paths)."""
+"""Validation eval + early-stopping bookkeeping for the epoch loop of `train_basis_batched`."""
 
 from __future__ import annotations
 
@@ -27,10 +27,6 @@ def evaluate_and_check_early_stop(
 
     Returns:
         (best_tensors, best_val, patience, stop, val_loss_recorded)
-
-    Behavior identical to the bookkeeping previously inlined in both the
-    Adam and GD paths of `train_basis_batched`. The only consolidation is
-    that one helper now serves both branches; control flow is unchanged.
 
     - If validation isn't scheduled this epoch (per `val_every_k_epochs`),
       `val_loss_recorded` is NaN and patience is not advanced.

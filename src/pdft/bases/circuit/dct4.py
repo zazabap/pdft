@@ -68,7 +68,6 @@ Array = jax.Array
 
 
 __all__ = [
-    "_cry",
     "_dct4_gates_1d",
     "dct4_code",
     "dct4_ft_mat",
@@ -102,7 +101,6 @@ def _cry_u4(theta: float) -> Array:
 # builder's ``CRY`` kind applies it where the control is 1, so the structure
 # is fixed and the leaf has one angle.
 _TWIDDLES = {"o4": ("U4", _cry_u4), "controlled": ("CRY", _ry)}
-_cry = _ry
 
 
 def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> list[Gate]:
@@ -130,7 +128,8 @@ def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> l
         for q in lower:
             gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0))
         # T: affine R_y phase-gradient (one base R_y on b, one CR_y per lower bit)
-        gates.append(Gate(kind="H", qubits=(Q(b),), tensor=_ry(np.pi / (2 * size)), phase=0.0))
+        base = np.pi / (2 * size)
+        gates.append(Gate(kind="H", qubits=(Q(b),), tensor=_ry(base), phase=float(base)))
         for p in range(n_qubits - 1 - k):
             theta = np.pi * (2**p) / size
             gates.append(

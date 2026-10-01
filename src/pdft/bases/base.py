@@ -20,31 +20,18 @@ from .circuit.entangled_qft import entangled_qft_gates
 from .circuit.mera import _n_mera_gates, mera_gates
 from .circuit.qft import qft_gates
 from .circuit.tebd import _n_tebd_gates, tebd_gates
-from .core import (
-    AbstractSparseBasis,
-    CircuitBasis,
-    bases_allclose,
-    cp_phases,
-    program_of,
-    with_cp_phases,
-    with_tensors,
-)
+from .core import AbstractSparseBasis, CircuitBasis, bases_allclose
 
 Array = jax.Array
 
 __all__ = [
     "AbstractSparseBasis",
-    "CircuitBasis",
     "DCT4Basis",
     "EntangledQFTBasis",
     "MERABasis",
     "QFTBasis",
     "TEBDBasis",
     "bases_allclose",
-    "cp_phases",
-    "program_of",
-    "with_cp_phases",
-    "with_tensors",
 ]
 
 
@@ -71,7 +58,7 @@ class QFTBasis(CircuitBasis):
 
 @dataclass(init=False)
 class EntangledQFTBasis(CircuitBasis):
-    """QFT + appended entanglement layer on `min(m, n)` row/col qubit pairs.
+    """QFT with an entanglement layer on `min(m, n)` row/col qubit pairs, after it or before it.
 
     Mirror of upstream src/basis.jl:280-500.
     """

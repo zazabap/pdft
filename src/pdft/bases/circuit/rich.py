@@ -66,7 +66,7 @@ class RichBasis(CircuitBasis):
 
     emit = staticmethod(rich_gates)
     freezes_to_blocked = True
-    _run = staticmethod(contract_circuit)
+    _apply = staticmethod(contract_circuit)
 
 
 def _dct_matrix(n: int) -> Array:
@@ -145,4 +145,4 @@ def fit_to_dct(
     return tensors
 
 
-__all__ = ["RichBasis", "fit_to_dct"]
+__all__ = ["RichBasis", "fit_to_dct", "rich_gates"]

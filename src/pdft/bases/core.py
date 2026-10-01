@@ -51,7 +51,7 @@ class AbstractSparseBasis(Protocol):
 class BasisTransforms:
     """What follows from ``m``, ``n``, ``tensors``, ``code`` and ``inv_code``, however a basis holds them.
 
-    ``_run`` is how a transform reaches the circuit. The default,
+    ``_apply`` is how a transform reaches the circuit. The default,
     ``apply_circuit``, checks the image's shape and works in double precision.
     The Rich, RealRich and Blocked bases set it to ``contract_circuit``, which
     does neither: they were written that way, single-precision tensors stay
@@ -59,7 +59,7 @@ class BasisTransforms:
     results that exist.
     """
 
-    _run: ClassVar[Callable[..., Array]] = staticmethod(apply_circuit)
+    _apply: ClassVar[Callable[..., Array]] = staticmethod(apply_circuit)
 
     @property
     def inv_tensors(self) -> list[Array]:
@@ -80,12 +80,12 @@ class BasisTransforms:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        return self._run(self.tensors, self.code, self.m, self.n, pic)
+        return self._apply(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
         """``conj(tensors)`` through ``inv_code``, exactly like Julia's
         ``basis.inverse_code(conj.(basis.tensors)..., ...)``."""
-        return self._run([jnp.conj(t) for t in self.tensors], self.inv_code, self.m, self.n, pic)
+        return self._apply([jnp.conj(t) for t in self.tensors], self.inv_code, self.m, self.n, pic)
 
 
 @dataclass(init=False)
@@ -161,11 +161,13 @@ class CircuitBasis(BasisTransforms):
         compiled, initial = compile_program(gates, m, n)
         self.tensors = list(tensors) if tensors is not None else initial
         self.code = code if code is not None else CircuitCode(compiled)
-        self.inv_code = inv_code if inv_code is not None else CircuitCode(compiled, inverse=True)
-        # A code that is passed in defines the circuit, so the program is read
-        # from it: the two cannot then disagree when a basis is rebuilt with
-        # another instance's code.
+        # A code that is passed in defines the circuit. The program is read
+        # from it and the inverse defaults to that program's, so neither can
+        # disagree with it when a basis is rebuilt with another instance's code.
         self.program = getattr(self.code, "program", compiled)
+        self.inv_code = (
+            inv_code if inv_code is not None else CircuitCode(self.program, inverse=True)
+        )
 
 
 def _flatten(basis: CircuitBasis):

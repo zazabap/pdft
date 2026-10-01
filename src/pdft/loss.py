@@ -14,7 +14,7 @@ from typing import Protocol, runtime_checkable
 import jax
 import jax.numpy as jnp
 
-from .circuit.builder import contract_circuit
+from .circuit.builder import check_image_shape, contract_circuit
 
 Array = jax.Array
 
@@ -151,8 +151,7 @@ def loss_function(
     inverse_code : callable, optional
         Required for MSELoss; the inverse applier (a basis's ``inv_code``).
     """
-    if pic.shape != (2**m, 2**n):
-        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
+    check_image_shape(pic, m, n)
     # No cast: with single-precision tensors the loss is computed, and its
     # gradient taken, in single precision.
     pred = contract_circuit(tensors, code, m, n, pic)

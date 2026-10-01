@@ -256,6 +256,13 @@ class Program:
 
 def compile_program(gates: list[Gate], m: int, n: int) -> tuple[Program, list[Array]]:
     """The program of a gate sequence on ``m + n`` qubits, and its tensors in stored order."""
+    for i, g in enumerate(gates):
+        expected = GATE_SHAPES.get(g["kind"])
+        if expected is not None and tuple(g["tensor"].shape) != expected:
+            raise ValueError(
+                f"gate {i} of kind {g['kind']!r} needs a tensor of shape {expected}, "
+                f"got {tuple(g['tensor'].shape)}"
+            )
     perm = _hadamard_first_perm([g["tensor"] for g in gates])
     slot = [0] * len(gates)
     for position, step in enumerate(perm):
@@ -453,6 +460,12 @@ def compile_circuit(
     return CircuitCode(program, inverse), tensors
 
 
+def check_image_shape(pic: Array, m: int, n: int) -> None:
+    """Refuse an image that is not ``(2**m, 2**n)``."""
+    if pic.shape != (2**m, 2**n):
+        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
+
+
 def contract_circuit(tensors: list[Array], code: CircuitCode, m: int, n: int, pic: Array) -> Array:
     """Run ``code`` on ``pic`` laid out one axis per qubit, and give back a ``(2**m, 2**n)`` array.
 
@@ -479,8 +492,7 @@ def apply_circuit(
     complex128. Julia's ``ft_mat`` and ``ift_mat``: the inverse is the same
     call with the inverse code and conjugated tensors.
     """
-    if pic.shape != (2**m, 2**n):
-        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
+    check_image_shape(pic, m, n)
     return contract_circuit(tensors, code, m, n, pic.astype(jnp.complex128))
 
 

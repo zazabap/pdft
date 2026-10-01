@@ -24,7 +24,7 @@ axes, vmaps the inner code over the block-index dims, and permutes back.
 Yao little-endian convention preserved: block-index qubits are the
 HIGHER-numbered qubits per dimension (qubits m_inner+1..m_outer for rows),
 which correspond to LOW-INDEXED axes [0..block_log_m) in the (2,)^(m+n)
-tensor layout. See CLAUDE.md §2.
+tensor layout, the same convention as `pdft.circuit.builder._axis_of_qubit`.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ class BlockedBasis(BasisTransforms):
 
     Parameters
     ----------
-    inner : any pdft basis (QFTBasis, EntangledQFTBasis, TEBDBasis, MERABasis)
+    inner : any pdft basis, another BlockedBasis included
         Within-block parametric circuit at smaller m_inner = inner.m,
         n_inner = inner.n.
     block_log_m, block_log_n : int
@@ -118,7 +118,7 @@ class BlockedBasis(BasisTransforms):
     (one inner basis tiled).
     """
 
-    _run = staticmethod(contract_circuit)
+    _apply = staticmethod(contract_circuit)
 
     inner: Any
     block_log_m: int

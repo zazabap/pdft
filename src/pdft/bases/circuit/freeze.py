@@ -29,9 +29,6 @@ Array = jax.Array
 __all__ = ["freeze_as_blocked"]
 
 
-_identity_for_kind = identity_tensor
-
-
 def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[Any, list[int]]:
     """Return ``(basis_copy_with_identity_outer_gates, frozen_indices)``.
 
@@ -74,17 +71,17 @@ def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[A
         range(m + n - block_log_n + 1, m + n + 1)
     )
 
-    program = basis.program.sorted_steps
-    if len(program) != len(basis.tensors):
+    stored = basis.program.sorted_steps
+    if len(stored) != len(basis.tensors):
         raise AssertionError(
-            f"gate program length {len(program)} != tensor count {len(basis.tensors)}"
+            f"gate program length {len(stored)} != tensor count {len(basis.tensors)}"
         )
 
     new_tensors = [jnp.array(t, copy=True) for t in basis.tensors]
     frozen_indices: list[int] = []
-    for i, (kind, qubits) in enumerate(program):
+    for i, (kind, qubits) in enumerate(stored):
         if set(qubits) & block_qubits:
-            new_tensors[i] = _identity_for_kind(kind).astype(new_tensors[i].dtype)
+            new_tensors[i] = identity_tensor(kind).astype(new_tensors[i].dtype)
             frozen_indices.append(i)
 
     return with_tensors(basis, new_tensors), frozen_indices

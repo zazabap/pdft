@@ -2,7 +2,7 @@
 
 Mirror of upstream src/qft.jl. Replaces Yao.EasyBuild.qft_circuit +
 yao2einsum with an explicit gate chain. The gate sequence is the standard
-QFT decomposition (upstream src/entangled_qft.jl:51-77):
+QFT decomposition (written out in upstream src/entangled_qft.jl:64-78):
 
     For j = 1..n_qubits:
         H on qubit j
