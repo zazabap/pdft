@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import pdft
+from pdft.circuit import apply_circuit
 from pdft.manifolds import Unitary2qManifold, UnitaryManifold, group_by_manifold
 
 
@@ -127,9 +128,7 @@ def test_rich_basis_grad_finite():
     pic = jnp.asarray(_rand_pic(2, 2, seed=44))
 
     def loss_fn(tensors):
-        from pdft.loss import _apply_circuit
-
-        out = _apply_circuit(tensors, b.code, b.m, b.n, pic)
+        out = apply_circuit(tensors, b.code, b.m, b.n, pic)
         return jnp.sum(jnp.abs(out) ** 2)
 
     grads = jax.grad(loss_fn)(list(b.tensors))

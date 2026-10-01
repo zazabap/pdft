@@ -25,8 +25,6 @@ Parameter count at m=n=3 (8x8 block):
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import jax
 import jax.numpy as jnp
 
@@ -67,17 +65,8 @@ class RichBasis(CircuitBasis):
     Frobenius² ≈ 63.7).
     """
 
+    emit = staticmethod(rich_gates)
     freezes_to_blocked = True
-
-    def __init__(
-        self,
-        m: int,
-        n: int,
-        tensors: Sequence[Array] | None = None,
-        code: object | None = None,
-        inv_code: object | None = None,
-    ):
-        self._init(rich_gates(m, n), m, n, tensors, code, inv_code)
 
 
 def _dct_matrix(n: int) -> Array:

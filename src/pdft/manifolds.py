@@ -262,8 +262,8 @@ class Unitary2qManifold:
     """U(4) manifold for 2-qubit gates stored in (2, 2, 2, 2) tensor form.
 
     Storage convention: axes (out_ctrl, out_tgt, in_ctrl, in_tgt). This is
-    the canonical form for a 2-qubit gate as it appears in the einsum
-    builder (rank-4 to match 4 qubit-axis subscripts). All Riemannian
+    the canonical form for a 2-qubit gate as the circuit applier contracts
+    it (rank-4, one axis per qubit leg). All Riemannian
     operations reshape to (4, 4, n) internally and reuse the U(d=4) math.
     """
 

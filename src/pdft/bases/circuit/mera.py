@@ -15,11 +15,9 @@ import jax
 
 from ...circuit.builder import (
     Gate,
-    check_qubits,
     compile_circuit,
     extract_phases,
-    hadamard_gate,
-    phase_gate,
+    hadamards_then_layers,
     select_last_n_cp_indices,
 )
 
@@ -44,7 +42,7 @@ def _is_pow2(n: int) -> bool:
 
 
 def _n_mera_gates(n_qubits: int) -> int:
-    """Number of phase gates for one dim of MERA (upstream src/mera.jl:23)."""
+    """Number of phase gates for one dim of MERA (upstream src/mera.jl:23); none on one qubit."""
     return 2 * (n_qubits - 1)
 
 
@@ -52,26 +50,25 @@ def _mera_single_dim_gates(
     n_qubits: int,
     qubit_offset: int,
     phases: Sequence[float],
-    parametrization: str = "cp",
+    pair_gate: Callable[[int, int, float], Gate],
 ) -> list[Gate]:
     """Build MERA gate sequence for one dimension (upstream src/mera.jl:42-73).
 
     For k = log2(n_qubits) layers. Each layer l has stride s = 2^(l-1).
-    Disentanglers and isometries are emitted in interleaved pairs.
+    Disentanglers and isometries are emitted in interleaved pairs. A
+    one-qubit register has no layers and gets no gates.
 
-    ``parametrization`` is ``"cp"`` (diagonal, ``U(1)^4``) or ``"u4"``
-    (dense two-qubit, ``U(4)``): a MERA disentangler/isometry is a general
-    two-site unitary, so ``"u4"`` is the canonical family. Both start at
-    the same operator for a given ``phases``.
+    ``pair_gate(q_ctrl, q_tgt, phi)`` builds each of them: diagonal on
+    ``U(1)^4``, or dense on ``U(4)``, the canonical family since a MERA
+    disentangler/isometry is a general two-site unitary. Both start at the
+    same operator for a given ``phases``.
     """
     assert _is_pow2(n_qubits), f"n_qubits must be a power of 2, got {n_qubits}"
-    assert n_qubits >= 2, f"n_qubits must be >= 2, got {n_qubits}"
     expected = _n_mera_gates(n_qubits)
     assert len(phases) == expected, f"phases length {len(phases)} != expected {expected}"
 
     import math
 
-    pair_gate = phase_gate(parametrization)
     k = int(math.log2(n_qubits))
     gates: list[Gate] = []
     phase_idx = 0
@@ -116,53 +113,12 @@ def mera_gates(
     ``parametrization`` is ``"cp"`` (diagonal, ``U(1)^4``) or ``"u4"``
     (dense two-qubit, ``U(4)`` — the canonical disentangler/isometry).
     """
-    check_qubits(m, n)
-    phase_gate(parametrization)  # refuse an unknown one even when no gate is emitted
-    if m >= 2 and not _is_pow2(m):
-        raise ValueError(f"m must be a power of 2 when >= 2, got m={m}")
-    if n >= 2 and not _is_pow2(n):
-        raise ValueError(f"n must be a power of 2 when >= 2, got n={n}")
-
-    n_row_gates = _n_mera_gates(m) if m >= 2 else 0
-    n_col_gates = _n_mera_gates(n) if n >= 2 else 0
-    n_gates = n_row_gates + n_col_gates
-
-    if phases is None:
-        phases_list = [0.0] * n_gates
-    else:
-        phases_list = [float(p) for p in phases]
-    if len(phases_list) != n_gates:
-        raise ValueError(
-            f"phases must have length {n_gates} for {m}×{n} MERA "
-            f"({n_row_gates} row + {n_col_gates} col gates), got {len(phases_list)}"
-        )
-
-    # Layer 1: Hadamards on all qubits
-    gates = [hadamard_gate(q) for q in range(1, m + n + 1)]
-
-    # Layer 2a: Row MERA
-    if m >= 2:
-        gates.extend(
-            _mera_single_dim_gates(
-                m,
-                qubit_offset=0,
-                phases=phases_list[:n_row_gates],
-                parametrization=parametrization,
-            )
-        )
-
-    # Layer 2b: Col MERA
-    if n >= 2:
-        gates.extend(
-            _mera_single_dim_gates(
-                n,
-                qubit_offset=m,
-                phases=phases_list[n_row_gates:],
-                parametrization=parametrization,
-            )
-        )
-
-    return gates, n_row_gates, n_col_gates
+    for name, n_qubits in (("m", m), ("n", n)):
+        if n_qubits >= 2 and not _is_pow2(n_qubits):
+            raise ValueError(f"{name} must be a power of 2 when >= 2, got {name}={n_qubits}")
+    return hadamards_then_layers(
+        _mera_single_dim_gates, _n_mera_gates, m, n, phases, parametrization
+    )
 
 
 def mera_code(
@@ -173,7 +129,7 @@ def mera_code(
     inverse: bool = False,
     parametrization: str = "cp",
 ) -> tuple[Callable[..., Array], list[Array], int, int]:
-    """Return `(einsum_fn, initial_tensors, n_row_gates, n_col_gates)`; see `mera_gates`."""
+    """Return `(code, initial_tensors, n_row_gates, n_col_gates)`; see `mera_gates`."""
     gates, n_row_gates, n_col_gates = mera_gates(
         m, n, phases=phases, parametrization=parametrization
     )

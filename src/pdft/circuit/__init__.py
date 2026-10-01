@@ -1,8 +1,8 @@
-"""Circuit machinery: einsum builder + JIT closure cache.
+"""Circuit machinery shared by every basis: gates, programs and the applier.
 
-Shared by every basis. The builder converts a Yao-style gate list into a
-JAX einsum (Hadamard-first sort + Yao little-endian ordering preserved).
-The cache memoizes `jnp.einsum_path` results and the JIT'd closures.
+A family emits a Yao-style gate list; `compile_program` turns it into a
+`Program` and the tensors in stored order (Hadamard-first, Yao little-endian
+qubits); `CircuitCode` applies the program one gate at a time.
 """
 
 from .builder import (
@@ -12,21 +12,19 @@ from .builder import (
     Program,
     apply_circuit,
     apply_program,
-    build_circuit_einsum,
     compile_circuit,
     compile_program,
     controlled_phase_diag,
     extract_phase_from_cp,
     extract_phases,
     hadamard_gate,
+    hadamards_then_layers,
     is_compact_cp,
     phase_gate,
     select_last_n_cp_indices,
-    sorted_gate_program,
     two_registers,
     u4_from_phase,
 )
-from .cache import optimize_code_cached
 
 __all__ = [
     "HADAMARD",
@@ -35,18 +33,16 @@ __all__ = [
     "Program",
     "apply_circuit",
     "apply_program",
-    "build_circuit_einsum",
     "compile_circuit",
     "compile_program",
     "controlled_phase_diag",
     "extract_phase_from_cp",
     "extract_phases",
     "hadamard_gate",
+    "hadamards_then_layers",
     "is_compact_cp",
-    "optimize_code_cached",
     "phase_gate",
     "select_last_n_cp_indices",
-    "sorted_gate_program",
     "two_registers",
     "u4_from_phase",
 ]

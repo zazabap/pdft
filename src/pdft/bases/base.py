@@ -7,18 +7,19 @@ everything else (transforms, pytree registration, parameter count) is
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import ClassVar
 
 import jax
 import numpy as np
 
-from ..circuit.builder import check_qubits
+from ..circuit.builder import Gate, check_qubits
 from .circuit.dct4 import dct4_gates
 from .circuit.entangled_qft import entangled_qft_gates
 from .circuit.mera import _n_mera_gates, mera_gates
 from .circuit.qft import qft_gates
-from .circuit.tebd import tebd_gates
+from .circuit.tebd import _n_tebd_gates, tebd_gates
 from .core import AbstractSparseBasis, CircuitBasis, bases_allclose
 
 Array = jax.Array
@@ -52,17 +53,8 @@ def _seeded_phases(
 class QFTBasis(CircuitBasis):
     """QFT tensor-network basis. Mirror of `ParametricDFT.jl/src/basis.jl::QFTBasis`."""
 
+    emit = staticmethod(qft_gates)
     freezes_to_blocked = True
-
-    def __init__(
-        self,
-        m: int,
-        n: int,
-        tensors: Sequence[Array] | None = None,
-        code: object | None = None,
-        inv_code: object | None = None,
-    ):
-        self._init(qft_gates(m, n), m, n, tensors, code, inv_code)
 
 
 @dataclass(init=False)
@@ -102,70 +94,61 @@ class EntangledQFTBasis(CircuitBasis):
 
 
 @dataclass(init=False)
-class TEBDBasis(CircuitBasis):
+class _LayeredBasis(CircuitBasis):
+    """Hadamards, then a layer of phase gates on each register: what TEBD and MERA share.
+
+    A subclass names its emitter (``layered``) and how many gates the layer
+    of one register has (``gates_per_register``).
+    """
+
+    n_row_gates: int
+    n_col_gates: int
+
+    layered: ClassVar[Callable[..., tuple[list[Gate], int, int]]]
+    gates_per_register: ClassVar[Callable[[int], int]]
+
+    def __init__(
+        self,
+        m: int,
+        n: int,
+        tensors: Sequence[Array] | None = None,
+        phases: Sequence[float] | None = None,
+        code: object | None = None,
+        inv_code: object | None = None,
+        seed: int | None = None,
+        parametrization: str = "cp",
+    ):
+        """A `seed` without `phases` draws one phase per gate of the two layers.
+
+        `parametrization` is "cp" (diagonal gates on U(1)^4) or "u4" (dense
+        two-qubit gates on U(4), the canonical form of both circuits).
+        """
+        check_qubits(m, n)
+        count = self.gates_per_register(m) + self.gates_per_register(n)
+        gates, self.n_row_gates, self.n_col_gates = self.layered(
+            m, n, phases=_seeded_phases(phases, seed, count), parametrization=parametrization
+        )
+        self._init(gates, m, n, tensors, code, inv_code)
+
+
+class TEBDBasis(_LayeredBasis):
     """2D TEBD basis with row + column rings of controlled-phase gates.
 
     Mirror of upstream src/basis.jl:600-745.
     """
 
-    n_row_gates: int
-    n_col_gates: int
-
-    def __init__(
-        self,
-        m: int,
-        n: int,
-        tensors: Sequence[Array] | None = None,
-        phases: Sequence[float] | None = None,
-        code: object | None = None,
-        inv_code: object | None = None,
-        seed: int | None = None,
-        parametrization: str = "cp",
-    ):
-        """A `seed` without `phases` draws the `m + n` ring phases.
-
-        `parametrization` is "cp" (diagonal ring gates on U(1)^4) or "u4"
-        (dense two-qubit ring gates on U(4), the canonical TEBD gate).
-        """
-        check_qubits(m, n)
-        gates, self.n_row_gates, self.n_col_gates = tebd_gates(
-            m, n, phases=_seeded_phases(phases, seed, m + n), parametrization=parametrization
-        )
-        self._init(gates, m, n, tensors, code, inv_code)
+    layered = staticmethod(tebd_gates)
+    gates_per_register = staticmethod(_n_tebd_gates)
 
 
-@dataclass(init=False)
-class MERABasis(CircuitBasis):
+class MERABasis(_LayeredBasis):
     """2D MERA basis. Each dimension with >=2 qubits must be a power of 2.
 
     Mirror of upstream src/basis.jl:840-1070.
     """
 
-    n_row_gates: int
-    n_col_gates: int
-
-    def __init__(
-        self,
-        m: int,
-        n: int,
-        tensors: Sequence[Array] | None = None,
-        phases: Sequence[float] | None = None,
-        code: object | None = None,
-        inv_code: object | None = None,
-        seed: int | None = None,
-        parametrization: str = "cp",
-    ):
-        """A `seed` without `phases` draws one phase per disentangler and isometry.
-
-        `parametrization` is "cp" (diagonal disentanglers/isometries on
-        U(1)^4) or "u4" (dense two-qubit gates on U(4), the canonical form).
-        """
-        check_qubits(m, n)
-        count = sum(_n_mera_gates(q) for q in (m, n) if q >= 2)
-        gates, self.n_row_gates, self.n_col_gates = mera_gates(
-            m, n, phases=_seeded_phases(phases, seed, count), parametrization=parametrization
-        )
-        self._init(gates, m, n, tensors, code, inv_code)
+    layered = staticmethod(mera_gates)
+    gates_per_register = staticmethod(_n_mera_gates)
 
 
 class DCT4Basis(CircuitBasis):

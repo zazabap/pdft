@@ -41,21 +41,9 @@ get_entangle_tensor_indices = select_last_n_cp_indices
 extract_entangle_phases = extract_phases
 
 
-def entanglement_gate(phi: float) -> Array:
-    """2x2 tensor-network form of the 2-qubit entanglement gate.
-
-    Mirror of upstream src/entangled_qft.jl:36-42. This is the compact
-    form Yao emits: `[[1, 0], [0, exp(i*phi)]]` — NOT the full 4x4
-    diagonal gate. The CP gate used in einsum contractions is the
-    2x2 form from `controlled_phase_diag`, which differs: for entangled
-    QFT Yao specifically emits the diagonal 2x2 `diag(1, exp(i*phi))`
-    pattern, not `[[1,1],[1,exp(i*phi)]]`.
-
-    Since `controlled_phase_diag` already matches Yao's output for
-    CP gates in the yao2einsum output, we use it here too for the
-    entanglement CPs.
-    """
-    return controlled_phase_diag(phi)
+# Upstream's name (src/entangled_qft.jl:36-42) for the tensor of an entanglement
+# gate. It is an ordinary controlled phase, in the compact 2x2 form Yao emits.
+entanglement_gate = controlled_phase_diag
 
 
 def _entangle_layer(m: int, n: int, n_entangle: int, phases: list[float]) -> list[Gate]:
@@ -111,7 +99,7 @@ def entangled_qft_code(
     inverse: bool = False,
     entangle_position: str = "back",
 ) -> tuple[Callable[..., Array], list[Array], int]:
-    """Return `(einsum_fn, initial_tensors, n_entangle)`; see `entangled_qft_gates`."""
+    """Return `(code, initial_tensors, n_entangle)`; see `entangled_qft_gates`."""
     gates, n_entangle = entangled_qft_gates(
         m, n, entangle_phases=entangle_phases, entangle_position=entangle_position
     )

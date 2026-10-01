@@ -20,14 +20,12 @@ Turns a Yao-style gate list into a JAX einsum, and caches the contraction path a
    compile_circuit
    apply_program
    apply_circuit
-   build_circuit_einsum
-   optimize_code_cached
-   sorted_gate_program
    Gate
    HADAMARD
    hadamard_gate
    phase_gate
    two_registers
+   hadamards_then_layers
    controlled_phase_diag
    u4_from_phase
    extract_phase_from_cp

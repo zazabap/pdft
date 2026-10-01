@@ -176,11 +176,6 @@ def test_controlled_gradient_flows_to_2x2_leaves():
         return jnp.sum((jnp.abs(out) ** 2) * w)
 
     grads = jax.grad(loss)(b.tensors)
-    from pdft.bases.circuit.dct4 import _dct4_gates_1d
-    from pdft.circuit.builder import sorted_gate_program
-    gates = (_dct4_gates_1d(m, offset=0, parametrization="controlled")
-             + _dct4_gates_1d(n, offset=m, parametrization="controlled"))
-    program = sorted_gate_program(gates)
-    cry_idx = [i for i, (kind, _q) in enumerate(program) if kind == "CRY"]
+    cry_idx = [i for i, (kind, _q) in enumerate(b.program.sorted_steps) if kind == "CRY"]
     assert cry_idx, "expected CRY twiddle leaves in the controlled parametrization"
     assert all(float(jnp.max(jnp.abs(grads[i]))) > 1e-8 for i in cry_idx)

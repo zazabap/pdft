@@ -12,6 +12,8 @@ from typing import Protocol, runtime_checkable
 import jax
 import jax.numpy as jnp
 
+from .circuit.builder import apply_circuit
+
 Array = jax.Array
 
 
@@ -20,11 +22,9 @@ class AbstractLoss(Protocol):
     """Marker protocol for loss types. No behavior; dispatch is functional."""
 
 
-
 @dataclass(frozen=True)
 class L1Norm:
     """L1 norm loss: minimizes `sum(|T(x)|)` to encourage sparsity."""
-
 
 
 @dataclass(frozen=True)
@@ -92,14 +92,6 @@ def topk_truncate(x: Array, k: int) -> Array:
     return (x.reshape(-1) * final_flat_mask.astype(x.dtype)).reshape(x.shape)
 
 
-def _apply_circuit(tensors: list[Array], code, m: int, n: int, pic: Array) -> Array:
-    """Contract pic through the circuit and reshape back to (2^m, 2^n)."""
-    dims = (2,) * (m + n)
-    reshaped = pic.reshape(dims)
-    out = code(*tensors, reshaped)
-    return out.reshape(2**m, 2**n)
-
-
 def _scalar_loss(
     pred: Array,
     target: Array,
@@ -117,7 +109,7 @@ def _scalar_loss(
             raise ValueError("MSELoss requires inverse_code to be provided")
         truncated = topk_truncate(pred, loss.k)
         conj_tensors = [jnp.conj(t) for t in tensors]  # type: ignore[arg-type]
-        reconstructed = _apply_circuit(conj_tensors, inverse_code, m, n, truncated)  # type: ignore[arg-type]
+        reconstructed = apply_circuit(conj_tensors, inverse_code, m, n, truncated)  # type: ignore[arg-type]
         base = jnp.sum(jnp.abs(target - reconstructed) ** 2)
         # Optional hook for MSELoss subclasses that add regularizers or
         # auxiliary scalar terms while preserving vanilla MSELoss behavior.
@@ -149,15 +141,13 @@ def loss_function(
     m, n : int
         Qubit counts; pic must be (2**m, 2**n).
     code : callable
-        Forward einsum closure (from qft_code or equivalent).
+        Forward applier (a basis's ``code``, or from qft_code or equivalent).
     pic : Array
         Input image, shape (2**m, 2**n).
     loss : AbstractLoss
         L1Norm or MSELoss instance.
     inverse_code : callable, optional
-        Required for MSELoss; the inverse einsum closure.
+        Required for MSELoss; the inverse applier (a basis's ``inv_code``).
     """
-    if pic.shape != (2**m, 2**n):
-        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
-    pred = _apply_circuit(tensors, code, m, n, pic)
+    pred = apply_circuit(tensors, code, m, n, pic)
     return _scalar_loss(pred, pic, loss, tensors, m, n, inverse_code)
