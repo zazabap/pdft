@@ -21,6 +21,7 @@ Turns a Yao-style gate list into a program and applies it to an image one gate a
    apply_program
    apply_circuit
    contract_circuit
+   check_image_shape
    bit_reverse
    register_width
    Gate
@@ -34,6 +35,7 @@ Turns a Yao-style gate list into a program and applies it to an image one gate a
    two_registers
    hadamards_then_layers
    check_qubits
+   phase_list
    controlled_phase_diag
    u4_from_phase
    controlled

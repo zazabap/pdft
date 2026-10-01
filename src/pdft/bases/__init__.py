@@ -10,20 +10,7 @@ Every name is importable from here. Where things live:
 - ``bases.block`` — BlockedBasis, an inner basis tiled over image blocks.
 """
 
-from .base import (
-    AbstractSparseBasis,
-    CircuitBasis,
-    DCT4Basis,
-    EntangledQFTBasis,
-    MERABasis,
-    QFTBasis,
-    TEBDBasis,
-    bases_allclose,
-    cp_phases,
-    program_of,
-    with_cp_phases,
-    with_tensors,
-)
+from .base import DCT4Basis, EntangledQFTBasis, MERABasis, QFTBasis, TEBDBasis
 from .block import BlockedBasis
 from .circuit import (
     RealRichBasis,
@@ -37,6 +24,15 @@ from .circuit import (
     mera_code,
     qft_code,
     tebd_code,
+)
+from .core import (
+    AbstractSparseBasis,
+    CircuitBasis,
+    bases_allclose,
+    cp_phases,
+    program_of,
+    with_cp_phases,
+    with_tensors,
 )
 
 __all__ = [

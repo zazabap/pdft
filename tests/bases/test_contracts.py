@@ -1,9 +1,10 @@
 """What every basis has in common, asserted once over the whole case registry.
 
-The per-basis test files check most of this one class at a time. The refactor
-replaces the shared machinery of all of them at once, so these run the same
-assertions over every registered case, including the ones no per-basis file
-covers.
+The per-basis test files check most of this one class at a time. The bases
+share one implementation, so these run the same assertions over every
+registered case, including the ones no per-basis file covers: the pytree, the
+round trip, the two arithmetics, what the program says about the stored
+tensors, and the precision and shape each family's transforms accept and return.
 """
 
 from __future__ import annotations
@@ -16,10 +17,13 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import bases_allclose
+from pdft.bases import bases_allclose, program_of, with_cp_phases
 from pdft.bases.block.block import BlockCode
+from pdft.circuit import GATE_KINDS, REGISTERS, is_compact_cp
+from pdft.circuit.builder import GATE_SHAPES
+from pdft.manifolds import PhaseManifold, Unitary2qManifold, UnitaryManifold, classify_manifold
 
-from .cases import BASES, case_rng, complex_normal, generic
+from ..helpers import BASES, case_rng, complex_normal, generic, single_precision
 
 CASES = list(BASES)
 
@@ -48,7 +52,8 @@ def test_pytree_leaves_are_the_tensors_in_order(case):
     doubled = jax.tree_util.tree_unflatten(treedef, [2 * leaf for leaf in leaves])
     assert type(doubled) is type(basis) and (doubled.m, doubled.n) == (basis.m, basis.n)
     assert all(jnp.array_equal(d, 2 * t) for d, t in zip(doubled.tensors, basis.tensors))
-    assert bases_allclose(jax.tree_util.tree_map(lambda t: t, basis), basis)
+    again = jax.tree_util.tree_map(lambda t: t, basis)
+    assert bases_allclose(again, basis) and type(again.tensors) is list
     # The rebuilt basis computes with the leaves it was given, not the ones it was built from.
     probe = jnp.asarray(complex_normal(case_rng(case), basis.image_size))
     shape = (2,) * (basis.m + basis.n)
@@ -68,6 +73,15 @@ def test_two_instances_are_the_same_basis(case):
     assert bases_allclose(a, b, atol=0.0)
     assert a.code == b.code and a.inv_code == b.inv_code
     assert jax.tree_util.tree_structure(a) == jax.tree_util.tree_structure(b)
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_inverse_undoes_forward(case):
+    """At the tensors every basis starts with, which are unitary gates."""
+    basis = BASES[case]()
+    x = jnp.asarray(complex_normal(case_rng(case), basis.image_size))
+    np.testing.assert_allclose(basis.inverse_transform(basis.forward_transform(x)), x, atol=1e-12)
+    np.testing.assert_allclose(basis.forward_transform(basis.inverse_transform(x)), x, atol=1e-12)
 
 
 def _with_slices(code):
@@ -106,16 +120,11 @@ def test_code_maps_over_a_stack_of_images(case):
             np.testing.assert_allclose(mapped[i], code(*tensors, stack[i]), rtol=0, atol=1e-12)
 
 
-# Two ways a transform reaches its circuit, both as on `main`. The strict
+# Two ways a transform reaches its circuit. The strict
 # bases check the image's shape and work in double precision. Rich, RealRich
 # and Blocked do neither: any image with the right number of elements is
 # reshaped, and the precision is whatever the tensors and the image promote to.
 LOOSE = (pdft.RichBasis, pdft.RealRichBasis, pdft.BlockedBasis)
-
-
-def _single_precision(basis):
-    leaves, treedef = jax.tree_util.tree_flatten(basis)
-    return jax.tree_util.tree_unflatten(treedef, [leaf.astype(jnp.complex64) for leaf in leaves])
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -151,7 +160,7 @@ def test_precision_of_the_transforms(case):
     tensors stay single precision through the loose bases and are promoted by the
     strict ones, which cast the image."""
     basis = BASES[case]()
-    single = _single_precision(basis)
+    single = single_precision(basis)
     real = case_rng(case).standard_normal(basis.image_size)
     for image_dtype in (jnp.float32, jnp.float64, jnp.complex64, jnp.complex128):
         image = jnp.asarray(real, dtype=image_dtype)
@@ -167,7 +176,7 @@ def test_the_loss_keeps_the_precision_of_its_operands(case):
     """`loss_function` never casts: single-precision tensors and image give a
     single-precision loss and gradient, for every basis."""
     basis = BASES[case]()
-    single = _single_precision(basis)
+    single = single_precision(basis)
     m, n = basis.m, basis.n
     image = jnp.asarray(case_rng(case).standard_normal(basis.image_size), dtype=jnp.float32)
     for loss in (pdft.L1Norm(), pdft.MSELoss(k=3)):
@@ -181,3 +190,44 @@ def test_the_loss_keeps_the_precision_of_its_operands(case):
         assert all(g.dtype == jnp.complex64 for g in gradient)
     with pytest.raises(ValueError, match="pic shape must be"):
         pdft.loss_function(list(basis.tensors), m, n, basis.code, image.reshape(-1), pdft.L1Norm())
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_the_program_describes_the_stored_tensors(case):
+    """Every tensor has one kind and one register, the shape its kind stores, and qubits of the circuit."""
+    basis = BASES[case]()
+    program = program_of(basis)
+    everything = list(range(len(basis.tensors)))
+    assert sorted(i for kind in GATE_KINDS for i in program.tensor_indices(kind=kind)) == everything
+    assert sorted(i for r in REGISTERS for i in program.tensor_indices(register=r)) == everything
+    assert len(program.sorted_steps) == len(basis.tensors)
+    for (kind, qubits), tensor in zip(program.sorted_steps, basis.tensors):
+        assert tensor.shape == GATE_SHAPES[kind]
+        assert len(qubits) == (1 if kind == "H" else 2)
+        assert all(1 <= q <= program.m + program.n for q in qubits)
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_the_gate_kind_implies_the_manifold_the_optimiser_picks(case):
+    """``classify_manifold`` goes by tensor values, as upstream does. At the
+    initial tensors of every basis that agrees with the gate kind."""
+    implied = {
+        "H": UnitaryManifold(d=2),
+        "CRY": UnitaryManifold(d=2),
+        "U4": Unitary2qManifold(),
+        "CP": PhaseManifold(),
+    }
+    basis = BASES[case]()
+    for (kind, _), tensor in zip(program_of(basis).sorted_steps, basis.tensors):
+        assert classify_manifold(tensor) == implied[kind]
+        assert is_compact_cp(tensor) == (kind == "CP")
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_helpers_that_replace_tensors_keep_their_precision(case):
+    single = single_precision(BASES[case]())
+    angles = jnp.zeros(len(program_of(single).tensor_indices(kind="CP")))
+    assert {t.dtype for t in with_cp_phases(single, angles).tensors} == {jnp.dtype("complex64")}
+    if getattr(type(single), "freezes_to_blocked", False) and min(single.m, single.n) > 1:
+        frozen, indices = pdft.freeze_as_blocked(single, 1, 1)
+        assert indices and {t.dtype for t in frozen.tensors} == {jnp.dtype("complex64")}

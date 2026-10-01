@@ -2,7 +2,7 @@
 
 Mirror of upstream src/qft.jl. Replaces Yao.EasyBuild.qft_circuit +
 yao2einsum with an explicit gate chain. The gate sequence is the standard
-QFT decomposition (upstream src/entangled_qft.jl:51-77):
+QFT decomposition (written out in upstream src/entangled_qft.jl:64-78):
 
     For j = 1..n_qubits:
         H on qubit j
@@ -52,10 +52,18 @@ def qft_gates_1d(
 ) -> list[Gate]:
     """Emit the 1D QFT gate sequence on qubits (offset+1, ..., offset+n_qubits).
 
-    Matches upstream src/entangled_qft.jl:64-78 exactly. ``two_qubit(q_ctrl,
-    q_tgt, phi)`` builds the gate between a qubit and each later one; the
-    default is the controlled phase of the QFT itself, and the bases that keep
-    this topology but train another gate there pass their own.
+    The textbook QFT: for each qubit ``j`` a Hadamard, then a controlled phase
+    ``2 pi / 2^(target - j + 1)`` with every later qubit ``target``.
+
+    Upstream's ``qft_code`` takes this circuit from Yao
+    (``EasyBuild.qft_circuit``) and never spells it out. Without Yao it has to
+    be written gate by gate, and the order followed is the one upstream uses
+    where it does the same by hand, ``_build_manual_qft``
+    (src/entangled_qft.jl:64-78). The goldens confirm the two agree.
+
+    ``two_qubit(q_ctrl, q_tgt, phi)`` builds the gate between a qubit and each
+    later one; the default is the controlled phase of the QFT itself, and the
+    bases that keep this topology but train another gate there pass their own.
     """
     gates: list[Gate] = []
     for j in range(1, n_qubits + 1):
@@ -70,7 +78,7 @@ _qft_gates_1d = qft_gates_1d
 
 
 def qft_gates(m: int, n: int) -> list[Gate]:
-    """The gate sequence of the 2D QFT on (2^m, 2^n) images."""
+    """The gate sequence of the 2D QFT on (2^m, 2^n) images: a QFT on the row qubits, then one on the column qubits."""
     return two_registers(qft_gates_1d, m, n)
 
 

@@ -213,3 +213,14 @@ def test_blocked_basis_pytree_round_trip():
     # Forward output must match.
     pic = jnp.asarray(_rand_pic(b.m, b.n, seed=99))
     assert jnp.allclose(b.forward_transform(pic), b2.forward_transform(pic), atol=1e-12)
+
+
+@pytest.mark.parametrize("counts", [(1.0, 0), (0, 1.0)])
+def test_block_counts_must_be_integers(counts):
+    """Refused when the basis is built, not at its first transform."""
+    with pytest.raises(TypeError):
+        pdft.BlockedBasis(pdft.QFTBasis(m=1, n=1), *counts)
+    assert pdft.BlockedBasis(pdft.QFTBasis(m=1, n=1), np.int64(1), np.bool_(True)).image_size == (
+        4,
+        4,
+    )

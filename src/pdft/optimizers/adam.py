@@ -1,9 +1,8 @@
 """Riemannian Adam (Becigneul & Ganea, 2019).
 
-Note: this is the *general-purpose* Adam used by the optimize() dispatcher.
-The batched training fast path (training/adam_step.py) uses a different
-JIT-friendly representation (static lists indexed by k, not Python dicts
-keyed by manifold) for XLA compilation; the duplication is intentional.
+`_adam_update` is the update itself. It has two drivers: `optimize()`, which
+calls it eagerly one step at a time (`_adam_step` below), and the fused jitted
+step of the batched trainer (training/adam_step.py), which traces it.
 """
 
 from __future__ import annotations

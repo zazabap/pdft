@@ -55,7 +55,10 @@ def _n_tebd_gates(n_qubits: int) -> int:
 def _ring(
     n_qubits: int, offset: int, phases: Sequence[float], gate: Callable[[int, int, float], Gate]
 ) -> list[Gate]:
-    """The ring of one register: ``(i, i+1)`` for ``i = 1..n-1``, then the wrap-around ``(n, 1)``."""
+    """The ring of one register: ``(i, i+1)`` for ``i = 1..n-1``, then the wrap-around ``(n, 1)``.
+
+    Both cases are the pair ``(i, i mod n + 1)``, one per phase.
+    """
     return [
         gate(offset + i, offset + i % n_qubits + 1, phi) for i, phi in enumerate(phases, start=1)
     ]
@@ -81,6 +84,10 @@ def tebd_gates(
     ``parametrization`` is ``"cp"`` (diagonal, ``U(1)^4``) or ``"u4"``
     (dense two-qubit, ``U(4)`` — the canonical TEBD gate). Both start from
     the same operator for a given ``phases``; see the module docstring.
+
+    Step 1, the split of ``phases`` between the two rings and the choice of
+    gate form are ``hadamards_then_layers``, which MERA uses too. What is
+    TEBD's own is the ring of one register, ``_ring``.
     """
     return hadamards_then_layers(_ring, _n_tebd_gates, m, n, phases, parametrization)
 

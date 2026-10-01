@@ -20,31 +20,18 @@ from .circuit.entangled_qft import entangled_qft_gates
 from .circuit.mera import _n_mera_gates, mera_gates
 from .circuit.qft import qft_gates
 from .circuit.tebd import _n_tebd_gates, tebd_gates
-from .core import (
-    AbstractSparseBasis,
-    CircuitBasis,
-    bases_allclose,
-    cp_phases,
-    program_of,
-    with_cp_phases,
-    with_tensors,
-)
+from .core import AbstractSparseBasis, CircuitBasis, bases_allclose
 
 Array = jax.Array
 
 __all__ = [
     "AbstractSparseBasis",
-    "CircuitBasis",
     "DCT4Basis",
     "EntangledQFTBasis",
     "MERABasis",
     "QFTBasis",
     "TEBDBasis",
     "bases_allclose",
-    "cp_phases",
-    "program_of",
-    "with_cp_phases",
-    "with_tensors",
 ]
 
 
@@ -71,7 +58,7 @@ class QFTBasis(CircuitBasis):
 
 @dataclass(init=False)
 class EntangledQFTBasis(CircuitBasis):
-    """QFT + appended entanglement layer on `min(m, n)` row/col qubit pairs.
+    """QFT with an entanglement layer on `min(m, n)` row/col qubit pairs, after it or before it.
 
     Mirror of upstream src/basis.jl:280-500.
     """
@@ -173,10 +160,15 @@ class DCT4Basis(CircuitBasis):
     exactly. ``tensors`` holds every gate (the affine ``R_y`` rotation layer,
     the branch Hadamards, the mirror-``Q`` CNOT permutations and the ``Delta``
     sign), each a learnable leaf on the manifold the optimiser picks from its
-    values (U(2) / U(4) / phase). The gate tensors are real-valued (stored
-    complex128, zero imaginary), so those manifolds train the real-orthogonal
-    subset under a real objective: exact DCT-IV at init, then relaxed, just as
-    QFT relaxes within U.
+    values (U(2) / U(4) / phase). The gate tensors are real to rounding: stored
+    complex128, with a zero imaginary part except in the ``Delta`` sign, which
+    is ``exp(i*pi)`` and carries ``1.2e-16``. So the operator is the DCT-IV at
+    init, then relaxed, as QFT relaxes within U.
+
+    Training does not stay real-orthogonal, though. The optimisers amplify
+    that imaginary part: about ``1e-2`` in the tensors after twenty Adam steps
+    on real images. A trained ``DCT4Basis`` is unitary, not real. A basis
+    whose tensors are exactly real, such as ``RealRichBasis``, does stay real.
     """
 
     def __init__(

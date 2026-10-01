@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import pdft
+from pdft.bases import bases_allclose
 
 
 def test_entangled_qft_seed_breaks_symmetry_with_qft():
@@ -116,3 +117,14 @@ def test_existing_zero_phase_default_unchanged():
     # constructed default-arg instance.
     eqft2 = pdft.EntangledQFTBasis(m=4, n=4)
     assert pdft.bases_allclose(eqft, eqft2)
+
+
+@pytest.mark.parametrize("cls", [pdft.TEBDBasis, pdft.MERABasis])
+def test_layered_bases_seed_one_phase_per_gate(cls):
+    seeded = cls(m=2, n=4, seed=7)
+    count = seeded.n_row_gates + seeded.n_col_gates
+    drawn = list(np.random.default_rng(7).normal(0.0, 0.1, count))
+    assert bases_allclose(seeded, cls(m=2, n=4, phases=drawn), atol=0.0)
+    assert not bases_allclose(seeded, cls(m=2, n=4))
+    # explicit phases win over the seed
+    assert bases_allclose(cls(m=2, n=4, phases=drawn, seed=99), seeded, atol=0.0)

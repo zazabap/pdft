@@ -29,7 +29,7 @@ from ..optimizers import (
     RiemannianGD,
     optimize,
 )
-from .adam_step import _build_jit_adam_step, init_adam_moments
+from .adam_step import adam_stepper
 from .eval_loop import evaluate_and_check_early_stop
 from .result import TrainingResult
 from .schedules import cosine_with_warmup
@@ -40,9 +40,9 @@ Array = jax.Array
 def _resolve_optimizer(spec, lr: float, max_grad_norm: float | None):
     """Build a fresh optimizer instance with the given lr/max_grad_norm.
 
-    Accepts either a string name (`"gd"`/`"adam"`) or a class
-    (`RiemannianGD`/`RiemannianAdam`); the latter is reconstructed with new
-    `lr` so the cosine schedule can vary the learning rate per step.
+    Accepts either a string name (`"gd"`/`"adam"`) or an instance
+    (`RiemannianGD(...)`/`RiemannianAdam(...)`); the latter is rebuilt with the
+    new `lr` so the cosine schedule can vary the learning rate per step.
     """
     if isinstance(spec, str):
         name = spec.lower()
@@ -150,7 +150,8 @@ def train_basis_batched(
     frozen_indices : list[int] | None, optional
         List of integer indices into ``basis.tensors``.  Tensors at these
         indices are NOT updated during training — they stay at their initial
-        values throughout.  Each step computes gradients on all tensors
+        values throughout (bit for bit under Adam; under GD a frozen phase
+        tensor can move by one rounding, 1e-16).  Each step computes gradients on all tensors
         normally; the update is then suppressed for frozen indices BEFORE any
         optimizer state is mutated (so Adam's moment buffers for frozen indices
         remain zero).  Useful for experiments that train only a subset of a
@@ -214,21 +215,15 @@ def train_basis_batched(
     # learning rate of `spec` is a placeholder: the schedule sets it per step.
     spec = _resolve_optimizer(optimizer, lr=lr_peak, max_grad_norm=max_grad_norm)
     if isinstance(spec, RiemannianAdam):
-        step_fn = _build_jit_adam_step(
+        adam_step = adam_stepper(
             basis,
             loss,
             beta1=spec.beta1,
             beta2=spec.beta2,
             eps=spec.eps,
             max_grad_norm=spec.max_grad_norm,
-            frozen_set=frozen_set if frozen_set else None,
+            frozen_set=frozen_set,
         )
-
-        # The moment buffers are made ONCE and persist across all steps,
-        # matching Julia's design; a per-batch `optimize(max_iter=1)` would
-        # zero them on every batch.
-        m_state, v_state = init_adam_moments(basis.tensors)
-
         pad_count = n_batches * batch_size - len(train_imgs)
 
         def _batches(imgs: list[Array]) -> list[list[Array]]:
@@ -238,16 +233,7 @@ def train_basis_batched(
             return [padded[b * batch_size : (b + 1) * batch_size] for b in range(n_batches)]
 
         def _step(tensors: list[Array], batch_imgs: list[Array], lr_t: float, step: int):
-            nonlocal m_state, v_state
-            tensors, m_state, v_state, loss_val = step_fn(
-                tensors,
-                m_state,
-                v_state,
-                jnp.stack(batch_imgs, axis=0),
-                jnp.asarray(lr_t),
-                jnp.asarray(step, dtype=jnp.int32),
-            )
-            return tensors, loss_val
+            return adam_step(tensors, jnp.stack(batch_imgs, axis=0), lr_t, step)
 
     else:
         # GD path (Armijo line search). The last batch may be short: nothing
@@ -269,7 +255,7 @@ def train_basis_batched(
                 max_iter=1,
                 tol=0.0,
                 record_loss=True,
-                frozen_indices=frozen_set if frozen_set else None,
+                frozen_indices=frozen_set,
             )
             return tensors, step_trace[-1] if len(step_trace) >= 2 else step_trace[0]
 

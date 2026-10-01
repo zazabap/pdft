@@ -15,7 +15,10 @@ import numpy as np
 import pytest
 
 import pdft
+from pdft.loss import mean_loss
 from pdft.training import cosine_with_warmup, train_basis_batched
+
+from ..helpers import complex_image, complex_normal
 
 # ---------------------------------------------------------------------------
 # _cosine_with_warmup
@@ -169,28 +172,6 @@ def test_batched_validation_split_applied():
     # val_history has one entry per epoch.
     assert hasattr(res, "val_history")
     assert len(res.val_history) == 2
-
-
-def test_batched_early_stopping():
-    """Loss-monotone-up dataset with patience=1 stops after 2 epochs."""
-    dataset = _toy_dataset(4, 2, 2)
-    basis = pdft.QFTBasis(m=2, n=2)
-    res = train_basis_batched(
-        basis,
-        dataset=dataset,
-        epochs=20,  # would take 20 epochs without early stopping
-        batch_size=2,
-        loss=pdft.L1Norm(),
-        optimizer="adam",
-        validation_split=0.5,
-        early_stopping_patience=1,  # stop after 1 epoch with no improvement
-        warmup_frac=0.05,
-        lr_peak=0.5,  # absurdly high lr → val_loss likely worsens fast
-        lr_final=0.001,
-        seed=0,
-    )
-    # Either it completes all 20 epochs, OR early stops with fewer val entries.
-    assert len(res.val_history) <= 20
 
 
 def test_batched_grad_clip_runs():
@@ -446,61 +427,6 @@ def test_frozen_qft_outer_gates_matches_blocked_qft_training():
         )
 
 
-def test_train_basis_batched_frozen_indices_validation():
-    """frozen_indices validation: out-of-range index, negative, duplicate."""
-    import pytest
-
-    import pdft
-
-    basis = pdft.QFTBasis(m=2, n=2)
-    n_tensors = len(basis.tensors)  # 6
-
-    # Out-of-range positive.
-    with pytest.raises(ValueError):
-        pdft.train_basis_batched(
-            basis,
-            dataset=[],
-            loss=pdft.MSELoss(k=4),
-            epochs=1,
-            batch_size=1,
-            frozen_indices=[n_tensors],  # one past the end
-        )
-
-    # Negative.
-    with pytest.raises(ValueError):
-        pdft.train_basis_batched(
-            basis,
-            dataset=[],
-            loss=pdft.MSELoss(k=4),
-            epochs=1,
-            batch_size=1,
-            frozen_indices=[-1],
-        )
-
-    # Duplicate.
-    with pytest.raises(ValueError):
-        pdft.train_basis_batched(
-            basis,
-            dataset=[],
-            loss=pdft.MSELoss(k=4),
-            epochs=1,
-            batch_size=1,
-            frozen_indices=[0, 0],
-        )
-
-    # Non-integer coercions should not be accepted.
-    for bad_index in (1.9, True, "2"):
-        with pytest.raises(ValueError):
-            pdft.train_basis_batched(
-                basis,
-                dataset=[],
-                loss=pdft.MSELoss(k=4),
-                epochs=1,
-                batch_size=1,
-                frozen_indices=[bad_index],
-            )
-
-
 # ---------------------------------------------------------------------------
 # optimizer specs
 # ---------------------------------------------------------------------------
@@ -586,7 +512,7 @@ def test_the_fused_adam_step_tracks_the_eager_one(make, max_grad_norm):
     `train_basis_batched` runs the fused jitted step. They share the update, so on
     one image and a flat schedule they must agree to rounding."""
     rng = np.random.default_rng(0)
-    image = rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4))
+    image = complex_normal(rng, (4, 4))
     lr, steps = 0.02, 6
     eager = pdft.train_basis(
         make(),
@@ -619,50 +545,12 @@ def test_the_fused_adam_step_tracks_the_eager_one(make, max_grad_norm):
     )
 
 
-def test_adam_update_is_the_textbook_step_on_the_manifold():
-    from pdft.manifolds import PhaseManifold
-    from pdft.optimizers.adam import _adam_update, _zero_moments
-    from pdft.training.adam_step import init_adam_moments
-
-    rng = np.random.default_rng(0)
-    points = jnp.asarray(np.exp(1j * rng.uniform(-3, 3, (2, 2, 3))))
-    manifold = PhaseManifold()
-    rgrad = manifold.project(points, jnp.asarray(rng.normal(size=(2, 2, 3)) + 0j))
-    m0, v0 = _zero_moments(points)
-    assert m0.dtype == points.dtype and v0.dtype == jnp.float64 and not m0.any() and not v0.any()
-    new_points, m1, v1 = _adam_update(
-        manifold,
-        points,
-        rgrad,
-        m0,
-        v0,
-        lr=0.1,
-        beta1=0.9,
-        beta2=0.999,
-        eps=1e-8,
-        bc1=0.1,
-        bc2=0.001,
-    )
-    np.testing.assert_allclose(v1, 0.001 * np.abs(rgrad) ** 2, rtol=1e-14)
-    direction = rgrad / (
-        np.abs(rgrad) + 1e-8
-    )  # (m / bc1) / (sqrt(v / bc2) + eps) at the first step
-    np.testing.assert_allclose(new_points, manifold.retract(points, -direction, 0.1), atol=1e-12)
-    np.testing.assert_allclose(m1, manifold.transport(points, new_points, 0.1 * rgrad), atol=1e-14)
-
-    # one moment pair per manifold group, shaped like the stacked group
-    basis = pdft.RichBasis(m=2, n=2)
-    m_list, v_list = init_adam_moments(basis.tensors)
-    assert [m.shape for m in m_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]
-    assert [v.shape for v in v_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]
-
-
 def test_adam_pads_a_short_last_batch_by_rotation():
     """Three images in batches of two: the second batch is the third image and the
     first again, so that every batch has the same shape. That is the same training
     run as four images with the first repeated."""
     rng = np.random.default_rng(0)
-    a, b, c = (rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4)) for _ in range(3))
+    a, b, c = (complex_normal(rng, (4, 4)) for _ in range(3))
     arguments = {"loss": pdft.MSELoss(k=6), "epochs": 2, "batch_size": 2, "shuffle": False}
     short = train_basis_batched(pdft.QFTBasis(m=2, n=2), dataset=[a, b, c], **arguments)
     padded = train_basis_batched(pdft.QFTBasis(m=2, n=2), dataset=[a, b, c, a], **arguments)
@@ -678,7 +566,7 @@ def test_gd_takes_its_learning_rate_from_the_schedule():
     """An optimizer instance keeps its line-search settings; its own `lr` is replaced
     at every step by the schedule's."""
     rng = np.random.default_rng(1)
-    images = [rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4)) for _ in range(4)]
+    images = [complex_normal(rng, (4, 4)) for _ in range(4)]
 
     def run(lr_final, optimizer):
         return train_basis_batched(
@@ -698,3 +586,206 @@ def test_gd_takes_its_learning_rate_from_the_schedule():
     assert flat[0] == decayed[0] and flat != decayed
     # the instance's own lr plays no part
     assert run(0.002, pdft.RiemannianGD(lr=123.0)) == decayed
+
+
+def test_freezing_the_one_qubit_gates_trains_only_the_phases():
+    basis = pdft.QFTBasis(m=2, n=2)
+    hadamards = basis.program.tensor_indices(kind="H")
+    images = [np.asarray(complex_image((4, 4), seed).real) for seed in range(4)]
+    result = pdft.train_basis_batched(
+        basis,
+        dataset=images,
+        loss=pdft.L1Norm(),
+        epochs=2,
+        batch_size=2,
+        frozen_indices=hadamards,
+        seed=0,
+    )
+    trained = result.basis
+    for i, (before, after) in enumerate(zip(basis.tensors, trained.tensors)):
+        assert jnp.array_equal(before, after) == (i in hadamards)
+    # which is the configuration that cannot leave mu == 1
+    assert pdft.certify_flat_modulus(trained, frozen_indices=hadamards)
+
+
+@pytest.mark.parametrize(
+    ("frozen", "message"),
+    [
+        ([6], "out-of-range index 6"),
+        ([-1], "negative index -1"),
+        ([0, 0], "duplicate index 0"),
+        ([1.9], "non-integer index 1.9"),
+        ([True], "non-integer index True"),
+        (["2"], "non-integer index '2'"),
+    ],
+)
+def test_frozen_indices_are_validated(frozen, message):
+    """With a dataset that is otherwise fine, so the refusal is the one being tested."""
+    with pytest.raises(ValueError, match=f"frozen_indices contains {message}"):
+        train_basis_batched(
+            pdft.QFTBasis(m=2, n=2),
+            dataset=_toy_dataset(2, 2, 2),
+            loss=pdft.MSELoss(k=4),
+            epochs=1,
+            batch_size=1,
+            frozen_indices=frozen,
+        )
+
+
+def test_the_first_epoch_runs_in_the_order_of_the_split():
+    """Shuffling orders the images once for the split; the first epoch takes the training
+    images in that order and reshuffling starts with the second."""
+    images = _toy_dataset(5, 2, 2)
+    options = {
+        "loss": pdft.L1Norm(),
+        "epochs": 2,
+        "batch_size": 1,
+        "validation_split": 0.0,
+        "seed": 3,
+    }
+    shuffled = train_basis_batched(pdft.QFTBasis(m=2, n=2), dataset=images, **options)
+    order = np.random.default_rng(3).permutation(5)
+    presorted = train_basis_batched(
+        pdft.QFTBasis(m=2, n=2), dataset=[images[i] for i in order], shuffle=False, **options
+    )
+    assert shuffled.loss_history[:5] == pytest.approx(presorted.loss_history[:5], rel=1e-12)
+    assert shuffled.loss_history[5:] != presorted.loss_history[5:]
+
+
+def test_gd_records_the_loss_after_its_step():
+    images = _toy_dataset(2, 2, 2)
+    basis = pdft.RichBasis(m=2, n=2)
+    result = train_basis_batched(
+        basis,
+        dataset=images,
+        loss=pdft.L1Norm(),
+        epochs=1,
+        batch_size=2,
+        optimizer="gd",
+        validation_split=0.0,
+        shuffle=False,
+    )
+    loss = mean_loss(basis, pdft.L1Norm())
+    batch = jnp.stack([jnp.asarray(image) for image in images])
+    assert result.loss_history == [pytest.approx(float(loss(result.basis.tensors, batch)))]
+    assert result.loss_history[0] < float(loss(basis.tensors, batch))
+
+
+def test_a_clip_above_the_gradient_norm_changes_nothing():
+    """Clipping only ever shortens a step."""
+
+    def run(clip):
+        return train_basis_batched(
+            pdft.QFTBasis(m=2, n=2),
+            dataset=_toy_dataset(4, 2, 2),
+            loss=pdft.L1Norm(),
+            epochs=1,
+            batch_size=2,
+            optimizer="adam",
+            max_grad_norm=clip,
+        )
+
+    np.testing.assert_allclose(run(1e9).loss_history, run(None).loss_history, rtol=1e-12)
+
+
+def test_adam_hands_frozen_tensors_back_bit_for_bit():
+    """A frozen tensor is not sent through a retraction with a zero step, which would
+    change the low bits of a phase."""
+    basis = pdft.TEBDBasis(m=3, n=3, seed=3)
+    frozen = basis.program.tensor_indices(kind="CP")
+    result = train_basis_batched(
+        basis,
+        dataset=_toy_dataset(4, 3, 3),
+        loss=pdft.L1Norm(),
+        epochs=2,
+        batch_size=2,
+        optimizer="adam",
+        frozen_indices=frozen,
+        validation_split=0.0,
+    )
+    assert all(np.array_equal(result.basis.tensors[i], basis.tensors[i]) for i in frozen)
+    assert not np.array_equal(result.basis.tensors[0], basis.tensors[0])
+
+
+def _with_scripted_validation(monkeypatch, losses):
+    """Run the real early-stopping bookkeeping on the validation losses given, and return
+    the list that collects the tensors each epoch ended with."""
+    import pdft.training.batched as batched
+
+    decide = batched.evaluate_and_check_early_stop
+    script = iter(losses)
+    seen = []
+
+    def scripted(**kwargs):
+        seen.append(kwargs["current_tensors"])
+        return decide(**{**kwargs, "val_loss_fn": lambda tensors: next(script)})
+
+    monkeypatch.setattr(batched, "evaluate_and_check_early_stop", scripted)
+    return seen
+
+
+@pytest.mark.parametrize("optimizer", ["adam", "gd"])
+def test_early_stopping_returns_the_best_tensors_after_the_patience_runs_out(
+    optimizer, monkeypatch
+):
+    seen = _with_scripted_validation(monkeypatch, [3.0, 2.0, 2.0, 6.0, 7.0, 8.0])
+    result = train_basis_batched(
+        pdft.RichBasis(m=2, n=2),
+        dataset=_toy_dataset(4, 2, 2),
+        loss=pdft.L1Norm(),
+        epochs=6,
+        batch_size=3,
+        optimizer=optimizer,
+        validation_split=0.25,
+        early_stopping_patience=2,
+    )
+    # the second epoch was the best (a tie is not an improvement); two epochs without
+    # one end the run
+    assert result.val_history == [3.0, 2.0, 2.0, 6.0] and result.epochs_completed == 4
+    assert result.steps == len(result.loss_history) == 4
+    assert all(np.array_equal(a, b) for a, b in zip(result.basis.tensors, seen[1]))
+    assert not all(np.array_equal(a, b) for a, b in zip(result.basis.tensors, seen[3]))
+
+
+def test_validation_runs_every_k_epochs_and_on_the_last(monkeypatch):
+    _with_scripted_validation(monkeypatch, [3.0, 2.0, 1.0])
+    result = train_basis_batched(
+        pdft.QFTBasis(m=2, n=2),
+        dataset=_toy_dataset(4, 2, 2),
+        loss=pdft.L1Norm(),
+        epochs=5,
+        batch_size=3,
+        validation_split=0.25,
+        val_every_k_epochs=2,
+    )
+    assert np.isnan(result.val_history).tolist() == [True, False, True, False, False]
+    assert [v for v in result.val_history if not np.isnan(v)] == [3.0, 2.0, 1.0]
+
+
+def test_a_first_epoch_without_a_validation_loss_does_not_end_the_run(monkeypatch):
+    """NaN is not an improvement, but the first epoch never stops the run."""
+    _with_scripted_validation(monkeypatch, [float("nan"), 1.0, 2.0, 3.0])
+    result = train_basis_batched(
+        pdft.QFTBasis(m=2, n=2),
+        dataset=_toy_dataset(4, 2, 2),
+        loss=pdft.L1Norm(),
+        epochs=4,
+        batch_size=3,
+        validation_split=0.25,
+        early_stopping_patience=1,
+    )
+    assert result.epochs_completed == 3 and result.val_history[1:] == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(("n_images", "trained_on"), [(7, 5), (9, 7)])
+def test_the_validation_share_is_rounded_to_the_nearest_image(n_images, trained_on):
+    """A quarter of seven is 1.75 and two are held out; of nine, 2.25 and two again."""
+    result = train_basis_batched(
+        pdft.QFTBasis(m=2, n=2),
+        dataset=_toy_dataset(n_images, 2, 2),
+        loss=pdft.L1Norm(),
+        epochs=1,
+        batch_size=1,
+        validation_split=0.25,
+    )
+    assert result.steps == trained_on

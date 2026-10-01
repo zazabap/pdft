@@ -10,21 +10,12 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import CircuitBasis, bases_allclose, cp_phases, with_cp_phases
+from pdft.bases import CircuitBasis, bases_allclose
 from pdft.bases.circuit.qft import qft_gates
 from pdft.bases.core import BasisTransforms
 from pdft.circuit.builder import CircuitCode, Program, cp_gate, hadamard_gate
-from pdft.coherence import diagonal_tensor_indices
 
-CIRCUIT_BASES = [
-    pdft.QFTBasis,
-    pdft.EntangledQFTBasis,
-    pdft.TEBDBasis,
-    pdft.MERABasis,
-    pdft.DCT4Basis,
-    pdft.RichBasis,
-    pdft.RealRichBasis,
-]
+from ..helpers import CIRCUIT_CLASSES, complex_image
 
 
 @dataclass(init=False)
@@ -41,7 +32,7 @@ class _Toy(CircuitBasis):
         self._init(gates, m, n, tensors, code, inv_code)
 
 
-@pytest.mark.parametrize("cls", CIRCUIT_BASES)
+@pytest.mark.parametrize("cls", CIRCUIT_CLASSES)
 def test_every_circuit_basis_is_a_circuit_basis(cls):
     basis = cls(m=2, n=2)
     assert isinstance(basis, CircuitBasis) and isinstance(basis, BasisTransforms)
@@ -57,18 +48,6 @@ def test_every_circuit_basis_is_a_circuit_basis(cls):
         "code",
         "inv_code",
     ]
-
-
-@pytest.mark.parametrize("cls", CIRCUIT_BASES)
-def test_the_program_describes_the_stored_tensors(cls):
-    """One step per tensor, and the kind of each step fits the tensor in its slot."""
-    basis = cls(m=2, n=2)
-    steps = basis.program.sorted_steps
-    assert len(steps) == len(basis.tensors)
-    for (kind, qubits), tensor in zip(steps, basis.tensors):
-        assert tensor.shape == ((2, 2, 2, 2) if kind == "U4" else (2, 2))
-        assert len(qubits) == (1 if kind == "H" else 2)
-        assert all(1 <= q <= 4 for q in qubits)
 
 
 def test_a_subclass_is_a_pytree_without_registering_anything():
@@ -98,13 +77,11 @@ def test_extra_fields_survive_the_pytree_and_show_in_the_repr():
 
 
 def test_only_the_qft_topology_freezes_to_a_blocked_basis():
-    assert [c.__name__ for c in CIRCUIT_BASES if c.freezes_to_blocked] == [
+    assert [c.__name__ for c in CIRCUIT_CLASSES if c.freezes_to_blocked] == [
         "QFTBasis",
         "RichBasis",
         "RealRichBasis",
     ]
-    with pytest.raises(TypeError, match="freeze_as_blocked supports"):
-        pdft.freeze_as_blocked(pdft.TEBDBasis(m=2, n=2), 1, 1)
 
 
 def test_a_given_code_replaces_the_circuits_own():
@@ -136,18 +113,6 @@ def test_a_family_with_no_options_only_names_its_emitter():
     # the base class itself has no circuit to build
     with pytest.raises(AttributeError, match="emit"):
         CircuitBasis(1, 1)
-
-
-@pytest.mark.parametrize("cls", [pdft.TEBDBasis, pdft.MERABasis])
-def test_layered_bases_seed_one_phase_per_gate(cls):
-    seeded = cls(m=2, n=4, seed=7)
-    count = seeded.n_row_gates + seeded.n_col_gates
-    drawn = list(np.random.default_rng(7).normal(0.0, 0.1, count))
-    assert bases_allclose(seeded, cls(m=2, n=4, phases=drawn), atol=0.0)
-    assert not bases_allclose(seeded, cls(m=2, n=4))
-    # explicit phases win over the seed
-    assert bases_allclose(cls(m=2, n=4, phases=drawn, seed=99), seeded, atol=0.0)
-    assert type(seeded).__name__ in repr(seeded) and seeded == seeded
 
 
 def test_bases_allclose_compares_type_size_and_tensors():
@@ -218,7 +183,7 @@ def test_dataclasses_replace_works_where_every_field_is_a_constructor_argument(c
     assert all(jnp.array_equal(a, 2 * b) for a, b in zip(doubled.tensors, basis.tensors))
 
 
-@pytest.mark.parametrize("cls", CIRCUIT_BASES)
+@pytest.mark.parametrize("cls", CIRCUIT_CLASSES)
 def test_a_basis_survives_copy_and_pickle(cls):
     import copy
     import pickle
@@ -257,50 +222,29 @@ def test_a_subclass_that_is_not_a_dataclass_keeps_its_attributes():
     assert jax.tree_util.tree_structure(_Plainer(2, 2)) != jax.tree_util.tree_structure(basis)
 
 
-def test_a_rebuilt_dense_basis_is_not_certified_as_diagonal():
-    """A basis rebuilt with another instance's dense gates and codes, without repeating
-    the option that made them dense, must not be read as having diagonal gates: that
-    would certify `mu == 1` for a configuration that trains dense unitaries."""
-    dense = pdft.TEBDBasis(m=2, n=2, parametrization="u4")
-    rebuilt = pdft.TEBDBasis(
-        m=2, n=2, tensors=dense.tensors, code=dense.code, inv_code=dense.inv_code
-    )
-    hadamards = rebuilt.program.tensor_indices(kind="H")
-    assert rebuilt.program == dense.program and hadamards == [0, 1, 2, 3]
-    assert diagonal_tensor_indices(rebuilt) == []
-    assert cp_phases(rebuilt).shape == (0,)
-    certificate = pdft.certify_flat_modulus(rebuilt, frozen_indices=hadamards)
-    assert not certificate and certificate.offending_indices == [4, 5, 6, 7]
-
-    front = pdft.EntangledQFTBasis(m=2, n=2, entangle_position="front", seed=1)
-    rebuilt = pdft.EntangledQFTBasis(
-        m=2, n=2, tensors=front.tensors, code=front.code, inv_code=front.inv_code
-    )
-    assert rebuilt.program.tensor_indices(register="both") == front.program.tensor_indices(
-        register="both"
+@pytest.mark.parametrize("given", ["code", "inv_code"])
+def test_a_code_passed_alone_brings_its_counterpart(given):
+    """Its program, the other direction, the same arithmetic."""
+    front = pdft.EntangledQFTBasis(m=2, n=2, seed=1, entangle_position="front")
+    passed = replace(getattr(front, given), slices=True)
+    rebuilt = pdft.EntangledQFTBasis(m=2, n=2, tensors=front.tensors, **{given: passed})
+    assert rebuilt.program == front.program
+    assert rebuilt.code == replace(front.code, slices=True)
+    assert rebuilt.inv_code == replace(front.inv_code, slices=True)
+    x = complex_image((4, 4))
+    np.testing.assert_allclose(
+        rebuilt.inverse_transform(rebuilt.forward_transform(x)), x, atol=1e-12
     )
 
 
-def test_the_phase_view_is_exact_only_for_tensors_of_the_compact_form():
-    """The Riemannian trainers move all four entries of a controlled-phase tensor. The
-    view reads one phase and rewrites the tensor in compact form, so on such a basis
-    it is a projection, not a round trip."""
-    basis = pdft.QFTBasis(m=2, n=2)
-    assert bases_allclose(with_cp_phases(basis, cp_phases(basis)), basis, atol=1e-15)
+def test_a_callable_that_is_not_a_circuit_code_is_paired_with_the_default_circuit():
+    plain = pdft.QFTBasis(m=1, n=1)
+    wrapped = pdft.QFTBasis(m=1, n=1, code=lambda *operands: plain.code(*operands))
+    assert wrapped.program == plain.program and wrapped.inv_code == plain.inv_code
 
-    images = [np.random.default_rng(seed).standard_normal((4, 4)) for seed in range(3)]
-    trained = pdft.train_basis_batched(
-        basis,
-        dataset=images,
-        loss=pdft.L1Norm(),
-        epochs=3,
-        batch_size=3,
-        frozen_indices=basis.program.tensor_indices(kind="H"),
-    ).basis
-    cp = trained.program.tensor_indices(kind="CP")
-    assert all(float(jnp.max(jnp.abs(trained.tensors[i][0] - 1.0))) > 1e-4 for i in cp)
-    projected = with_cp_phases(trained, cp_phases(trained))
-    assert not bases_allclose(projected, trained, atol=1e-6)
-    # what it writes it reads back, and writing twice changes nothing more
-    np.testing.assert_allclose(cp_phases(projected), cp_phases(trained), atol=1e-15)
-    assert bases_allclose(with_cp_phases(projected, cp_phases(projected)), projected, atol=1e-15)
+
+def test_two_codes_given_are_kept_as_given():
+    plain = pdft.QFTBasis(m=2, n=1)
+    sliced_inverse = replace(plain.inv_code, slices=True)
+    basis = pdft.QFTBasis(m=2, n=1, code=plain.code, inv_code=sliced_inverse)
+    assert basis.code == plain.code and basis.inv_code == sliced_inverse

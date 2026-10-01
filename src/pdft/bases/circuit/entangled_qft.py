@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-# Mirrors of upstream src/entangled_qft.jl:281-326, which take the entangle gates
+# Mirrors of upstream src/entangled_qft.jl:281-323, which take the entangle gates
 # to be the last `n_entangle` compact-CP tensors after the Hadamard-first sort.
 # That holds for the default "back" position only. Whatever the position,
 # `basis.program.tensor_indices(kind="CP", register="both")` is the entangle gates.
@@ -50,13 +50,20 @@ def extract_entangle_phases(tensors: list[Array], entangle_indices: list[int]) -
     return extract_phases(tensors, entangle_indices)
 
 
-# Upstream's name (src/entangled_qft.jl:36-42) for the tensor of an entanglement
-# gate. It is an ordinary controlled phase, in the compact 2x2 form Yao emits.
+# The tensor an entanglement gate is stored as: an ordinary controlled phase, in
+# the compact 2x2 form Yao emits. Upstream exports a function of this name
+# (src/entangled_qft.jl:36-42) that returns `[1 0; 0 e^{i phi}]` instead, which is
+# not what its own circuit contracts.
 entanglement_gate = controlled_phase_diag
 
 
 def _entangle_layer(m: int, n: int, n_entangle: int, phases: list[float]) -> list[Gate]:
-    """Build the entanglement-gate layer: `n_entangle` CPs coupling row/col pairs."""
+    """The entanglement layer: gate `k` couples row qubit `m - k + 1` with column qubit `m + n - k + 1`.
+
+    These are the only gates between the two registers. The 2D QFT they are
+    added to is a QFT on the rows and a QFT on the columns with nothing
+    connecting them.
+    """
     return [cp_gate(m - k + 1, m + n - k + 1, phases[k - 1]) for k in range(1, n_entangle + 1)]
 
 
@@ -68,6 +75,10 @@ def entangled_qft_gates(
     entangle_position: str = "back",
 ) -> tuple[list[Gate], int]:
     """Return `(gates, n_entangle)` for entangled 2D QFT.
+
+    The 2D QFT (`qft_gates`: a QFT on the row register and one on the column
+    register) with `min(m, n)` controlled phases added, each between a row
+    qubit and the corresponding column qubit.
 
     Mirror of upstream src/entangled_qft.jl:135-258. Supported positions:
 

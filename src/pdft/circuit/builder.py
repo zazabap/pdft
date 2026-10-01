@@ -58,7 +58,8 @@ class Gate(TypedDict):
     """One gate of a circuit program.
 
     ``kind`` is one of ``GATE_KINDS``; ``qubits`` are the wires it acts on;
-    ``tensor`` is its tensor, of shape ``GATE_SHAPES[kind]``. ``phase`` is the
+    ``tensor`` is its tensor, which every emitter gives the shape
+    ``GATE_SHAPES[kind]``. ``phase`` is the
     angle the gate was built from, 0.0 when it has none. It is a record for
     the reader: what is applied is the tensor.
     """
@@ -80,6 +81,11 @@ def u4_from_phase(phi: float) -> Array:
     return controlled(jnp.diag(jnp.array([1.0 + 0j, jnp.exp(1j * phi)], dtype=jnp.complex128)))
 
 
+# For `controlled`: where the control is 1 on both legs, and what the gate is elsewhere.
+_CONTROL_ON = jnp.zeros((2, 2, 2, 2), dtype=bool).at[1, :, 1, :].set(True)
+_CONTROL_OFF = jnp.zeros((2, 2, 2, 2), dtype=jnp.complex128).at[0, :, 0, :].set(jnp.eye(2))
+
+
 def controlled(block: Array) -> Array:
     """The dense two-qubit tensor that applies the one-qubit ``block`` where the control is 1.
 
@@ -88,9 +94,10 @@ def controlled(block: Array) -> Array:
     a ``"U4"`` gate. A controlled phase, a CNOT and a controlled rotation are
     this with a diagonal, a bit flip and a rotation for ``block``.
     """
-    tensor = jnp.zeros((2, 2, 2, 2), dtype=jnp.complex128)
-    tensor = tensor.at[0, :, 0, :].set(jnp.eye(2, dtype=jnp.complex128))
-    return tensor.at[1, :, 1, :].set(block)
+    block = jnp.asarray(block, dtype=jnp.complex128)
+    if block.shape != (2, 2):
+        raise ValueError(f"the block of a controlled gate is (2, 2), got {block.shape}")
+    return jnp.where(_CONTROL_ON, block[None, :, None, :], _CONTROL_OFF)
 
 
 def identity_tensor(kind: str) -> Array:
@@ -290,10 +297,11 @@ def _one_qubit(pic: Array, ax: int, T: Array, inverse: bool, slices: bool) -> Ar
     the axis, asking for exact matmul precision: in single precision XLA
     otherwise lowers the contraction to TF32 on recent GPUs, which costs three
     digits. ``slices`` combines the two slices of the axis explicitly, with no
-    contraction at all. Measured on an L1 gradient of ``QFTBasis``: on a GPU
-    slices are 2 to 6 times faster at every size (41 ms against 7 ms at
-    512x512); on a CPU they are up to 1.7 times slower below 256x256 and
-    compile twice as slowly. Hence opt-in.
+    contraction at all. Measured on an L1 gradient of ``QFTBasis`` in double
+    precision on one machine: on a GPU slices are 2 to 6 times faster (41 ms
+    against 7 ms at 512x512); on a CPU between twice slower, for small
+    circuits, and about even; and slices compile more slowly. They also
+    change the low bits. Hence opt-in.
     """
     if slices:
         U = T.T if inverse else T
@@ -303,18 +311,20 @@ def _one_qubit(pic: Array, ax: int, T: Array, inverse: bool, slices: bool) -> Ar
     return jnp.moveaxis(out, 0, ax)
 
 
-def _walk(program: Program, inverse: bool, slices: bool, tensors: tuple, pic: Array) -> Array:
-    """Apply the program to ``pic``, shape ``(..., *(2,) * (m + n))``, one gate at a time.
+def _walk(
+    program: Program, inverse: bool, slices: bool, tensors: tuple, pic: Array, lead: int = 0
+) -> Array:
+    """Apply the program to ``pic`` one gate at a time.
 
-    Leading axes of ``pic`` are batch axes. ``tensors`` is in stored
-    (Hadamard-first) order. ``inverse`` walks the steps backwards with each
+    ``pic`` has ``lead`` batch axes, then one axis per qubit; any axes after
+    those ride along untouched. ``tensors`` is in stored (Hadamard-first)
+    order. ``inverse`` walks the steps backwards with each
     gate's legs swapped, which is the transpose of the circuit; the caller
     conjugates the tensors to make it the adjoint, as Julia's
     ``inverse_code(conj.(tensors)...)`` does. ``slices`` selects the arithmetic
     of the one-qubit gates, see ``_one_qubit``.
     """
     m, n = program.m, program.n
-    lead = pic.ndim - (m + n)
     order = range(len(program.steps))
     for i in reversed(order) if inverse else order:
         kind, qubits = program.steps[i]
@@ -351,17 +361,20 @@ def _walk(program: Program, inverse: bool, slices: bool, tensors: tuple, pic: Ar
     return pic
 
 
-_run = jax.jit(_walk, static_argnames=("program", "inverse", "slices"))
+_run = jax.jit(_walk, static_argnames=("program", "inverse", "slices", "lead"))
 
 
 @dataclass(frozen=True)
 class CircuitCode:
-    """``code(*tensors, pic)``: a program applied to ``pic`` of shape ``(..., *(2,) * (m + n))``.
+    """``code(*tensors, pic)``: a program applied to ``pic`` of shape ``(2,) * (m + n)``.
 
-    The callable a basis keeps as ``code`` and ``inv_code``. It compares and
+    The callable a basis keeps as ``code`` and ``inv_code``. The qubit axes
+    are the first ``m + n``; for a stack of images use ``apply_program``. It compares and
     hashes by its program, so two bases with the same circuit share one
     compiled applier and have equal pytree structures. ``slices`` selects the
-    arithmetic of the one-qubit gates, see ``_one_qubit``.
+    arithmetic of the one-qubit gates, see ``_one_qubit``; to use it on a
+    basis, construct the basis with ``code=dataclasses.replace(basis.code,
+    slices=True)`` (for a ``BlockedBasis``, construct its inner basis so).
     """
 
     program: Program
@@ -370,7 +383,7 @@ class CircuitCode:
 
     def __call__(self, *operands: Array) -> Array:
         *tensors, pic = operands
-        return _run(self.program, self.inverse, self.slices, tuple(tensors), pic)
+        return _run(self.program, self.inverse, self.slices, tuple(tensors), pic, lead=0)
 
 
 def apply_program(
@@ -385,16 +398,17 @@ def apply_program(
     the arithmetic of the one-qubit gates, faster on a GPU and slower on a CPU
     at small sizes; see ``_one_qubit``.
 
-    ``apply_circuit`` is the fixed-precision, single-image entry point every
-    basis has always used; this is the same walk without those two limits.
+    ``apply_circuit`` and ``contract_circuit`` are the single-image entry
+    points the bases use; this is the same walk with batch axes and with the
+    precision taken from the image.
     """
     m, n = program.m, program.n
     if x.shape[-2:] != (2**m, 2**n):
         raise ValueError(f"image shape must end in ({2**m}, {2**n}), got {x.shape}")
     dtype = jnp.complex64 if x.dtype in (jnp.float32, jnp.complex64) else jnp.complex128
     pic = x.astype(dtype).reshape(x.shape[:-2] + (2,) * (m + n))
-    out = _run(program, inverse, slices, tuple(t.astype(dtype) for t in tensors), pic)
-    return out.reshape(x.shape)
+    cast = tuple(t.astype(dtype) for t in tensors)
+    return _run(program, inverse, slices, cast, pic, lead=x.ndim - 2).reshape(x.shape)
 
 
 def register_width(size: int) -> int:
@@ -449,6 +463,12 @@ def compile_circuit(
     return CircuitCode(program, inverse), tensors
 
 
+def check_image_shape(pic: Array, m: int, n: int) -> None:
+    """Refuse an image that is not ``(2**m, 2**n)``."""
+    if pic.shape != (2**m, 2**n):
+        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
+
+
 def contract_circuit(tensors: list[Array], code: CircuitCode, m: int, n: int, pic: Array) -> Array:
     """Run ``code`` on ``pic`` laid out one axis per qubit, and give back a ``(2**m, 2**n)`` array.
 
@@ -475,8 +495,7 @@ def apply_circuit(
     complex128. Julia's ``ft_mat`` and ``ift_mat``: the inverse is the same
     call with the inverse code and conjugated tensors.
     """
-    if pic.shape != (2**m, 2**n):
-        raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
+    check_image_shape(pic, m, n)
     return contract_circuit(tensors, code, m, n, pic.astype(jnp.complex128))
 
 

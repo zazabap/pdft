@@ -34,11 +34,12 @@ bit reversal, realised as the bit-reversed output convention (matching
 At init the forward operator equals the bit-reversed orthonormal DCT-IV per
 dimension. Every gate is a learnable leaf on the manifold the optimiser picks
 from its values: R_y and branch-H on U(2), CR_y and mirror-Q on U(4), the
-Delta sign on the phase manifold. The gate tensors are real, and a real
-initialisation with a real objective keeps them real, so what is trained is
-the orthogonal subset (O(2), O(4)) of those manifolds, as for RealRich: the
-operator stays real-orthogonal as it relaxes from the exact transform (cf.
-``all_real_dct_zero_ancilla.tex``).
+Delta sign on the phase manifold. The gate tensors are real to rounding: the
+Delta sign is stored as ``exp(i*pi)``, whose imaginary part is ``1.2e-16``, and
+everything else is exactly real. Training does not keep the operator
+real-orthogonal: the optimisers amplify that imaginary part (see
+``DCT4Basis``), so the circuit relaxes from the exact transform within the
+unitaries (cf. ``all_real_dct_zero_ancilla.tex`` for the real construction).
 
 2D DCT-IV = (m-qubit DCT-IV on row qubits) tensor (n-qubit DCT-IV on col
 qubits); no entanglement between blocks.
@@ -67,7 +68,6 @@ Array = jax.Array
 
 
 __all__ = [
-    "_cry",
     "_dct4_gates_1d",
     "dct4_code",
     "dct4_ft_mat",
@@ -101,7 +101,6 @@ def _cry_u4(theta: float) -> Array:
 # builder's ``CRY`` kind applies it where the control is 1, so the structure
 # is fixed and the leaf has one angle.
 _TWIDDLES = {"o4": ("U4", _cry_u4), "controlled": ("CRY", _ry)}
-_cry = _ry
 
 
 def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> list[Gate]:
@@ -129,7 +128,8 @@ def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> l
         for q in lower:
             gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0))
         # T: affine R_y phase-gradient (one base R_y on b, one CR_y per lower bit)
-        gates.append(Gate(kind="H", qubits=(Q(b),), tensor=_ry(np.pi / (2 * size)), phase=0.0))
+        base = np.pi / (2 * size)
+        gates.append(Gate(kind="H", qubits=(Q(b),), tensor=_ry(base), phase=float(base)))
         for p in range(n_qubits - 1 - k):
             theta = np.pi * (2**p) / size
             gates.append(

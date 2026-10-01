@@ -96,8 +96,8 @@ def dense_operator(basis) -> Array:
     Column j is the transform of the image that is 1 at pixel j and 0
     elsewhere, so the result is (2^m 2^n) x (2^m 2^n).
 
-    This is a diagnostic, not a code path: it costs N^2 transforms of an
-    N-pixel image and is meant for small m, n. Nothing in training needs it ---
+    This is a diagnostic, not a code path: it costs N transforms of an
+    N-pixel image (N^2 numbers) and is meant for small m, n. Nothing in training needs it ---
     `certify_flat_modulus` gives the parameter-space guarantee without forming
     it.
     """
@@ -137,11 +137,13 @@ def coherence(basis, operator: Array | None = None) -> float:
 def is_flat_modulus(basis, operator: Array | None = None, atol: float = 1e-8) -> bool:
     """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard.
 
-    `atol` bounds `flat_modulus_deviation`, the largest departure of any
-    entry's modulus from ``N^{-1/2}``, with no relative slack on top.
+    The comparison is `jnp.allclose` with this `atol`, so its default
+    relative slack of ``1e-5`` applies on top: a basis held in single
+    precision, which sits about ``2e-8`` from flat, passes. For the number
+    itself use `flat_modulus_deviation`.
     """
     u = dense_operator(basis) if operator is None else operator
-    return bool(flat_modulus_deviation(u) <= atol)
+    return bool(jnp.allclose(jnp.abs(u), u.shape[0] ** -0.5, atol=atol))
 
 
 def diagonal_tensor_indices(basis) -> list[int]:
@@ -203,6 +205,11 @@ def certify_flat_modulus(
 
     Frozen non-diagonal gates are fine: a fixed Hadamard is what the
     proposition assumes. It is *training* them that voids it.
+
+    The proposition's other hypothesis, one Hadamard per wire, is not
+    checked. Every basis in the package satisfies it; for a circuit of your
+    own with two Hadamards on a wire the certificate can hold where
+    `sampled_flat_modulus` shows it does not.
     """
     operator = dense_operator(basis)
     mu = coherence(basis, operator)
@@ -264,7 +271,7 @@ def sampled_flat_modulus(
     frozen_indices: list[int] | None = None,
     *,
     trials: int = 8,
-    atol: float = 1e-10,
+    atol: float = 1e-8,
     seed: int = 0,
 ) -> dict:
     """Measure the guarantee over drawn values of the tensors left trainable.
@@ -277,18 +284,22 @@ def sampled_flat_modulus(
     from the circuit's structure; this measures it, and says how far a
     configuration without the guarantee drifts.
 
-    Returns the verdict, the worst deviation and the worst mu seen.
+    Returns the verdict, the worst deviation and the worst mu seen. A draw
+    is judged as `is_flat_modulus` judges a basis, with the same `atol`.
     """
+    if trials < 1:
+        raise ValueError(f"trials must be >= 1, got {trials}")
     rng = np.random.default_rng(seed)
     frozen = set(frozen_indices or [])
-    worst_deviation, worst_mu = 0.0, 0.0
+    holds, worst_deviation, worst_mu = True, 0.0, 0.0
     for _ in range(trials):
         drawn = [t if i in frozen else _random_point(t, rng) for i, t in enumerate(basis.tensors)]
         u = dense_operator(with_tensors(basis, drawn))
+        holds = holds and is_flat_modulus(None, u, atol=atol)
         worst_deviation = max(worst_deviation, float(flat_modulus_deviation(u)))
         worst_mu = max(worst_mu, float(operator_coherence(u)))
     return {
-        "holds": worst_deviation <= atol,
+        "holds": holds,
         "worst_deviation": worst_deviation,
         "worst_mu": worst_mu,
         "trials": trials,

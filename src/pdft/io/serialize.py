@@ -38,7 +38,7 @@ _VERSION = "1.0"
 
 
 def _iter_column_major(arr: np.ndarray):
-    """Yield elements of `arr` in column-major (Fortran) order.
+    """The elements of `arr` as a flat array in column-major (Fortran) order.
 
     Julia iterates multi-dimensional arrays in column-major order by default;
     for cross-language hash/JSON parity, Python must do the same regardless
@@ -160,7 +160,7 @@ def dict_to_basis(d: dict) -> QFTBasis:
     serialized = d["tensors"]
     if len(serialized) != len(template_tensors):
         raise ValueError(
-            f"Tensor count mismatch: expected {len(template_tensors)} (from QFTBasis(m={m}, n={n})), "
+            f"Tensor count mismatch: expected {len(template_tensors)} (from qft_code(m={m}, n={n})), "
             f"got {len(serialized)}"
         )
 

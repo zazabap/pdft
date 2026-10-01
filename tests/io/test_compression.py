@@ -134,3 +134,8 @@ def test_recover_refuses_a_size_the_basis_does_not_have():
     compressed.original_size = (8, 8)
     with pytest.raises(ValueError, match="does not match basis size"):
         recover(basis, compressed)
+
+
+def test_the_kept_count_is_rounded_to_the_nearest_coefficient():
+    """10% of 16 coefficients is 1.6: two are kept, as upstream's `round` keeps them."""
+    assert len(compress(QFTBasis(m=2, n=2), _fixed_image(), ratio=0.9).indices) == 2

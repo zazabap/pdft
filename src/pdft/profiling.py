@@ -45,14 +45,14 @@ import numpy as np
 
 from .loss import AbstractLoss, mean_loss
 from .optimizers import RiemannianAdam
-from .training.adam_step import _build_jit_adam_step, init_adam_moments
+from .training.adam_step import adam_stepper
 from .training.schedules import cosine_with_warmup as _cosine_with_warmup
 
 
 @dataclass
 class StepRecord:
     step: int
-    phase: str  # "compile" (first step JIT) | "warm" (post-JIT) | "val"
+    phase: str  # "compile" (first step JIT) | "warm" (the first of these compiles again) | "val"
     wall_s: float
     loss: float | None = None
 
@@ -159,7 +159,9 @@ def profile_training(
     HLO trace at `trace_dir` (open with `tensorboard --logdir <dir>`).
 
     The first step's wall-clock is dominated by JIT compile and tagged
-    "compile"; subsequent steps are tagged "warm". Val passes (when
+    "compile"; subsequent steps are tagged "warm". The first "warm" step
+    compiles a second time (its inputs are committed to a device, another jit
+    signature), so leave it out of a timing as well. Val passes (when
     `val_every > 0`) are tagged "val".
     """
     if optimizer.lower() != "adam":
@@ -192,7 +194,7 @@ def profile_training(
 
         # The JIT'd Adam step train_basis_batched uses, at the optimizer's defaults.
         defaults = RiemannianAdam()
-        step_fn = _build_jit_adam_step(
+        adam_step = adam_stepper(
             basis,
             loss,
             beta1=defaults.beta1,
@@ -200,7 +202,6 @@ def profile_training(
             eps=defaults.eps,
             max_grad_norm=max_grad_norm,
         )
-        m_state, v_state = init_adam_moments(basis.tensors)
 
         m_qb, n_qb = basis.m, basis.n
         _val_eval = jax.jit(mean_loss(basis, loss)) if val_imgs is not None else None
@@ -234,14 +235,7 @@ def profile_training(
 
                 with jax.profiler.StepTraceAnnotation("train_step", step_num=s):
                     t0 = time.perf_counter()
-                    current, m_state, v_state, loss_val = step_fn(
-                        current,
-                        m_state,
-                        v_state,
-                        batch,
-                        jnp.asarray(lr_t),
-                        jnp.asarray(s + 1, dtype=jnp.int32),
-                    )
+                    current, loss_val = adam_step(current, batch, lr_t, s + 1)
                     jax.block_until_ready(loss_val)
                     dt = time.perf_counter() - t0
 
