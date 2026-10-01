@@ -3,7 +3,7 @@ Circuit machinery
 
 .. currentmodule:: pdft.circuit
 
-Turns a Yao-style gate list into a JAX einsum, and caches the contraction path and the JIT-compiled closure. Every basis uses it.
+Turns a Yao-style gate list into a program and applies it to an image one gate at a time; every basis with the same program shares one compiled applier. Every basis uses it.
 
 .. automodule:: pdft.circuit
    :no-members:
