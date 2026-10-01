@@ -9,12 +9,14 @@ import pdft
 from pdft.bases.circuit.qft import qft_gates_1d
 from pdft.circuit import REGISTERS
 from pdft.circuit.builder import (
+    HADAMARD,
     CircuitCode,
     Program,
     _run,
     apply_program,
     compile_circuit,
     compile_program,
+    controlled_phase_diag,
 )
 
 from ..helpers import complex_image, small_circuit
@@ -99,6 +101,16 @@ def test_two_instances_of_a_basis_share_one_compiled_applier():
     compiled = _run._cache_size()
     b.forward_transform(x)
     assert a.code == b.code and _run._cache_size() == compiled
-    # one image through apply_program is that same walk
-    apply_program(a.program, a.tensors, x)
-    assert _run._cache_size() == compiled
+
+
+def test_one_image_through_apply_program_is_the_walk_its_code_compiled():
+    """On a circuit no other test builds, so the cache entries counted are this test's."""
+    steps = (("H", (2,)), ("H", (2,)), ("H", (2,)), ("CP", (2, 5)))
+    program = Program(2, 3, steps, (0, 1, 2, 3))
+    tensors = [HADAMARD, HADAMARD, HADAMARD, controlled_phase_diag(0.3)]
+    x = complex_image((4, 8))
+    before = _run._cache_size()
+    CircuitCode(program)(*tensors, x.reshape((2,) * 5))
+    assert _run._cache_size() == before + 1
+    apply_program(program, tensors, x)
+    assert _run._cache_size() == before + 1
