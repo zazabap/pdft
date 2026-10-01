@@ -80,7 +80,7 @@ There is one way a circuit reaches an image: a family emits a gate list (`<famil
 
 `CircuitBasis` (`bases/core.py`) stores `program` next to `tensors` and derives the rest for every family: `code`, `inv_code`, the transforms, the parameter count and the pytree. A new family is its emitter plus `emit = staticmethod(<family>_gates)` (or a constructor that calls `_init` when it has options of its own). A `code` passed to a constructor defines the circuit: when it is a `CircuitCode` the basis takes its program from it, so a basis rebuilt with another instance's tensors and codes stays consistent. Do not add a second applier, a per-family `forward_transform`, a per-family pytree registration, or code that recovers the gate sequence from tensor values: read `basis.program`.
 
-The default arithmetic (`tensordot` with `precision="highest"`) is bit-identical to what `main` computed before the refactor; `tests/characterisation/` holds the proof. `slices=True` is the same operator in different arithmetic (faster on a GPU, slower on a small CPU problem) and is opt-in because it changes the low bits.
+The default arithmetic (`tensordot` with `precision="highest"`) is bit-identical to what the package computed before the gate-centred refactor, which was checked when it was introduced. `slices=True` is the same operator in different arithmetic (faster on a GPU, slower on a small CPU problem) and is opt-in because it changes the low bits.
 
 ### 11. `QFTBasis` is the DFT of the bit-reversed image, with `e^{+2 pi i kx/N}`
 
@@ -109,7 +109,7 @@ Do not add a second way to hold a circuit's parameters (an angle vector with its
 - QFT, EntangledQFT, TEBD, MERA and DCT4 transforms use `apply_circuit`.
 - Rich, RealRich and Blocked transforms, and `loss_function`, use `contract_circuit`. Single-precision tensors therefore stay single precision through them, and a loss with single-precision tensors is computed and differentiated in single precision.
 
-This asymmetry is how the package behaved before the refactor (`BasisTransforms._run` now names it). It is not a convention worth defending, but unifying it changes results for single-precision tensors: their losses, gradients and training trajectories are then computed in the other precision. It was once "cleaned up" by accident and no test noticed, because every snapshot used double-precision tensors. `tests/characterisation/test_contracts.py` now pins both halves. Change it only as a decision, with the change declared.
+This asymmetry is how the package behaved before the refactor (`BasisTransforms._run` now names it). It is not a convention worth defending, but unifying it changes results for single-precision tensors: their losses, gradients and training trajectories are then computed in the other precision. It was once "cleaned up" by accident and no test noticed, because every test used double-precision tensors. `tests/bases/test_contracts.py` now pins both halves. Change it only as a decision, with the change declared.
 
 ## Repo layout
 
@@ -160,8 +160,6 @@ pip install -e ".[dev]"
 pytest                                    # full suite
 pytest --cov=pdft --cov-fail-under=90     # CI gate
 pytest tests/parity                       # parity-only
-PDFT_SNAPSHOT_EXACT=1 PDFT_DISABLE_COMPILE_CACHE=1 pytest tests/characterisation   # a refactor changed no bits
-python -m tests.characterisation.compare_refs origin/main   # the same question over the whole public API (minutes)
 
 # Lint (CI fails if this is dirty — check before pushing)
 ruff check src tests
@@ -184,14 +182,11 @@ After regenerating goldens: also update `__upstream_ref__` in `src/pdft/__init__
 
 ## Tests and parity
 
-Four layers (the first three per spec section 7):
+Three layers (per spec section 7):
 
 1. **Parity tests** (`tests/parity/test_*.py`) — load committed `.npz` / `.json` goldens from `reference/goldens/` and assert Python matches Julia. These are the load-bearing correctness tests.
-2. **Property tests** (`tests/test_<module>.py` and `tests/<subpackage>/`) — math-invariant checks (unitarity preserved, round-trip identity, monotone descent, …). Don't depend on Julia. `tests/circuit/einsum_reference.py` is the single-einsum builder the package used before the gate walk, kept as a test-only second implementation: `test_einsum_reference.py` checks the walk against it for every family at random tensors.
+2. **Property tests** (`tests/test_<module>.py` and `tests/<subpackage>/`) — math-invariant checks (unitarity preserved, round-trip identity, monotone descent, …). Don't depend on Julia. `tests/circuit/einsum_reference.py` is the single-einsum builder the package used before the gate walk, kept as a test-only second implementation: `test_einsum_reference.py` checks the walk against it for every family at random tensors. `tests/bases/test_contracts.py` runs what every basis has in common over one registry of basis configurations (`tests/basis_cases.py`), including the precision and shape each family's transforms accept and return (§13); add a new basis to that registry.
 3. **Smoke / integration** (`tests/test_smoke.py`, `tests/training/test_integration.py`).
-4. **Characterisation tests** (`tests/characterisation/`) — snapshots of what the Python package itself computed at `main` `102f5b6`, for every basis and trainer path, including where no Julia golden exists (generic tensors, inverses, gradients, the dense and controlled gates, the batched trainer). They are not correctness tests; they exist so a refactor that is meant to change nothing can be shown to change nothing. `cases.py` is the single registry both the tests and `regenerate.py` read. By default a value may differ from its snapshot at rounding level (portable across machines); `PDFT_SNAPSHOT_EXACT=1` demands the same bytes and only means something on the machine that generated the file (`python -m tests.characterisation.regenerate --out x.npz`, then `PDFT_SNAPSHOT_FILE=x.npz`). Never regenerate `snapshots.npz` to make a failing test pass: a snapshot that moves is a behaviour change and the commit has to say which one.
-
-   The snapshots are 150 arrays. The wider net is `python -m tests.characterisation.compare_refs origin/main`: it runs `workload.py` (20 basis configurations, both trainers in about 130 configurations, freezing, JSON, compression, coherence, single-precision tensors, odd image shapes, keyword calls, error messages; about 5800 arrays) on the ref's source and on the working tree in separate processes and compares every array byte for byte. Run it before claiming that a change alters no behaviour, and extend the workload when you find behaviour it does not exercise.
 
 Coverage gate is `--cov-fail-under=90`. Don't add tests that reduce per-module coverage below the line; if a new module legitimately needs more code, also add the property tests for it.
 
@@ -232,6 +227,6 @@ If you find another mismatch:
 1. Make the change.
 2. Run `ruff check src tests` and `ruff format src tests`.
 3. Run `pytest --cov=pdft --cov-fail-under=90`.
-4. If you touched a circuit, basis, optimizer, or io module: also run `tests/parity` to confirm Julia-parity hasn't drifted, and, for a change meant to alter no numbers, `tests/characterisation` in exact mode.
+4. If you touched a circuit, basis, optimizer, or io module: also run `tests/parity` to confirm Julia-parity hasn't drifted. For a change meant to alter no numbers, compare old and new on the same machine before saying so: bytes, not `allclose`, and with single-precision tensors as well as double (§13).
 5. If you changed the upstream pin: update both `reference/julia/generate_goldens.jl` (`UPSTREAM_SHA`) and `src/pdft/__init__.py` (`__upstream_ref__`), regenerate goldens, and verify all parity tests still pass.
 6. Push and watch the GitHub Actions matrix — three Python versions must all be green before merging.
