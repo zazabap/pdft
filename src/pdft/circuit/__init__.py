@@ -7,10 +7,13 @@ The cache memoizes `jnp.einsum_path` results and the JIT'd closures.
 
 from .builder import (
     HADAMARD,
+    CircuitCode,
     Gate,
+    Program,
     apply_circuit,
     build_circuit_einsum,
     compile_circuit,
+    compile_program,
     controlled_phase_diag,
     extract_phase_from_cp,
     is_compact_cp,
@@ -22,10 +25,13 @@ from .cache import optimize_code_cached
 
 __all__ = [
     "HADAMARD",
+    "CircuitCode",
     "Gate",
+    "Program",
     "apply_circuit",
     "build_circuit_einsum",
     "compile_circuit",
+    "compile_program",
     "controlled_phase_diag",
     "extract_phase_from_cp",
     "is_compact_cp",
