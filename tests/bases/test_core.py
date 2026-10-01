@@ -147,3 +147,13 @@ def test_layered_bases_seed_one_phase_per_gate(cls):
     # explicit phases win over the seed
     assert bases_allclose(cls(m=2, n=4, phases=drawn, seed=99), seeded, atol=0.0)
     assert type(seeded).__name__ in repr(seeded) and seeded == seeded
+
+
+def test_bases_allclose_compares_type_size_and_tensors():
+    a = pdft.QFTBasis(m=2, n=2)
+    assert bases_allclose(a, pdft.QFTBasis(m=2, n=2))
+    assert not bases_allclose(a, pdft.RichBasis(m=2, n=2))
+    assert not bases_allclose(a, pdft.QFTBasis(m=2, n=1))
+    assert not bases_allclose(a, pdft.QFTBasis(m=2, n=2, tensors=a.tensors[:-1]))
+    nudged = pdft.QFTBasis(m=2, n=2, tensors=[*a.tensors[:-1], a.tensors[-1] + 1e-6])
+    assert not bases_allclose(a, nudged) and bases_allclose(a, nudged, atol=1e-5)

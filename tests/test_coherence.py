@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 
 from pdft.bases import (
+    BlockedBasis,
+    DCT4Basis,
     EntangledQFTBasis,
+    MERABasis,
     QFTBasis,
     RealRichBasis,
     RichBasis,
@@ -16,7 +19,10 @@ from pdft.coherence import (
     coherence,
     dense_operator,
     diagonal_tensor_indices,
+    flat_modulus_deviation,
     is_flat_modulus,
+    operator_coherence,
+    sampled_flat_modulus,
 )
 
 # (3, 3) keeps the dense 64x64 operator cheap while exercising both registers.
@@ -145,3 +151,99 @@ def test_certificate_is_falsy_when_the_basis_is_not_flat():
     cert = certify_flat_modulus(b, frozen_indices=list(range(len(b.tensors))))
     assert not cert
     assert "not flat-modulus" in cert.reason
+
+
+# --------------------------------------------------------------------------
+# operator-level quantities
+
+
+def test_operator_quantities_match_the_basis_level_ones():
+    b = _perturb(QFTBasis(m=2, n=2), jax.random.PRNGKey(5), diagonal=False)
+    u = dense_operator(b)
+    assert float(operator_coherence(u)) == coherence(b) == coherence(b, u)
+    assert float(flat_modulus_deviation(u)) == pytest.approx(
+        float(jnp.max(jnp.abs(jnp.abs(u) - 0.25))), abs=0.0
+    )
+    flat = dense_operator(QFTBasis(m=2, n=2))
+    assert float(flat_modulus_deviation(flat)) < 1e-15
+    assert float(operator_coherence(flat)) == pytest.approx(1.0, abs=1e-14)
+
+
+def test_operator_coherence_is_traceable():
+    """A loss may carry mu: it jits and has a gradient with respect to the tensors."""
+    b = _perturb(QFTBasis(m=2, n=2), jax.random.PRNGKey(6), diagonal=False)
+    leaves, treedef = jax.tree_util.tree_flatten(b)
+
+    @jax.jit
+    def mu(tensors):
+        return operator_coherence(dense_operator(jax.tree_util.tree_unflatten(treedef, tensors)))
+
+    assert float(mu(leaves)) == pytest.approx(coherence(b), rel=1e-12)
+    grads = jax.grad(mu)(leaves)
+    assert all(bool(jnp.all(jnp.isfinite(g))) for g in grads)
+    assert max(float(jnp.max(jnp.abs(g))) for g in grads) > 1e-3
+
+
+def test_is_flat_modulus_has_no_relative_slack():
+    """`atol` is the whole tolerance. `jnp.allclose` would add `1e-5 * N^-1/2` on top
+    and call an operator flat that is `1e-6` away from it."""
+    flat = dense_operator(QFTBasis(m=2, n=2))
+    off = flat.at[0, 0].mul(1.0 + 4e-6)
+    assert float(flat_modulus_deviation(off)) == pytest.approx(1e-6, rel=1e-3)
+    assert bool(jnp.allclose(jnp.abs(off), 0.25, atol=1e-8))
+    assert not is_flat_modulus(None, off)
+    assert is_flat_modulus(None, off, atol=2e-6)
+
+
+@pytest.mark.parametrize("ctor", [*ALL_BASES, DCT4Basis, MERABasis])
+def test_diagonal_tensors_by_gate_kind_match_the_value_test_at_initialisation(ctor):
+    b = ctor(m=2, n=2)
+    by_value = [i for i, t in enumerate(b.tensors) if is_compact_cp(t)]
+    assert diagonal_tensor_indices(b) == by_value == b.program.tensor_indices(kind="CP")
+
+
+def test_diagonal_tensors_of_a_blocked_basis_are_its_inner_ones():
+    inner = QFTBasis(m=2, n=2)
+    assert diagonal_tensor_indices(BlockedBasis(inner, 1, 1)) == diagonal_tensor_indices(inner)
+
+
+# --------------------------------------------------------------------------
+# the sampled check
+
+
+@pytest.mark.parametrize("ctor", [QFTBasis, EntangledQFTBasis, TEBDBasis])
+def test_sampled_check_agrees_with_the_certificate(ctor):
+    b = ctor(m=2, n=2)
+    diagonal = diagonal_tensor_indices(b)
+    others = [i for i in range(len(b.tensors)) if i not in diagonal]
+
+    held = sampled_flat_modulus(b, frozen_indices=others, trials=4)
+    assert held["holds"] and certify_flat_modulus(b, frozen_indices=others)
+    assert held["worst_deviation"] < 1e-12 and held["worst_mu"] == pytest.approx(1.0, abs=1e-10)
+    assert held["trials"] == 4
+
+    broke = sampled_flat_modulus(b, trials=4)
+    assert not broke["holds"] and not certify_flat_modulus(b)
+    assert broke["worst_mu"] > 1.5 and broke["worst_deviation"] > 1e-2
+
+
+def test_sampled_check_draws_on_the_manifold_and_leaves_frozen_tensors_alone():
+    from pdft.coherence import _random_point
+
+    rng = np.random.default_rng(0)
+    b = RichBasis(m=2, n=2)
+    for t in [*b.tensors, QFTBasis(m=2, n=2).tensors[-1]]:
+        drawn = _random_point(t, rng)
+        assert drawn.shape == t.shape and drawn.dtype == t.dtype
+        assert not bool(jnp.allclose(drawn, t))
+        if is_compact_cp(t):
+            assert bool(jnp.allclose(jnp.abs(drawn), 1.0, atol=1e-14))
+        else:
+            d = round(t.size**0.5)
+            mat = drawn.reshape(d, d)
+            assert bool(jnp.allclose(mat @ jnp.conj(mat).T, jnp.eye(d), atol=1e-12))
+    # everything frozen: nothing is drawn, the basis is measured as it is
+    everything = sampled_flat_modulus(b, frozen_indices=list(range(len(b.tensors))), trials=2)
+    assert everything["holds"] and everything["worst_mu"] == pytest.approx(1.0, abs=1e-10)
+    # the same seed draws the same points
+    assert sampled_flat_modulus(b, trials=2, seed=3) == sampled_flat_modulus(b, trials=2, seed=3)

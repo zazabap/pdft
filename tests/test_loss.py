@@ -71,7 +71,9 @@ def test_mseloss_extra_loss_hook_adds_term():
     pic = jnp.ones((4, 4), dtype=jnp.complex128) / 4.0
 
     base_loss = float(loss_function(tensors, m, n, code, pic, MSELoss(k=1), inverse_code=inv_code))
-    extra_loss = float(loss_function(tensors, m, n, code, pic, WithExtra(k=1), inverse_code=inv_code))
+    extra_loss = float(
+        loss_function(tensors, m, n, code, pic, WithExtra(k=1), inverse_code=inv_code)
+    )
 
     assert abs(extra_loss - base_loss - 7.0) < 1e-10
 
@@ -91,3 +93,43 @@ def test_mseloss_extra_loss_uses_tensors():
     expected_reg = float(sum(jnp.sum(jnp.abs(t) ** 2) for t in tensors).real)
 
     assert abs(loss_val - expected_reg) < 1e-6
+
+
+def test_mse_reconstruction_uses_the_adjoint_at_non_symmetric_tensors():
+    """Keeping every coefficient reconstructs the image exactly, whatever the unitary
+    gates are. That needs ``conj(tensors)`` through the inverse code: the inverse
+    code alone is the transpose, which only inverts gates that happen to be symmetric,
+    as the initial ones are."""
+    import jax
+    import numpy as np
+
+    import pdft
+
+    rng = np.random.default_rng(0)
+
+    def unitary(d):
+        q, r = np.linalg.qr(rng.normal(size=(d, d)) + 1j * rng.normal(size=(d, d)))
+        return q * (np.diag(r) / np.abs(np.diag(r)))
+
+    for basis in (pdft.QFTBasis(m=2, n=2), pdft.RichBasis(m=2, n=2)):
+        tensors = []
+        for kind, _ in basis.program.sorted_steps:
+            if kind == "CP":
+                tensors.append(jnp.asarray(np.exp(1j * rng.uniform(-3, 3, (2, 2)))))
+            else:
+                d = 4 if kind == "U4" else 2
+                tensors.append(jnp.asarray(unitary(d)).reshape((2,) * (4 if kind == "U4" else 2)))
+        pic = jnp.asarray(rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4)))
+        args = (tensors, 2, 2, basis.code, pic)
+        full = loss_function(*args, MSELoss(k=16), inverse_code=basis.inv_code)
+        assert float(full) < 1e-24
+        # and with fewer coefficients it is the energy of the ones dropped
+        coefficients = np.sort(
+            np.abs(np.asarray(basis.code(*tensors, pic.reshape((2,) * 4)))).ravel()
+        )
+        kept = loss_function(*args, MSELoss(k=5), inverse_code=basis.inv_code)
+        assert float(kept) == pytest.approx(float(np.sum(coefficients[:-5] ** 2)), rel=1e-10)
+        gradient = jax.grad(
+            lambda ts: loss_function(ts, *args[1:], MSELoss(k=5), inverse_code=basis.inv_code)
+        )(tensors)
+        assert all(bool(jnp.all(jnp.isfinite(g))) for g in gradient)

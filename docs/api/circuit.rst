@@ -20,7 +20,11 @@ Turns a Yao-style gate list into a JAX einsum, and caches the contraction path a
    compile_circuit
    apply_program
    apply_circuit
+   bit_reverse
+   register_width
    Gate
+   GATE_KINDS
+   REGISTERS
    HADAMARD
    hadamard_gate
    phase_gate

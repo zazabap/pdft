@@ -20,7 +20,14 @@ from .circuit.entangled_qft import entangled_qft_gates
 from .circuit.mera import _n_mera_gates, mera_gates
 from .circuit.qft import qft_gates
 from .circuit.tebd import _n_tebd_gates, tebd_gates
-from .core import AbstractSparseBasis, CircuitBasis, bases_allclose
+from .core import (
+    AbstractSparseBasis,
+    CircuitBasis,
+    bases_allclose,
+    cp_phases,
+    program_of,
+    with_cp_phases,
+)
 
 Array = jax.Array
 
@@ -33,6 +40,9 @@ __all__ = [
     "QFTBasis",
     "TEBDBasis",
     "bases_allclose",
+    "cp_phases",
+    "program_of",
+    "with_cp_phases",
 ]
 
 

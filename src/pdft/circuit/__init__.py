@@ -6,12 +6,15 @@ qubits); `CircuitCode` applies the program one gate at a time.
 """
 
 from .builder import (
+    GATE_KINDS,
     HADAMARD,
+    REGISTERS,
     CircuitCode,
     Gate,
     Program,
     apply_circuit,
     apply_program,
+    bit_reverse,
     compile_circuit,
     compile_program,
     controlled_phase_diag,
@@ -21,18 +24,22 @@ from .builder import (
     hadamards_then_layers,
     is_compact_cp,
     phase_gate,
+    register_width,
     select_last_n_cp_indices,
     two_registers,
     u4_from_phase,
 )
 
 __all__ = [
+    "GATE_KINDS",
     "HADAMARD",
+    "REGISTERS",
     "CircuitCode",
     "Gate",
     "Program",
     "apply_circuit",
     "apply_program",
+    "bit_reverse",
     "compile_circuit",
     "compile_program",
     "controlled_phase_diag",
@@ -42,6 +49,7 @@ __all__ = [
     "hadamards_then_layers",
     "is_compact_cp",
     "phase_gate",
+    "register_width",
     "select_last_n_cp_indices",
     "two_registers",
     "u4_from_phase",
