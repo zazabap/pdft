@@ -102,6 +102,15 @@ A model that trains part of a circuit, or trains it through other parameters, is
 
 Do not add a second way to hold a circuit's parameters (an angle vector with its own applier, a gate dict) and a bridge between the two.
 
+### 13. Two ways a transform reaches its circuit, on purpose
+
+`apply_circuit` checks that the image is `(2**m, 2**n)` and casts it to complex128. `contract_circuit` does neither: any image with the right number of elements is reshaped, and the result has whatever precision the tensors and the image promote to.
+
+- QFT, EntangledQFT, TEBD, MERA and DCT4 transforms use `apply_circuit`.
+- Rich, RealRich and Blocked transforms, and `loss_function`, use `contract_circuit`. Single-precision tensors therefore stay single precision through them, and a loss with single-precision tensors is computed and differentiated in single precision.
+
+This asymmetry is how the package behaved before the refactor (`BasisTransforms._run` now names it). It is not a convention worth defending, but unifying it changes results for single-precision tensors: their losses, gradients and training trajectories are then computed in the other precision. It was once "cleaned up" by accident and no test noticed, because every snapshot used double-precision tensors. `tests/characterisation/test_contracts.py` now pins both halves. Change it only as a decision, with the change declared.
+
 ## Repo layout
 
 ```
@@ -152,6 +161,7 @@ pytest                                    # full suite
 pytest --cov=pdft --cov-fail-under=90     # CI gate
 pytest tests/parity                       # parity-only
 PDFT_SNAPSHOT_EXACT=1 PDFT_DISABLE_COMPILE_CACHE=1 pytest tests/characterisation   # a refactor changed no bits
+python -m tests.characterisation.compare_refs origin/main   # the same question over the whole public API (minutes)
 
 # Lint (CI fails if this is dirty — check before pushing)
 ruff check src tests
@@ -179,7 +189,9 @@ Four layers (the first three per spec section 7):
 1. **Parity tests** (`tests/parity/test_*.py`) — load committed `.npz` / `.json` goldens from `reference/goldens/` and assert Python matches Julia. These are the load-bearing correctness tests.
 2. **Property tests** (`tests/test_<module>.py` and `tests/<subpackage>/`) — math-invariant checks (unitarity preserved, round-trip identity, monotone descent, …). Don't depend on Julia. `tests/circuit/einsum_reference.py` is the single-einsum builder the package used before the gate walk, kept as a test-only second implementation: `test_einsum_reference.py` checks the walk against it for every family at random tensors.
 3. **Smoke / integration** (`tests/test_smoke.py`, `tests/training/test_integration.py`).
-4. **Characterisation tests** (`tests/characterisation/`) — snapshots of what the Python package itself computed at `main` `102f5b6`, for every basis and trainer path, including where no Julia golden exists (generic tensors, inverses, gradients, the dense and controlled gates, the batched trainer). They are not correctness tests; they exist so a refactor that is meant to change nothing can be shown to change nothing. `cases.py` is the single registry both the tests and `regenerate.py` read. By default a value may differ from its snapshot at rounding level (portable across machines); `PDFT_SNAPSHOT_EXACT=1` demands the same bits and only means something on the machine that generated the file (`python -m tests.characterisation.regenerate --out x.npz`, then `PDFT_SNAPSHOT_FILE=x.npz`). Never regenerate `snapshots.npz` to make a failing test pass: a snapshot that moves is a behaviour change and the commit has to say which one.
+4. **Characterisation tests** (`tests/characterisation/`) — snapshots of what the Python package itself computed at `main` `102f5b6`, for every basis and trainer path, including where no Julia golden exists (generic tensors, inverses, gradients, the dense and controlled gates, the batched trainer). They are not correctness tests; they exist so a refactor that is meant to change nothing can be shown to change nothing. `cases.py` is the single registry both the tests and `regenerate.py` read. By default a value may differ from its snapshot at rounding level (portable across machines); `PDFT_SNAPSHOT_EXACT=1` demands the same bytes and only means something on the machine that generated the file (`python -m tests.characterisation.regenerate --out x.npz`, then `PDFT_SNAPSHOT_FILE=x.npz`). Never regenerate `snapshots.npz` to make a failing test pass: a snapshot that moves is a behaviour change and the commit has to say which one.
+
+   The snapshots are 150 arrays. The wider net is `python -m tests.characterisation.compare_refs origin/main`: it runs `workload.py` (20 basis configurations, both trainers in about 130 configurations, freezing, JSON, compression, coherence, single-precision tensors, odd image shapes, keyword calls, error messages; about 5800 arrays) on the ref's source and on the working tree in separate processes and compares every array byte for byte. Run it before claiming that a change alters no behaviour, and extend the workload when you find behaviour it does not exercise.
 
 Coverage gate is `--cov-fail-under=90`. Don't add tests that reduce per-module coverage below the line; if a new module legitimately needs more code, also add the property tests for it.
 

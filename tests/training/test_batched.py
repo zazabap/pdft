@@ -655,3 +655,46 @@ def test_adam_update_is_the_textbook_step_on_the_manifold():
     m_list, v_list = init_adam_moments(basis.tensors)
     assert [m.shape for m in m_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]
     assert [v.shape for v in v_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]
+
+
+def test_adam_pads_a_short_last_batch_by_rotation():
+    """Three images in batches of two: the second batch is the third image and the
+    first again, so that every batch has the same shape. That is the same training
+    run as four images with the first repeated."""
+    rng = np.random.default_rng(0)
+    a, b, c = (rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4)) for _ in range(3))
+    arguments = {"loss": pdft.MSELoss(k=6), "epochs": 2, "batch_size": 2, "shuffle": False}
+    short = train_basis_batched(pdft.QFTBasis(m=2, n=2), dataset=[a, b, c], **arguments)
+    padded = train_basis_batched(pdft.QFTBasis(m=2, n=2), dataset=[a, b, c, a], **arguments)
+    assert short.loss_history == padded.loss_history and len(short.loss_history) == 4
+    for x, y in zip(short.basis.tensors, padded.basis.tensors):
+        np.testing.assert_array_equal(np.asarray(x), np.asarray(y))
+    # and it is not the run that drops the incomplete batch's partner
+    dropped = train_basis_batched(pdft.QFTBasis(m=2, n=2), dataset=[a, b, c, c], **arguments)
+    assert dropped.loss_history != short.loss_history
+
+
+def test_gd_takes_its_learning_rate_from_the_schedule():
+    """An optimizer instance keeps its line-search settings; its own `lr` is replaced
+    at every step by the schedule's."""
+    rng = np.random.default_rng(1)
+    images = [rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4)) for _ in range(4)]
+
+    def run(lr_final, optimizer):
+        return train_basis_batched(
+            pdft.QFTBasis(m=2, n=2),
+            dataset=images,
+            loss=pdft.L1Norm(),
+            epochs=3,
+            batch_size=2,
+            optimizer=optimizer,
+            lr_peak=0.2,
+            lr_final=lr_final,
+            warmup_frac=0.0,
+            shuffle=False,
+        ).loss_history
+
+    flat, decayed = run(0.2, "gd"), run(0.002, "gd")
+    assert flat[0] == decayed[0] and flat != decayed
+    # the instance's own lr plays no part
+    assert run(0.002, pdft.RiemannianGD(lr=123.0)) == decayed

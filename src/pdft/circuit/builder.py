@@ -449,6 +449,19 @@ def compile_circuit(
     return CircuitCode(program, inverse), tensors
 
 
+def contract_circuit(tensors: list[Array], code: CircuitCode, m: int, n: int, pic: Array) -> Array:
+    """Run ``code`` on ``pic`` laid out one axis per qubit, and give back a ``(2**m, 2**n)`` array.
+
+    Nothing is cast and nothing is checked: the precision of the result is
+    what the tensors and the image promote to, and any ``pic`` with
+    ``2**(m + n)`` elements is accepted. ``loss_function`` and the Rich,
+    RealRich and Blocked transforms have always applied a circuit this way,
+    which is why single-precision tensors stay single precision through them.
+    """
+    out = code(*tensors, pic.reshape((2,) * (m + n)))
+    return out.reshape(2**m, 2**n)
+
+
 def apply_circuit(
     tensors: list[Array],
     code: CircuitCode,
@@ -458,14 +471,13 @@ def apply_circuit(
 ) -> Array:
     """Apply ``code`` to one ``(2**m, 2**n)`` image, in double precision.
 
-    Julia's ``ft_mat`` and ``ift_mat``: the inverse is the same call with the
-    inverse code and conjugated tensors.
+    ``contract_circuit`` behind a shape check and a cast of the image to
+    complex128. Julia's ``ft_mat`` and ``ift_mat``: the inverse is the same
+    call with the inverse code and conjugated tensors.
     """
     if pic.shape != (2**m, 2**n):
         raise ValueError(f"pic shape must be (2**m, 2**n) = ({2**m}, {2**n}), got {pic.shape}")
-    reshaped = pic.astype(jnp.complex128).reshape((2,) * (m + n))
-    out = code(*tensors, reshaped)
-    return out.reshape(2**m, 2**n)
+    return contract_circuit(tensors, code, m, n, pic.astype(jnp.complex128))
 
 
 # ---------------------------------------------------------------------------
@@ -499,9 +511,9 @@ def extract_phase_from_cp(tensor: Array) -> float:
     return float(np.angle(arr[1, 1]))
 
 
-def extract_phases(tensors: list[Array], indices: list[int]) -> list[float]:
-    """The phase of each compact CP tensor at ``indices``, in that order."""
-    return [extract_phase_from_cp(tensors[idx]) for idx in indices]
+def extract_phases(tensors: list[Array], gate_indices: list[int]) -> list[float]:
+    """The phase of each compact CP tensor at ``gate_indices``, in that order."""
+    return [extract_phase_from_cp(tensors[idx]) for idx in gate_indices]
 
 
 def select_last_n_cp_indices(tensors: list[Array], n_gates: int) -> list[int]:

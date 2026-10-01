@@ -13,7 +13,7 @@ the family modules there and ``pdft.bases.base`` both build on it.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from functools import partial
 from typing import ClassVar, Protocol, runtime_checkable
 
@@ -49,7 +49,17 @@ class AbstractSparseBasis(Protocol):
 
 
 class BasisTransforms:
-    """What follows from ``m``, ``n``, ``tensors``, ``code`` and ``inv_code``, however a basis holds them."""
+    """What follows from ``m``, ``n``, ``tensors``, ``code`` and ``inv_code``, however a basis holds them.
+
+    ``_run`` is how a transform reaches the circuit. The default,
+    ``apply_circuit``, checks the image's shape and works in double precision.
+    The Rich, RealRich and Blocked bases set it to ``contract_circuit``, which
+    does neither: they were written that way, single-precision tensors stay
+    single precision through them, and changing either side would change
+    results that exist.
+    """
+
+    _run: ClassVar[Callable[..., Array]] = staticmethod(apply_circuit)
 
     @property
     def inv_tensors(self) -> list[Array]:
@@ -70,14 +80,12 @@ class BasisTransforms:
         return sum(int(t.size) for t in self.tensors)
 
     def forward_transform(self, pic: Array) -> Array:
-        return apply_circuit(self.tensors, self.code, self.m, self.n, pic)
+        return self._run(self.tensors, self.code, self.m, self.n, pic)
 
     def inverse_transform(self, pic: Array) -> Array:
         """``conj(tensors)`` through ``inv_code``, exactly like Julia's
         ``basis.inverse_code(conj.(basis.tensors)..., ...)``."""
-        return apply_circuit(
-            [jnp.conj(t) for t in self.tensors], self.inv_code, self.m, self.n, pic
-        )
+        return self._run([jnp.conj(t) for t in self.tensors], self.inv_code, self.m, self.n, pic)
 
 
 @dataclass(init=False)
@@ -94,9 +102,10 @@ class CircuitBasis(BasisTransforms):
     fields are all constructor arguments.
 
     Every subclass is registered as a JAX pytree: the leaves are ``tensors``,
-    in order, and everything else is aux data. That is the contract
-    ``train_basis`` relies on. Unflattening restores the fields without
-    running the constructor, so no gate list is rebuilt.
+    in order, which is the contract ``train_basis`` relies on. Every other
+    attribute of the instance is aux data, so it must be hashable.
+    Unflattening restores the attributes without running the constructor, so
+    no gate list is rebuilt.
 
     A family whose circuit depends on ``m`` and ``n`` alone sets ``emit`` to
     its gate emitter and is done. One with options of its own defines a
@@ -155,7 +164,12 @@ class CircuitBasis(BasisTransforms):
 
 
 def _flatten(basis: CircuitBasis):
-    static = tuple((f.name, getattr(basis, f.name)) for f in fields(basis) if f.name != "tensors")
+    # Every attribute of the instance, not only its dataclass fields: a
+    # subclass that sets an attribute in its constructor without declaring a
+    # field must not lose it on the way through a pytree.
+    static = tuple(
+        sorted((name, value) for name, value in vars(basis).items() if name != "tensors")
+    )
     return tuple(basis.tensors), static
 
 
@@ -194,6 +208,12 @@ def cp_phases(basis) -> Array:
     reads ``phi`` off each one. ``with_cp_phases`` is the way back. Together
     they are the view a phase-only model trains through: the angles are
     ordinary real parameters, the basis and its circuit stay what they are.
+
+    The view is exact for tensors of that form, which is what every basis
+    starts with and what ``with_cp_phases`` writes. The package's Riemannian
+    trainers move all four entries of such a tensor around the unit circle
+    (the phase manifold is ``U(1)^4``); on a basis trained that way this reads
+    one of the four phases, and writing it back resets the other three.
     """
     indices = program_of(basis).tensor_indices(kind="CP")
     if not indices:

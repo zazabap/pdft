@@ -72,6 +72,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .bases.core import program_of, with_tensors
+from .circuit.builder import is_compact_cp
 from .manifolds import PhaseManifold, classify_manifold
 
 Array = jax.Array
@@ -152,8 +153,14 @@ def diagonal_tensor_indices(basis) -> list[int]:
 
     Read from the basis's program, not guessed from tensor values: a gate of
     kind ``"CP"`` is applied as a diagonal whatever its entries have become.
+    A basis that is not one of the package's circuits has no program; for it
+    the tensors' values decide, as they did for every basis before.
     """
-    return program_of(basis).tensor_indices(kind="CP")
+    try:
+        program = program_of(basis)
+    except AttributeError:
+        return [i for i, t in enumerate(basis.tensors) if is_compact_cp(t)]
+    return program.tensor_indices(kind="CP")
 
 
 @dataclass(frozen=True)

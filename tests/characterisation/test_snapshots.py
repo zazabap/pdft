@@ -22,7 +22,7 @@ import pytest
 
 from .cases import BASES, SNAPSHOT_PATH, TRAININGS, static_record, training_record
 
-EXACT = bool(os.environ.get("PDFT_SNAPSHOT_EXACT"))
+EXACT = os.environ.get("PDFT_SNAPSHOT_EXACT", "").lower() in ("1", "true", "yes")
 STORED = np.load(os.environ.get("PDFT_SNAPSHOT_FILE", SNAPSHOT_PATH))
 
 
@@ -32,8 +32,11 @@ def _check(prefix: str, record: dict[str, np.ndarray], *, rtol: float, atol: flo
     for name, value in record.items():
         want = stored[name]
         assert value.shape == want.shape and value.dtype == want.dtype, name
-        if EXACT or value.dtype.kind in "iuU":
+        if value.dtype.kind in "iuU":
             assert np.array_equal(value, want), name
+        elif EXACT:
+            # the same bytes: a zero of the other sign or another NaN is a difference
+            assert value.tobytes() == want.tobytes(), name
         else:
             np.testing.assert_allclose(value, want, rtol=rtol, atol=atol, err_msg=name)
 

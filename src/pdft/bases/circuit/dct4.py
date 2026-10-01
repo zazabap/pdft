@@ -55,6 +55,7 @@ import numpy as np
 from ...circuit.builder import (
     Gate,
     apply_circuit,
+    check_qubits,
     compile_circuit,
     controlled,
     cp_gate,
@@ -161,6 +162,7 @@ def dct4_gates(m: int, n: int, *, parametrization: str = "o4") -> list[Gate]:
     ``"controlled"`` emits a single-angle ``CRY`` gate whose trainable leaf is
     a ``(2, 2)`` block on O(2) (the mirror-Q CNOTs stay dense U4).
     """
+    check_qubits(m, n)
     if parametrization not in _TWIDDLES:
         raise ValueError(f"parametrization must be 'o4' or 'controlled', got {parametrization!r}")
     return two_registers(

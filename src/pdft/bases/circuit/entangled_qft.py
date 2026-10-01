@@ -40,8 +40,14 @@ __all__ = [
 # to be the last `n_entangle` compact-CP tensors after the Hadamard-first sort.
 # That holds for the default "back" position only. Whatever the position,
 # `basis.program.tensor_indices(kind="CP", register="both")` is the entangle gates.
-get_entangle_tensor_indices = select_last_n_cp_indices
-extract_entangle_phases = extract_phases
+def get_entangle_tensor_indices(tensors: list[Array], n_entangle: int) -> list[int]:
+    """Indices of the last `n_entangle` compact-CP tensors (upstream's rule)."""
+    return select_last_n_cp_indices(tensors, n_entangle)
+
+
+def extract_entangle_phases(tensors: list[Array], entangle_indices: list[int]) -> list[float]:
+    """The phase of each compact CP tensor at `entangle_indices`."""
+    return extract_phases(tensors, entangle_indices)
 
 
 # Upstream's name (src/entangled_qft.jl:36-42) for the tensor of an entanglement

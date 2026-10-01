@@ -38,6 +38,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import tree_util
 
+from ...circuit.builder import contract_circuit
 from ..core import BasisTransforms
 
 Array = jax.Array
@@ -116,6 +117,8 @@ class BlockedBasis(BasisTransforms):
     a pure structural wrapper. Block parameters are SHARED across blocks
     (one inner basis tiled).
     """
+
+    _run = staticmethod(contract_circuit)
 
     inner: Any
     block_log_m: int

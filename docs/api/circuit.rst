@@ -20,6 +20,7 @@ Turns a Yao-style gate list into a program and applies it to an image one gate a
    compile_circuit
    apply_program
    apply_circuit
+   contract_circuit
    bit_reverse
    register_width
    Gate
