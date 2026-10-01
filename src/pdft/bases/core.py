@@ -164,14 +164,14 @@ class CircuitBasis(BasisTransforms):
         # is read from it, and when it comes alone its counterpart is derived
         # from it (the other direction, the same arithmetic), so the two cannot
         # disagree when a basis is rebuilt with another instance's code.
-        if code is None and isinstance(inv_code, CircuitCode):
-            code = _other_direction(inv_code)
-        self.code = code if code is not None else CircuitCode(compiled)
-        self.program = getattr(self.code, "program", compiled)
+        default = CircuitCode(compiled)
+        if code is None:
+            code = _other_direction(inv_code) if isinstance(inv_code, CircuitCode) else default
         if inv_code is None:
-            own = self.code if isinstance(self.code, CircuitCode) else CircuitCode(compiled)
-            inv_code = _other_direction(own)
+            inv_code = _other_direction(code if isinstance(code, CircuitCode) else default)
+        self.code = code
         self.inv_code = inv_code
+        self.program = getattr(code, "program", compiled)
 
 
 def _other_direction(code: CircuitCode) -> CircuitCode:

@@ -58,7 +58,8 @@ class Gate(TypedDict):
     """One gate of a circuit program.
 
     ``kind`` is one of ``GATE_KINDS``; ``qubits`` are the wires it acts on;
-    ``tensor`` is its tensor, of shape ``GATE_SHAPES[kind]``. ``phase`` is the
+    ``tensor`` is its tensor, which every emitter gives the shape
+    ``GATE_SHAPES[kind]``. ``phase`` is the
     angle the gate was built from, 0.0 when it has none. It is a record for
     the reader: what is applied is the tensor.
     """
@@ -382,7 +383,7 @@ class CircuitCode:
 
     def __call__(self, *operands: Array) -> Array:
         *tensors, pic = operands
-        return _run(self.program, self.inverse, self.slices, tuple(tensors), pic)
+        return _run(self.program, self.inverse, self.slices, tuple(tensors), pic, lead=0)
 
 
 def apply_program(

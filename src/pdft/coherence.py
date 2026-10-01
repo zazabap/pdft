@@ -266,7 +266,7 @@ def sampled_flat_modulus(
     frozen_indices: list[int] | None = None,
     *,
     trials: int = 8,
-    atol: float | None = None,
+    atol: float = 1e-8,
     seed: int = 0,
 ) -> dict:
     """Measure the guarantee over drawn values of the tensors left trainable.
@@ -279,26 +279,22 @@ def sampled_flat_modulus(
     from the circuit's structure; this measures it, and says how far a
     configuration without the guarantee drifts.
 
-    Returns the verdict, the worst deviation and the worst mu seen. `atol`
-    bounds the worst deviation; left out, it is ``1e-10``, or ``1e-6`` when a
-    tensor is held in single precision (whose draws sit about ``3e-8`` from
-    flat).
+    Returns the verdict, the worst deviation and the worst mu seen. A draw
+    is judged as `is_flat_modulus` judges a basis, with the same `atol`.
     """
     if trials < 1:
         raise ValueError(f"trials must be >= 1, got {trials}")
-    if atol is None:
-        single = any(t.dtype == jnp.complex64 for t in basis.tensors)
-        atol = 1e-6 if single else 1e-10
     rng = np.random.default_rng(seed)
     frozen = set(frozen_indices or [])
-    worst_deviation, worst_mu = 0.0, 0.0
+    holds, worst_deviation, worst_mu = True, 0.0, 0.0
     for _ in range(trials):
         drawn = [t if i in frozen else _random_point(t, rng) for i, t in enumerate(basis.tensors)]
         u = dense_operator(with_tensors(basis, drawn))
+        holds = holds and is_flat_modulus(None, u, atol=atol)
         worst_deviation = max(worst_deviation, float(flat_modulus_deviation(u)))
         worst_mu = max(worst_mu, float(operator_coherence(u)))
     return {
-        "holds": worst_deviation <= atol,
+        "holds": holds,
         "worst_deviation": worst_deviation,
         "worst_mu": worst_mu,
         "trials": trials,

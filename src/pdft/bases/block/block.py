@@ -29,7 +29,6 @@ tensor layout, the same convention as `pdft.circuit.builder._axis_of_qubit`.
 
 from __future__ import annotations
 
-import operator
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -144,8 +143,8 @@ class BlockedBasis(BasisTransforms):
                 f"block_log_m and block_log_n must be >= 0; got "
                 f"block_log_m={block_log_m}, block_log_n={block_log_n}"
             )
-        # refuse a float here, not at the first transform
-        operator.index(block_log_m), operator.index(block_log_n)
+        # A count that cannot size a shape is refused here, not at the first transform.
+        (2,) * (block_log_m + block_log_n)
         self.inner = inner
         self.block_log_m = block_log_m
         self.block_log_n = block_log_n
