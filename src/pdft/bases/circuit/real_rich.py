@@ -27,14 +27,13 @@ on a real-valued objective.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import tree_util
 
-from ...circuit.builder import Gate, compile_circuit, two_registers
+from ...circuit.builder import Gate, two_registers
+from ..core import CircuitBasis
 from .qft import qft_gates_1d
 
 Array = jax.Array
@@ -66,12 +65,7 @@ def real_rich_gates(m: int, n: int) -> list[Gate]:
     return two_registers(_real_rich_qft_gates_1d, m, n)
 
 
-def _real_rich_code(m: int, n: int, *, inverse: bool):
-    return compile_circuit(real_rich_gates(m, n), m, n, inverse=inverse)
-
-
-@dataclass
-class RealRichBasis:
+class RealRichBasis(CircuitBasis):
     """QFT topology with H + real-orthogonal 2-qubit gates.
 
     The U(4) slots are *initialised* to the 4×4 identity (real-orthogonal,
@@ -81,17 +75,9 @@ class RealRichBasis:
     Walsh-Hadamard transform. This is the appropriate starting point for
     a real-valued search; the Walsh-Hadamard is the simplest real-orthogonal
     basis and a natural baseline for natural-image transforms.
-
-    Pytree contract:
-        leaves   = tensors                                (one list)
-        aux data = (m, n, len(tensors), code, inv_code)
     """
 
-    m: int
-    n: int
-    tensors: list[Array]
-    code: object = field(compare=False, repr=False)
-    inv_code: object = field(compare=False, repr=False)
+    freezes_to_blocked = True
 
     def __init__(
         self,
@@ -101,58 +87,7 @@ class RealRichBasis:
         code: object | None = None,
         inv_code: object | None = None,
     ):
-        if m < 1 or n < 1:
-            raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
-        self.m = m
-        self.n = n
-        _code, init_tensors = _real_rich_code(m, n, inverse=False)
-        _inv_code, _ = _real_rich_code(m, n, inverse=True)
-        self.tensors = list(tensors) if tensors is not None else init_tensors
-        self.code = code if code is not None else _code
-        self.inv_code = inv_code if inv_code is not None else _inv_code
-
-    @property
-    def inv_tensors(self) -> list[Array]:
-        return self.tensors
-
-    @property
-    def image_size(self) -> tuple[int, int]:
-        return (2**self.m, 2**self.n)
-
-    @property
-    def num_parameters(self) -> int:
-        return sum(int(t.size) for t in self.tensors)
-
-    def forward_transform(self, pic: Array) -> Array:
-        from ...loss import _apply_circuit
-
-        return _apply_circuit(self.tensors, self.code, self.m, self.n, pic)
-
-    def inverse_transform(self, pic: Array) -> Array:
-        from ...loss import _apply_circuit
-
-        return _apply_circuit(
-            [jnp.conj(t) for t in self.tensors],
-            self.inv_code,
-            self.m,
-            self.n,
-            pic,
-        )
-
-
-def _realrichbasis_flatten(b: RealRichBasis):
-    leaves = tuple(b.tensors)
-    aux = (b.m, b.n, len(b.tensors), b.code, b.inv_code)
-    return leaves, aux
-
-
-def _realrichbasis_unflatten(aux, leaves) -> RealRichBasis:
-    m, n, n_fwd, code, inv_code = aux
-    assert len(leaves) == n_fwd
-    return RealRichBasis(m=m, n=n, tensors=list(leaves), code=code, inv_code=inv_code)
-
-
-tree_util.register_pytree_node(RealRichBasis, _realrichbasis_flatten, _realrichbasis_unflatten)
+        self._init(real_rich_gates(m, n), m, n, tensors, code, inv_code)
 
 
 __all__ = ["RealRichBasis"]
