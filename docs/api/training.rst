@@ -3,7 +3,7 @@ Training
 
 .. currentmodule:: pdft.training
 
-:func:`train_basis` trains one basis on one target and mirrors the upstream loop. :func:`train_basis_batched` adds several images, epochs, a cosine learning-rate schedule, validation and early stopping.
+:func:`train_basis` trains one basis on one target image, the loop the Julia goldens are recorded with. :func:`train_basis_batched` is the port of upstream's dataset trainer: several images, epochs, a cosine learning-rate schedule, validation and early stopping.
 
 .. automodule:: pdft.training
    :no-members:

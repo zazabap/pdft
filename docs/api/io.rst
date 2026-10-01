@@ -3,7 +3,7 @@ Serialization and compression
 
 .. currentmodule:: pdft.io
 
-JSON serialization of trained bases (byte-compatible with the Julia package) and top-k lossy compression of images in a learned basis.
+JSON serialization of a trained ``QFTBasis`` (the Julia package's schema, tensor order and hash, so a basis saved by Julia loads here) and top-k lossy compression of images in a learned basis.
 
 .. automodule:: pdft.io
    :no-members:
