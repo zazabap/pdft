@@ -47,3 +47,27 @@ def test_plot_circuit_renders(tmp_path):
     p = tmp_path / "circuit.png"
     plot_circuit(basis, output_path=p)
     assert p.exists()
+
+
+def test_save_training_plots_writes_one_file_per_history_and_a_comparison(tmp_path):
+    from pdft.viz import save_training_plots
+
+    histories = [
+        TrainingHistory(losses=[3.0, 2.0, 1.5], label="plain run"),
+        TrainingHistory(losses=[3.0, 1.0, 0.5], label="tuned"),
+    ]
+    paths = save_training_plots(histories, tmp_path / "plots", filename_prefix="run")
+    assert [p.name for p in paths] == ["run_plain_run.png", "run_tuned.png", "run_comparison.png"]
+    assert all(p.exists() and p.stat().st_size > 0 for p in paths)
+
+
+def test_loss_plots_share_their_axes_and_return_the_figure(tmp_path):
+    history = TrainingHistory(losses=[2.0, 1.0, 0.5], label="run")
+    single = plot_training_loss(history, title="one", smooth_alpha=0.5)
+    both = plot_training_comparison([history, history], title="two")
+    for fig, title, lines in ((single, "one", 2), (both, "two", 2)):
+        ax = fig.axes[0]
+        assert (ax.get_xlabel(), ax.get_ylabel(), ax.get_title()) == ("step", "loss", title)
+        assert len(ax.lines) == lines and ax.get_legend() is not None
+    assert not list(tmp_path.iterdir())
+    matplotlib.pyplot.close("all")

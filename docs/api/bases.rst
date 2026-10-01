@@ -28,6 +28,7 @@ Trainable sparsifying bases. Circuit bases (QFT, entangled QFT, TEBD, MERA, Rich
    fit_to_dct
    bases_allclose
    program_of
+   with_tensors
    cp_phases
    with_cp_phases
    qft_code

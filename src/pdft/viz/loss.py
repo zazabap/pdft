@@ -9,14 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-
-def _require_matplotlib():
-    try:
-        import matplotlib  # noqa: F401
-    except ImportError as e:  # pragma: no cover - defensive
-        raise ImportError(
-            "matplotlib is required for pdft.viz. Install with: pip install pdft[plot]"
-        ) from e
+from ._figure import require_matplotlib, save
 
 
 @dataclass
@@ -37,6 +30,17 @@ def ema_smooth(values, alpha: float = 0.1) -> list[float]:
     return out
 
 
+def _finish(fig, ax, title: str, output_path: str | Path | None):
+    """Label the loss axes, save the figure when asked to, and return it."""
+    ax.set_xlabel("step")
+    ax.set_ylabel("loss")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    save(fig, output_path)
+    return fig
+
+
 def plot_training_loss(
     history: TrainingHistory,
     *,
@@ -48,7 +52,7 @@ def plot_training_loss(
 
     If `output_path` is given, saves the figure to that path and returns it.
     """
-    _require_matplotlib()
+    require_matplotlib()
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -61,14 +65,7 @@ def plot_training_loss(
             linewidth=2,
             label=f"{history.label} (EMA α={smooth_alpha})",
         )
-    ax.set_xlabel("step")
-    ax.set_ylabel("loss")
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    if output_path is not None:
-        fig.savefig(str(output_path), bbox_inches="tight", dpi=120)
-    return fig
+    return _finish(fig, ax, title, output_path)
 
 
 def plot_training_comparison(
@@ -78,20 +75,13 @@ def plot_training_comparison(
     title: str = "Training comparison",
 ):
     """Overlay multiple loss trajectories on one axis."""
-    _require_matplotlib()
+    require_matplotlib()
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(7, 4))
     for h in histories:
         ax.plot(range(len(h.losses)), h.losses, label=h.label, alpha=0.8)
-    ax.set_xlabel("step")
-    ax.set_ylabel("loss")
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    if output_path is not None:
-        fig.savefig(str(output_path), bbox_inches="tight", dpi=120)
-    return fig
+    return _finish(fig, ax, title, output_path)
 
 
 def save_training_plots(
@@ -101,7 +91,7 @@ def save_training_plots(
     filename_prefix: str = "training",
 ) -> list[Path]:
     """Write one PNG per history plus a combined comparison plot. Returns paths."""
-    _require_matplotlib()
+    require_matplotlib()
     import matplotlib.pyplot as plt
 
     out_dir = Path(output_dir)

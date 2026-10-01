@@ -71,7 +71,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .bases.core import program_of
+from .bases.core import program_of, with_tensors
 from .manifolds import PhaseManifold, classify_manifold
 
 Array = jax.Array
@@ -274,11 +274,10 @@ def sampled_flat_modulus(
     """
     rng = np.random.default_rng(seed)
     frozen = set(frozen_indices or [])
-    leaves, treedef = jax.tree_util.tree_flatten(basis)
     worst_deviation, worst_mu = 0.0, 0.0
     for _ in range(trials):
-        drawn = [t if i in frozen else _random_point(t, rng) for i, t in enumerate(leaves)]
-        u = dense_operator(jax.tree_util.tree_unflatten(treedef, drawn))
+        drawn = [t if i in frozen else _random_point(t, rng) for i, t in enumerate(basis.tensors)]
+        u = dense_operator(with_tensors(basis, drawn))
         worst_deviation = max(worst_deviation, float(flat_modulus_deviation(u)))
         worst_mu = max(worst_mu, float(operator_coherence(u)))
     return {

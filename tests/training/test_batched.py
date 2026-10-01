@@ -327,8 +327,7 @@ def test_train_basis_batched_freezes_specified_indices():
     for i in frozen:
         diff = float(jnp.max(jnp.abs(result.basis.tensors[i] - initial_tensors[i])))
         assert diff == 0.0, (
-            f"frozen index {i} drifted by {diff} (expected 0). "
-            f"frozen_indices semantics are broken."
+            f"frozen index {i} drifted by {diff} (expected 0). frozen_indices semantics are broken."
         )
 
     # Non-frozen tensors should have moved (training is non-trivial).
@@ -380,8 +379,7 @@ def test_train_basis_batched_freezes_specified_indices_with_gd():
         assert diff == 0.0
 
     assert any(
-        float(jnp.max(jnp.abs(result.basis.tensors[i] - initial_tensors[i]))) > 1e-6
-        for i in free
+        float(jnp.max(jnp.abs(result.basis.tensors[i] - initial_tensors[i]))) > 1e-6 for i in free
     )
 
 
@@ -391,9 +389,9 @@ def test_frozen_qft_outer_gates_matches_blocked_qft_training():
     blocked_basis = pdft.BlockedBasis(inner=pdft.QFTBasis(m=2, n=2), block_log_m=1, block_log_n=1)
 
     rng = np.random.default_rng(5)
-    dataset = (
-        rng.standard_normal((4, 8, 8)) + 1j * rng.standard_normal((4, 8, 8))
-    ).astype(np.complex128)
+    dataset = (rng.standard_normal((4, 8, 8)) + 1j * rng.standard_normal((4, 8, 8))).astype(
+        np.complex128
+    )
 
     # Initial transforms are the same operator before any training starts.
     pic = jnp.asarray(dataset[0])
@@ -417,7 +415,8 @@ def test_frozen_qft_outer_gates_matches_blocked_qft_training():
         "lr_final": 0.003,
         "max_grad_norm": 1.0,
         "shuffle": False,
-        "seed": 123,}
+        "seed": 123,
+    }
 
     frozen_result = pdft.train_basis_batched(
         full_basis,
@@ -500,3 +499,74 @@ def test_train_basis_batched_frozen_indices_validation():
                 batch_size=1,
                 frozen_indices=[bad_index],
             )
+
+
+# ---------------------------------------------------------------------------
+# optimizer specs
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_optimizer_keeps_an_instances_settings_and_takes_the_scheduled_lr():
+    from pdft.training.batched import _resolve_optimizer
+
+    gd = pdft.RiemannianGD(lr=9.0, armijo_c=0.2, armijo_tau=0.3, max_ls_steps=4, max_grad_norm=1.5)
+    assert _resolve_optimizer(gd, lr=0.5, max_grad_norm=None) == pdft.RiemannianGD(
+        lr=0.5, armijo_c=0.2, armijo_tau=0.3, max_ls_steps=4, max_grad_norm=1.5
+    )
+    adam = pdft.RiemannianAdam(lr=9.0, beta1=0.8, beta2=0.95, eps=1e-6)
+    assert _resolve_optimizer(adam, lr=0.5, max_grad_norm=2.0) == pdft.RiemannianAdam(
+        lr=0.5, beta1=0.8, beta2=0.95, eps=1e-6, max_grad_norm=2.0
+    )
+    assert _resolve_optimizer("GD", lr=0.1, max_grad_norm=3.0) == pdft.RiemannianGD(
+        lr=0.1, max_grad_norm=3.0
+    )
+    assert _resolve_optimizer("adam", lr=0.1, max_grad_norm=None) == pdft.RiemannianAdam(lr=0.1)
+    for bad in ("sgd", 3):
+        with pytest.raises(ValueError, match="unknown optimizer"):
+            _resolve_optimizer(bad, lr=0.1, max_grad_norm=None)
+
+
+@pytest.mark.parametrize(
+    "optimizer",
+    [pdft.RiemannianGD(lr=1.0, max_ls_steps=3), pdft.RiemannianAdam(lr=1.0, beta1=0.5)],
+)
+def test_batched_accepts_an_optimizer_instance_and_a_short_last_batch(optimizer):
+    """Five images in batches of two: Adam pads the last batch by rotation, GD takes it short.
+    Either way there are three steps per epoch."""
+    images = [np.random.default_rng(seed).normal(size=(4, 4)) for seed in range(5)]
+    result = train_basis_batched(
+        pdft.QFTBasis(m=2, n=2),
+        dataset=images,
+        loss=pdft.L1Norm(),
+        epochs=2,
+        batch_size=2,
+        optimizer=optimizer,
+        seed=0,
+    )
+    assert result.steps == 6 and len(result.loss_history) == 6 and result.epochs_completed == 2
+    assert all(isinstance(value, float) and math.isfinite(value) for value in result.loss_history)
+    assert type(result.basis) is pdft.QFTBasis
+
+
+@pytest.mark.parametrize(
+    ("argument", "message"),
+    [
+        ({"dataset": []}, "dataset must be non-empty"),
+        ({"epochs": 0}, "epochs must be >= 1"),
+        ({"batch_size": 0}, "batch_size must be >= 1"),
+        ({"early_stopping_patience": 0}, "early_stopping_patience must be >= 1"),
+        ({"warmup_frac": 1.0}, "warmup_frac must be in"),
+        ({"val_every_k_epochs": 0}, "val_every_k_epochs must be >= 1"),
+        ({"dataset": [np.zeros((2, 2))]}, "has shape"),
+    ],
+)
+def test_batched_argument_validation(argument, message):
+    arguments = {
+        "dataset": [np.ones((4, 4))],
+        "loss": pdft.L1Norm(),
+        "epochs": 1,
+        "batch_size": 1,
+        **argument,
+    }
+    with pytest.raises(ValueError, match=message):
+        train_basis_batched(pdft.QFTBasis(m=2, n=2), **arguments)

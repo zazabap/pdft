@@ -23,6 +23,7 @@ from .base import (
     cp_phases,
     program_of,
     with_cp_phases,
+    with_tensors,
 )
 from .block import BlockedBasis
 from .circuit import (
@@ -61,4 +62,5 @@ __all__ = [
     "qft_code",
     "tebd_code",
     "with_cp_phases",
+    "with_tensors",
 ]

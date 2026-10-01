@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 
 from ...circuit.builder import controlled_phase_diag
+from ..core import with_tensors
 
 Array = jax.Array
 
@@ -95,5 +96,4 @@ def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[A
             new_tensors[i] = _identity_for_kind(kind).astype(new_tensors[i].dtype)
             frozen_indices.append(i)
 
-    new_basis = btype(m=m, n=n, tensors=new_tensors, code=basis.code, inv_code=basis.inv_code)
-    return new_basis, frozen_indices
+    return with_tensors(basis, new_tensors), frozen_indices

@@ -27,6 +27,7 @@ from .core import (
     cp_phases,
     program_of,
     with_cp_phases,
+    with_tensors,
 )
 
 Array = jax.Array
@@ -43,6 +44,7 @@ __all__ = [
     "cp_phases",
     "program_of",
     "with_cp_phases",
+    "with_tensors",
 ]
 
 

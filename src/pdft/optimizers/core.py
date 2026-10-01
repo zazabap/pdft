@@ -13,6 +13,7 @@ from ..manifolds import (
     _make_identity_batch,
     group_by_manifold,
     stack_tensors,
+    unstack_tensors,
 )
 
 Array = jax.Array
@@ -46,6 +47,12 @@ def _common_setup(tensors: list[Array]) -> _OptimizationState:
         ibatch_cache=ibatch_cache,
         current_tensors=[jnp.asarray(t) for t in tensors],
     )
+
+
+def _write_back(state: _OptimizationState) -> None:
+    """Unstack every point batch into ``state.current_tensors``."""
+    for manifold, indices in state.manifold_groups.items():
+        unstack_tensors(state.point_batches[manifold], indices, into=state.current_tensors)
 
 
 def _batched_project(

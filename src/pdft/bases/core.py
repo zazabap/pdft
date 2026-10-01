@@ -163,6 +163,16 @@ def _unflatten(cls: type[CircuitBasis], static, leaves) -> CircuitBasis:
     return basis
 
 
+def with_tensors(basis, tensors: Sequence[Array]):
+    """A copy of ``basis`` holding ``tensors`` in place of its own; everything else is kept.
+
+    Works on any basis registered as a pytree whose leaves begin with its
+    tensors, which is the convention the trainers rely on.
+    """
+    leaves, treedef = tree_util.tree_flatten(basis)
+    return tree_util.tree_unflatten(treedef, list(tensors) + leaves[len(basis.tensors) :])
+
+
 def program_of(basis) -> Program:
     """The gate program of a basis; for a blocked basis, the one of the circuit it tiles.
 
@@ -199,10 +209,10 @@ def with_cp_phases(basis, phases: Array):
         raise ValueError(
             f"basis has {len(indices)} controlled-phase gates, got {len(phases)} phases"
         )
-    leaves, treedef = tree_util.tree_flatten(basis)
+    tensors = list(basis.tensors)
     for i, phi in zip(indices, phases):
-        leaves[i] = controlled_phase_diag(phi).astype(leaves[i].dtype)
-    return tree_util.tree_unflatten(treedef, leaves)
+        tensors[i] = controlled_phase_diag(phi).astype(tensors[i].dtype)
+    return with_tensors(basis, tensors)
 
 
 def bases_allclose(a, b, *, atol: float = 1e-10) -> bool:

@@ -8,9 +8,8 @@ from collections.abc import Callable
 import jax
 import jax.numpy as jnp
 
-from ..manifolds import unstack_tensors
 from .adam import RiemannianAdam, _adam_step, _init_adam_state
-from .core import _batched_project, _common_setup
+from .core import _batched_project, _common_setup, _write_back
 from .gd import RiemannianGD, _armijo_step
 
 Array = jax.Array
@@ -47,8 +46,7 @@ def optimize(
     adam_state = _init_adam_state(state) if isinstance(opt, RiemannianAdam) else None
 
     for iter_0 in range(max_iter):
-        for manifold, indices in state.manifold_groups.items():
-            unstack_tensors(state.point_batches[manifold], indices, into=state.current_tensors)
+        _write_back(state)
 
         raw_grads = grad_fn(state.current_tensors)
         # JAX and Julia's Zygote use opposite Wirtinger conventions for gradients
@@ -75,31 +73,20 @@ def optimize(
 
         if isinstance(opt, RiemannianGD):
             cached_loss = _armijo_step(opt, state, rg_batches, loss_fn, grad_norm_sq, cached_loss)
-            if record_loss:
-                if jnp.isnan(cached_loss):
-                    for manifold, indices in state.manifold_groups.items():
-                        unstack_tensors(
-                            state.point_batches[manifold],
-                            indices,
-                            into=state.current_tensors,
-                        )
-                    trace.append(float(loss_fn(state.current_tensors)))
-                else:
-                    trace.append(float(cached_loss))
         elif isinstance(opt, RiemannianAdam):
             _adam_step(opt, state, rg_batches, iter_0 + 1, adam_state)
-            if record_loss:
-                for manifold, indices in state.manifold_groups.items():
-                    unstack_tensors(
-                        state.point_batches[manifold],
-                        indices,
-                        into=state.current_tensors,
-                    )
-                trace.append(float(loss_fn(state.current_tensors)))
         else:
             raise TypeError(f"unsupported optimizer type: {type(opt).__name__}")
 
-    for manifold, indices in state.manifold_groups.items():
-        unstack_tensors(state.point_batches[manifold], indices, into=state.current_tensors)
+        if record_loss:
+            # The line search hands back the loss at the point it accepted.
+            # Adam has none to hand back, and neither has a line search that ran
+            # out and took its last candidate: read it at the new point.
+            if jnp.isnan(cached_loss):
+                _write_back(state)
+                trace.append(float(loss_fn(state.current_tensors)))
+            else:
+                trace.append(float(cached_loss))
 
+    _write_back(state)
     return state.current_tensors, trace

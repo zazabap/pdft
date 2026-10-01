@@ -157,3 +157,23 @@ def test_bases_allclose_compares_type_size_and_tensors():
     assert not bases_allclose(a, pdft.QFTBasis(m=2, n=2, tensors=a.tensors[:-1]))
     nudged = pdft.QFTBasis(m=2, n=2, tensors=[*a.tensors[:-1], a.tensors[-1] + 1e-6])
     assert not bases_allclose(a, nudged) and bases_allclose(a, nudged, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: pdft.EntangledQFTBasis(m=2, n=2, seed=1),
+        lambda: pdft.BlockedBasis(pdft.QFTBasis(m=2, n=1), 1, 1),
+    ],
+)
+def test_with_tensors_swaps_the_tensors_and_keeps_everything_else(make):
+    from pdft.bases import with_tensors
+
+    basis = make()
+    doubled = with_tensors(basis, [2 * t for t in basis.tensors])
+    assert type(doubled) is type(basis) and doubled.image_size == basis.image_size
+    assert doubled.code == basis.code and doubled.inv_code == basis.inv_code
+    assert jax.tree_util.tree_structure(doubled) == jax.tree_util.tree_structure(basis)
+    assert all(jnp.array_equal(a, 2 * b) for a, b in zip(doubled.tensors, basis.tensors))
+    # the original is untouched
+    assert pdft.bases_allclose(basis, make(), atol=0.0)
