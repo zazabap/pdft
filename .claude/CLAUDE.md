@@ -115,9 +115,9 @@ src/pdft/
 ├── circuit/                builder.py: Gate, Program, compile_program, CircuitCode (the one applier), gate constructors
 ├── coherence.py            Mutual coherence of a basis and the flat-modulus certificate
 ├── optimizers/             core, gd (RiemannianGD + Armijo), adam (RiemannianAdam), loop
-├── training/               schedules, single (train_basis), batched, adam_step, eval_loop
+├── training/               schedules, single (train_basis), batched (one epoch loop; Adam and GD supply the batch and the step), adam_step, eval_loop
 ├── io/                     serialize (JSON), compression
-└── viz/                    loss (matplotlib loss plots), circuit (schematic)
+└── viz/                    loss (matplotlib loss plots), circuit (the gate sequence a basis keeps), _figure (shared import guard + save)
 
 reference/julia/            Julia harness — needed only to regenerate goldens
 reference/goldens/          Committed .npz + .json files (<200 KB total)
@@ -137,7 +137,7 @@ e.g. `pdft.io.save_basis`, `pdft.manifolds.UnitaryManifold`,
 
 `AbstractRiemannianOptimizer` is `RiemannianGD | RiemannianAdam` — a structural union, not a Protocol. Adding a third optimizer means extending that union *and* adding an `isinstance` branch in `optimize()`.
 
-`train_basis` is generic over basis type via JAX pytree flatten/unflatten. The convention: the leaves of a basis pytree are its `tensors`, in order, and everything else (m, n, program, code, inv_code, counts) is aux data. There is no separate inverse tensor list: `inv_tensors` is the same list, and the inverse applies `conj(tensors)` through `inv_code`. `CircuitBasis` registers every subclass this way; `BlockedBasis` delegates to its inner basis. New basis types must follow this convention.
+`train_basis` is generic over basis type via JAX pytree flatten/unflatten. The convention: the leaves of a basis pytree are its `tensors`, in order, and everything else (m, n, program, code, inv_code, counts) is aux data. There is no separate inverse tensor list: `inv_tensors` is the same list, and the inverse applies `conj(tensors)` through `inv_code`. `CircuitBasis` registers every subclass this way; `BlockedBasis` delegates to its inner basis. New basis types must follow this convention. `bases.with_tensors(basis, tensors)` is the one way to get a copy of a basis holding other tensors (the trainers, `freeze_as_blocked` and the parameter views all use it); don't re-derive it with `tree_flatten` / `tree_unflatten` or by calling the constructor again.
 
 ## Dev workflow
 

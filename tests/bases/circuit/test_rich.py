@@ -208,3 +208,39 @@ def test_rich_basis_block_wrapped_trains():
         seed=42,
     )
     assert len(res.loss_history) > 0
+
+
+# ---- fit_to_dct --------------------------------------------------------------
+
+
+def test_fit_to_dct_moves_the_circuit_towards_the_dct(capsys):
+    from pdft.bases.circuit.rich import _dct_matrix, fit_to_dct
+    from pdft.coherence import dense_operator
+
+    def distance(tensors):
+        basis = pdft.RichBasis(m=1, n=2, tensors=tensors)
+        target = jnp.kron(_dct_matrix(2), _dct_matrix(4))
+        return float(jnp.sum(jnp.abs(dense_operator(basis) - target) ** 2))
+
+    start = pdft.RichBasis(m=1, n=2)
+    fitted = fit_to_dct(lambda: pdft.RichBasis(m=1, n=2), n_steps=60, lr=0.05)
+    assert [t.shape for t in fitted] == [t.shape for t in start.tensors]
+    assert distance(fitted) < 0.5 * distance(start.tensors)
+    # the gates are still unitary: the fit moves along the manifolds
+    for t in fitted:
+        d = round(t.size**0.5)
+        mat = t.reshape(d, d)
+        assert jnp.allclose(mat @ jnp.conj(mat).T, jnp.eye(d), atol=1e-10)
+    # progress is reported at the first step, with the loss before any update
+    out = capsys.readouterr().out
+    assert out.count("fit_to_dct step") == 1
+    assert f"loss={distance(start.tensors):.4e}" in out
+
+
+def test_dct_matrix_is_the_orthonormal_dct_ii():
+    from pdft.bases.circuit.rich import _dct_matrix
+
+    for n in (2, 4, 8):
+        mat = np.asarray(_dct_matrix(n)).real
+        np.testing.assert_allclose(mat @ mat.T, np.eye(n), atol=1e-14)
+        np.testing.assert_allclose(mat[0], np.full(n, n**-0.5), atol=1e-15)

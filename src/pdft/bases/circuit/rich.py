@@ -25,10 +25,13 @@ Parameter count at m=n=3 (8x8 block):
 
 from __future__ import annotations
 
+import time
+
 import jax
 import jax.numpy as jnp
 
 from ...circuit.builder import Gate, two_registers, u4_gate
+from ...optimizers import RiemannianAdam, optimize
 from ..core import CircuitBasis
 from .qft import qft_gates_1d
 
@@ -97,7 +100,7 @@ def fit_to_dct(
         tensor list has the same shapes as ``basis_factory().tensors``
         and can be passed back as ``tensors=...`` for a DCT warm-start.
     n_steps : int
-        Adam steps. 2000 is a generous default; convergence is typically
+        Riemannian Adam steps (the package's own `optimize` loop). 2000 is a generous default; convergence is typically
         much faster when DCT lies in the parametric family.
     lr : float
         Adam learning rate.
@@ -106,14 +109,9 @@ def fit_to_dct(
     a complete basis and ``DCT_{2^m} ⊗ DCT_{2^n}``. If the family does
     not contain DCT, the loss plateaus at the closest reachable distance.
     """
-    import time as _time
-
-    from ...manifolds import group_by_manifold, stack_tensors
-
     basis = basis_factory()
     m, n = basis.m, basis.n
     code = basis.code
-    init_tensors = basis.tensors
     D_row = _dct_matrix(2**m)
     D_col = _dct_matrix(2**n)
     target = jnp.kron(D_row, D_col).reshape(2**m, 2**n, 2**m, 2**n)
@@ -126,49 +124,27 @@ def fit_to_dct(
         outs_mat = outs.reshape(2 ** (m + n), 2**m, 2**n).transpose(1, 2, 0)
         return jnp.real(jnp.sum(jnp.abs(outs_mat - target_flat) ** 2))
 
-    grad_fn = jax.value_and_grad(loss_fn)
+    value_and_grad = jax.value_and_grad(loss_fn)
+    step = 0
+    t0 = time.perf_counter()
 
-    tensors = list(init_tensors)
-    groups = group_by_manifold(tensors)
-    manifolds = list(groups.keys())
-    indices = [tuple(groups[mfd]) for mfd in manifolds]
-
-    # Adam state per group.
-    m_state, v_state = [], []
-    for idxs in indices:
-        pb = stack_tensors(tensors, list(idxs))
-        m_state.append(jnp.zeros_like(pb))
-        v_state.append(jnp.zeros(pb.shape, dtype=jnp.float64))
-
-    beta1, beta2, eps = 0.9, 0.999, 1e-8
-    t0 = _time.perf_counter()
-    for step in range(1, n_steps + 1):
-        loss_val, raw_grads = grad_fn(tensors)
-        grads = [jnp.conj(g) for g in raw_grads]
-
-        for k, (mfd, idxs) in enumerate(zip(manifolds, indices)):
-            pb = stack_tensors(tensors, list(idxs))
-            gb = stack_tensors(grads, list(idxs))
-            rg = mfd.project(pb, gb)
-            new_m = beta1 * m_state[k] + (1 - beta1) * rg
-            new_v = beta2 * v_state[k] + (1 - beta2) * jnp.real(jnp.conj(rg) * rg)
-            bc1 = 1.0 - beta1**step
-            bc2 = 1.0 - beta2**step
-            direction = (new_m / bc1) / (jnp.sqrt(new_v / bc2) + eps)
-            new_pb = mfd.retract(pb, -direction, lr)
-            new_m = mfd.transport(pb, new_pb, new_m)
-            m_state[k] = new_m
-            v_state[k] = new_v
-            for k2, idx in enumerate(idxs):
-                tensors[idx] = new_pb[..., k2]
-
+    def grad_fn(tensors):
+        # `optimize` asks for one gradient per step, so the loss that comes
+        # with it is the progress report.
+        nonlocal step
+        step += 1
+        loss_val, grads = value_and_grad(tensors)
         if step % 200 == 0 or step == 1:
             print(
                 f"  fit_to_dct step {step:>4d}: loss={float(loss_val):.4e} "
-                f"(elapsed {_time.perf_counter() - t0:.1f}s)",
+                f"(elapsed {time.perf_counter() - t0:.1f}s)",
                 flush=True,
             )
+        return grads
 
+    tensors, _ = optimize(
+        RiemannianAdam(lr=lr), list(basis.tensors), loss_fn, grad_fn, max_iter=n_steps, tol=0.0
+    )
     return tensors
 
 

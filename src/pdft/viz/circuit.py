@@ -11,14 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
-def _require_matplotlib():
-    try:
-        import matplotlib  # noqa: F401
-    except ImportError as e:  # pragma: no cover
-        raise ImportError(
-            "matplotlib is required for pdft.viz.circuit. Install with: pip install pdft[plot]"
-        ) from e
+from ._figure import require_matplotlib, save
 
 
 def plot_circuit(
@@ -34,7 +27,7 @@ def plot_circuit(
     square ends for a dense or controlled-rotation gate). Deliberately
     simple; full-fidelity rendering with gate labels is upstream's domain.
     """
-    _require_matplotlib()
+    require_matplotlib()
     import matplotlib.pyplot as plt
 
     from ..bases.core import program_of
@@ -69,6 +62,5 @@ def plot_circuit(
         title = f"{type(basis).__name__}(m={basis.m}, n={basis.n}): {gates}"
     ax.set_title(title)
     ax.grid(True, alpha=0.3, axis="x")
-    if output_path is not None:
-        fig.savefig(str(output_path), bbox_inches="tight", dpi=120)
+    save(fig, output_path)
     return fig

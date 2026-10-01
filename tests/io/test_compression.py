@@ -99,3 +99,38 @@ def test_compression_stats():
     assert s["total_coefficients"] == 16
     assert s["kept_coefficients"] == 4
     assert abs(s["compression_ratio"] - 0.75) < 1e-12
+
+
+def test_both_entry_points_keep_the_same_coefficients_for_the_same_count():
+    """`compress` and `compress_with_k` differ only in how the count is chosen."""
+    from pdft.io import compressed_to_dict
+
+    basis = QFTBasis(m=3, n=2)
+    image = np.random.default_rng(3).normal(size=(8, 4))
+    # ratio 0.75 of 32 coefficients keeps 8
+    by_ratio = compress(basis, image, ratio=0.75)
+    by_count = compress_with_k(basis, image, k=8)
+    assert compressed_to_dict(by_ratio) == compressed_to_dict(by_count)
+    assert len(by_count.indices) == 8
+    # a ratio that would keep none keeps one; a count beyond the size keeps all
+    assert len(compress(basis, image, ratio=0.999).indices) == 1
+    assert len(compress_with_k(basis, image, k=1000).indices) == 32
+
+
+@pytest.mark.parametrize("entry", ["compress", "compress_with_k"])
+def test_compressing_an_image_of_the_wrong_size_is_refused(entry):
+    basis = QFTBasis(m=3, n=2)
+    call = {
+        "compress": lambda image: compress(basis, image),
+        "compress_with_k": lambda image: compress_with_k(basis, image, k=3),
+    }[entry]
+    with pytest.raises(ValueError, match=r"image shape \(4, 4\) must match basis size \(8, 4\)"):
+        call(np.zeros((4, 4)))
+
+
+def test_recover_refuses_a_size_the_basis_does_not_have():
+    basis = QFTBasis(m=2, n=2)
+    compressed = compress_with_k(basis, np.ones((4, 4)), k=3)
+    compressed.original_size = (8, 8)
+    with pytest.raises(ValueError, match="does not match basis size"):
+        recover(basis, compressed)
