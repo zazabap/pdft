@@ -34,11 +34,12 @@ bit reversal, realised as the bit-reversed output convention (matching
 At init the forward operator equals the bit-reversed orthonormal DCT-IV per
 dimension. Every gate is a learnable leaf on the manifold the optimiser picks
 from its values: R_y and branch-H on U(2), CR_y and mirror-Q on U(4), the
-Delta sign on the phase manifold. The gate tensors are real, and a real
-initialisation with a real objective keeps them real, so what is trained is
-the orthogonal subset (O(2), O(4)) of those manifolds, as for RealRich: the
-operator stays real-orthogonal as it relaxes from the exact transform (cf.
-``all_real_dct_zero_ancilla.tex``).
+Delta sign on the phase manifold. The gate tensors are real to rounding: the
+Delta sign is stored as ``exp(i*pi)``, whose imaginary part is ``1.2e-16``, and
+everything else is exactly real. Training does not keep the operator
+real-orthogonal: the optimisers amplify that imaginary part (see
+``DCT4Basis``), so the circuit relaxes from the exact transform within the
+unitaries (cf. ``all_real_dct_zero_ancilla.tex`` for the real construction).
 
 2D DCT-IV = (m-qubit DCT-IV on row qubits) tensor (n-qubit DCT-IV on col
 qubits); no entanglement between blocks.

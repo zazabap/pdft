@@ -96,8 +96,9 @@ class CircuitBasis(BasisTransforms):
     ``perm_vec``); ``program`` says which gate each one is and when it acts.
     ``code`` and ``inv_code`` are the program's forward and inverse appliers;
     they compare by program, so they and ``program`` are left out of the
-    generated ``__eq__`` and ``repr``. Use ``bases_allclose`` for semantic
-    comparison. ``program`` is derived, never passed in, which keeps
+    ``repr``. To compare two bases use ``bases_allclose``: ``==`` compares the
+    tensor lists elementwise and raises on arrays with more than one element.
+    ``program`` is derived, never passed in, which keeps
     ``dataclasses.replace(basis, tensors=...)`` working on the bases whose
     fields are all constructor arguments.
 

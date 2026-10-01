@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-# Mirrors of upstream src/entangled_qft.jl:281-326, which take the entangle gates
+# Mirrors of upstream src/entangled_qft.jl:281-323, which take the entangle gates
 # to be the last `n_entangle` compact-CP tensors after the Hadamard-first sort.
 # That holds for the default "back" position only. Whatever the position,
 # `basis.program.tensor_indices(kind="CP", register="both")` is the entangle gates.

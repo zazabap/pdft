@@ -143,11 +143,11 @@ def classify_manifold(t: Array) -> AbstractRiemannianManifold:
     - otherwise → ``PhaseManifold``
 
     Note: ``OrthogonalManifold`` and ``Orthogonal2qManifold`` are defined
-    in this module for clients that want explicit O(d) constraints, but
-    they are NOT auto-selected — selection is the basis class's
-    responsibility. Real-valued tensors going through UnitaryManifold
-    stay real automatically (Cayley retraction with real W preserves
-    real-ness).
+    in this module for callers that want an explicit O(d) constraint, but
+    nothing selects them: not this function, and no basis or trainer in the
+    package. Tensors that are exactly real stay real through
+    ``UnitaryManifold`` under a real objective (the Cayley retraction with a
+    real ``W`` preserves it), which is how ``RealRichBasis`` trains.
     """
     if is_unitary_general(t):
         return UnitaryManifold(d=t.shape[0])
@@ -219,7 +219,7 @@ class UnitaryManifold(_ReprojectTransport):
 
 
 # ---------------------------------------------------------------------------
-# Orthogonal manifolds — real subgroups of U(d), used for Approach A
+# Orthogonal manifolds — real subgroups of U(d). Not selected by the package.
 # ---------------------------------------------------------------------------
 
 

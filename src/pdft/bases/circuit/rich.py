@@ -7,8 +7,8 @@ parameter each. A general 2-qubit unitary (U(4)) has 15 free parameters.
 
 RichBasis emits the same QFT topology gate sequence (H per qubit + 2-qubit
 gates between qubit pairs) but each 2-qubit gate is a learnable U(4)
-instead of a 1-parameter CP. Initialised so the circuit is BIT-IDENTICAL
-to QFT at training step 0 (each U(4) gate equals the 4×4 controlled-phase
+instead of a 1-parameter CP. Initialised so the circuit is the QFT operator
+at training step 0, to rounding (each U(4) gate equals the 4×4 controlled-phase
 diag(1, 1, 1, exp(iφ)) at its standard QFT phase). This gives Adam a
 gentle starting point: the optimiser begins exactly where plain QFT does
 and can only improve.
@@ -38,7 +38,7 @@ def _rich_qft_gates_1d(n_qubits: int, offset: int) -> list[Gate]:
     """Same QFT topology as qft.qft_gates_1d, but with U(4) gates instead of CP.
 
     Each U(4) gate is initialised to the 4x4 unitary equivalent of the
-    standard QFT phase (so the basis is bit-identical to QFTBasis at init).
+    standard QFT phase (so the basis is the QFTBasis operator at init, to rounding).
     """
     return qft_gates_1d(n_qubits, offset, u4_gate)
 
@@ -56,7 +56,7 @@ class RichBasis(CircuitBasis):
       - 3 U(4) gates per dim × 15 free real params (SU(4)) = 45
       - total per dim: 54 (BELOW the 63-dim of SU(8) — meaningful structure)
 
-    Initialised so the circuit is BIT-IDENTICAL to QFTBasis at training step 0
+    Initialised so the circuit is the QFTBasis operator at training step 0, to rounding
     (each U(4) starts at the 4×4 controlled-phase diag(1, 1, 1, exp(iφ)) of
     its corresponding QFT slot). Adam can then deform the U(4) gates into any
     4×4 unitary, but the family is a strict 54-dim submanifold of SU(8) and

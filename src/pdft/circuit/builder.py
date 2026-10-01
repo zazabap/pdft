@@ -290,10 +290,11 @@ def _one_qubit(pic: Array, ax: int, T: Array, inverse: bool, slices: bool) -> Ar
     the axis, asking for exact matmul precision: in single precision XLA
     otherwise lowers the contraction to TF32 on recent GPUs, which costs three
     digits. ``slices`` combines the two slices of the axis explicitly, with no
-    contraction at all. Measured on an L1 gradient of ``QFTBasis``: on a GPU
-    slices are 2 to 6 times faster at every size (41 ms against 7 ms at
-    512x512); on a CPU they are up to 1.7 times slower below 256x256 and
-    compile twice as slowly. Hence opt-in.
+    contraction at all. Measured on an L1 gradient of ``QFTBasis`` on one
+    machine: on a GPU slices are 2 to 6 times faster at every size (41 ms
+    against 7 ms at 512x512); on a CPU the two are within a factor of two of
+    each other, either way depending on the size, and slices compile two to
+    three times more slowly. They also change the low bits. Hence opt-in.
     """
     if slices:
         U = T.T if inverse else T
@@ -361,7 +362,9 @@ class CircuitCode:
     The callable a basis keeps as ``code`` and ``inv_code``. It compares and
     hashes by its program, so two bases with the same circuit share one
     compiled applier and have equal pytree structures. ``slices`` selects the
-    arithmetic of the one-qubit gates, see ``_one_qubit``.
+    arithmetic of the one-qubit gates, see ``_one_qubit``; to use it on a
+    basis, construct the basis with ``code=dataclasses.replace(basis.code,
+    slices=True)`` and the same for ``inv_code``.
     """
 
     program: Program
@@ -385,8 +388,9 @@ def apply_program(
     the arithmetic of the one-qubit gates, faster on a GPU and slower on a CPU
     at small sizes; see ``_one_qubit``.
 
-    ``apply_circuit`` is the fixed-precision, single-image entry point every
-    basis has always used; this is the same walk without those two limits.
+    ``apply_circuit`` and ``contract_circuit`` are the single-image entry
+    points the bases use; this is the same walk with batch axes and with the
+    precision taken from the image.
     """
     m, n = program.m, program.n
     if x.shape[-2:] != (2**m, 2**n):
