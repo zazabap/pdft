@@ -160,7 +160,7 @@ def dict_to_basis(d: dict) -> QFTBasis:
     serialized = d["tensors"]
     if len(serialized) != len(template_tensors):
         raise ValueError(
-            f"Tensor count mismatch: expected {len(template_tensors)} (from QFTBasis(m={m}, n={n})), "
+            f"Tensor count mismatch: expected {len(template_tensors)} (from qft_code(m={m}, n={n})), "
             f"got {len(serialized)}"
         )
 

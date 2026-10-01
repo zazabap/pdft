@@ -137,11 +137,13 @@ def coherence(basis, operator: Array | None = None) -> float:
 def is_flat_modulus(basis, operator: Array | None = None, atol: float = 1e-8) -> bool:
     """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard.
 
-    `atol` bounds `flat_modulus_deviation`, the largest departure of any
-    entry's modulus from ``N^{-1/2}``, with no relative slack on top.
+    The comparison is `jnp.allclose` with this `atol`, so its default
+    relative slack of ``1e-5`` applies on top: a basis held in single
+    precision, which sits about ``2e-8`` from flat, passes. For the number
+    itself use `flat_modulus_deviation`.
     """
     u = dense_operator(basis) if operator is None else operator
-    return bool(flat_modulus_deviation(u) <= atol)
+    return bool(jnp.allclose(jnp.abs(u), u.shape[0] ** -0.5, atol=atol))
 
 
 def diagonal_tensor_indices(basis) -> list[int]:
@@ -264,7 +266,7 @@ def sampled_flat_modulus(
     frozen_indices: list[int] | None = None,
     *,
     trials: int = 8,
-    atol: float = 1e-10,
+    atol: float | None = None,
     seed: int = 0,
 ) -> dict:
     """Measure the guarantee over drawn values of the tensors left trainable.
@@ -277,8 +279,16 @@ def sampled_flat_modulus(
     from the circuit's structure; this measures it, and says how far a
     configuration without the guarantee drifts.
 
-    Returns the verdict, the worst deviation and the worst mu seen.
+    Returns the verdict, the worst deviation and the worst mu seen. `atol`
+    bounds the worst deviation; left out, it is ``1e-10``, or ``1e-6`` when a
+    tensor is held in single precision (whose draws sit about ``3e-8`` from
+    flat).
     """
+    if trials < 1:
+        raise ValueError(f"trials must be >= 1, got {trials}")
+    if atol is None:
+        single = any(t.dtype == jnp.complex64 for t in basis.tensors)
+        atol = 1e-6 if single else 1e-10
     rng = np.random.default_rng(seed)
     frozen = set(frozen_indices or [])
     worst_deviation, worst_mu = 0.0, 0.0

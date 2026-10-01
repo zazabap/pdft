@@ -177,11 +177,14 @@ def group_by_manifold(tensors: list[Array]) -> dict:
 class _ReprojectTransport:
     """Vector transport by projecting onto the tangent space at the new point.
 
-    What every manifold here uses (upstream src/manifolds.jl:196).
+    What every manifold here uses (upstream src/manifolds.jl:196). The two
+    points keep the parameter names each manifold has always had (``U_``
+    here, ``T_`` for the two-qubit storage, ``Z_`` for phases), so the
+    two-qubit and phase manifolds spell the same line out under theirs.
     """
 
-    def transport(self, old: Array, new: Array, v: Array) -> Array:
-        return self.project(new, v)
+    def transport(self, U_old: Array, U_new: Array, v: Array) -> Array:
+        return self.project(U_new, v)
 
 
 @dataclass(frozen=True)
@@ -251,7 +254,7 @@ class OrthogonalManifold(_ReprojectTransport):
 # ---------------------------------------------------------------------------
 
 
-class _TwoQubitStorage(_ReprojectTransport):
+class _TwoQubitStorage:
     """A manifold of 4x4 matrices, for 2-qubit gates stored as ``(2, 2, 2, 2)``.
 
     Storage convention: axes (out_ctrl, out_tgt, in_ctrl, in_tgt), the
@@ -282,6 +285,9 @@ class _TwoQubitStorage(_ReprojectTransport):
         out_mat = self.matrix.retract(self._to_mat(T), self._to_mat(Xi), alpha, I_batch=None)
         return self._from_mat(out_mat)
 
+    def transport(self, T_old: Array, T_new: Array, v: Array) -> Array:
+        return self.project(T_new, v)
+
 
 @dataclass(frozen=True)
 class Unitary2qManifold(_TwoQubitStorage):
@@ -307,7 +313,7 @@ class Orthogonal2qManifold(_TwoQubitStorage):
 
 
 @dataclass(frozen=True)
-class PhaseManifold(_ReprojectTransport):
+class PhaseManifold:
     """U(1)^d: each element is a unit complex number.
 
     Mirror of upstream src/manifolds.jl:203-219.
@@ -319,3 +325,6 @@ class PhaseManifold(_ReprojectTransport):
     def retract(self, Z: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
         y = Z + alpha * Xi
         return y / jnp.abs(y).astype(y.dtype)
+
+    def transport(self, Z_old: Array, Z_new: Array, v: Array) -> Array:
+        return self.project(Z_new, v)

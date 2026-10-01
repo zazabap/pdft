@@ -107,6 +107,8 @@ def fit_to_dct(
     not contain DCT, the loss plateaus at the closest reachable distance.
     """
     basis = basis_factory()
+    if n_steps <= 0:
+        return list(basis.tensors)
     m, n = basis.m, basis.n
     code = basis.code
     D_row = _dct_matrix(2**m)
