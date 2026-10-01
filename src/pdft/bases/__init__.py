@@ -20,6 +20,9 @@ from .base import (
     QFTBasis,
     TEBDBasis,
     bases_allclose,
+    cp_phases,
+    program_of,
+    with_cp_phases,
 )
 from .block import BlockedBasis
 from .circuit import (
@@ -47,12 +50,15 @@ __all__ = [
     "RichBasis",
     "TEBDBasis",
     "bases_allclose",
+    "cp_phases",
     "entangled_qft_code",
     "fit_to_dct",
     "freeze_as_blocked",
     "ft_mat",
     "ift_mat",
     "mera_code",
+    "program_of",
     "qft_code",
     "tebd_code",
+    "with_cp_phases",
 ]

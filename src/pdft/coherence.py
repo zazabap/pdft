@@ -52,7 +52,11 @@ gates are left free during training:
 `certify_flat_modulus` performs that check for a given training configuration,
 taking the same `frozen_indices` that `train_basis_batched` accepts, so the
 question "does this training run preserve incoherence?" can be answered before
-the run rather than measured after it.
+the run rather than measured after it. `sampled_flat_modulus` measures the same
+thing instead of proving it, by drawing values for the tensors left trainable.
+
+`operator_coherence` and `flat_modulus_deviation` are the two quantities for
+an explicit matrix, kept inside JAX so a loss may carry them.
 
 Discovered while applying this package's basis family to image *completion*,
 where the reversal matters: the transform that compresses an image best is not
@@ -65,8 +69,10 @@ from dataclasses import dataclass, field
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from .circuit.builder import is_compact_cp
+from .bases.core import program_of
+from .manifolds import PhaseManifold, classify_manifold
 
 Array = jax.Array
 
@@ -76,7 +82,10 @@ __all__ = [
     "coherence",
     "dense_operator",
     "diagonal_tensor_indices",
+    "flat_modulus_deviation",
     "is_flat_modulus",
+    "operator_coherence",
+    "sampled_flat_modulus",
 ]
 
 
@@ -97,19 +106,41 @@ def dense_operator(basis) -> Array:
     return jax.vmap(lambda e: basis.forward_transform(e.reshape(rows, cols)).reshape(-1))(eye).T
 
 
+def operator_coherence(u: Array) -> Array:
+    """``mu`` of an explicit matrix, as a traceable scalar.
+
+    `coherence` takes a basis and returns a Python float; this is the same
+    quantity kept inside JAX, so a loss may carry ``lam * mu`` under `jax.jit`.
+    """
+    return u.shape[0] * jnp.max(jnp.abs(u) ** 2)
+
+
+def flat_modulus_deviation(u: Array) -> Array:
+    """``max_ij | |U_ij| - N^{-1/2} |``, the residual of the guarantee.
+
+    Worth reporting wherever a number is quoted: it says how exactly the
+    guarantee holds, not merely that it does. Traceable.
+    """
+    return jnp.max(jnp.abs(jnp.abs(u) - u.shape[0] ** -0.5))
+
+
 def coherence(basis, operator: Array | None = None) -> float:
     """``mu(U) = N max_ij |U_ij|^2``, in [1, N]. 1 is maximal incoherence.
 
     Pass `operator` to reuse a matrix from `dense_operator`.
     """
     u = dense_operator(basis) if operator is None else operator
-    return float(u.shape[0] * jnp.max(jnp.abs(u) ** 2))
+    return float(operator_coherence(u))
 
 
 def is_flat_modulus(basis, operator: Array | None = None, atol: float = 1e-8) -> bool:
-    """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard."""
+    """True if ``|U_ij| = N^{-1/2}`` everywhere, i.e. sqrt(N) U is complex Hadamard.
+
+    `atol` bounds `flat_modulus_deviation`, the largest departure of any
+    entry's modulus from ``N^{-1/2}``, with no relative slack on top.
+    """
     u = dense_operator(basis) if operator is None else operator
-    return bool(jnp.allclose(jnp.abs(u), u.shape[0] ** -0.5, atol=atol))
+    return bool(flat_modulus_deviation(u) <= atol)
 
 
 def diagonal_tensor_indices(basis) -> list[int]:
@@ -118,8 +149,11 @@ def diagonal_tensor_indices(basis) -> list[int]:
     These are the compact controlled-phase gates, `[[1, 1], [1, e^{i phi}]]`,
     whose only freedom is a phase. Freeing exactly these is what preserves
     mu == 1; see the module docstring.
+
+    Read from the basis's program, not guessed from tensor values: a gate of
+    kind ``"CP"`` is applied as a diagonal whatever its entries have become.
     """
-    return [i for i, t in enumerate(basis.tensors) if is_compact_cp(t)]
+    return program_of(basis).tensor_indices(kind="CP")
 
 
 @dataclass(frozen=True)
@@ -201,3 +235,55 @@ def certify_flat_modulus(
         ),
         mu=mu,
     )
+
+
+def _random_point(tensor: Array, rng: np.random.Generator) -> Array:
+    """A random point of the manifold `tensor` is trained on, with its shape and dtype.
+
+    The manifold is the one `classify_manifold` assigns, as in the trainers:
+    unit-modulus entries for a diagonal gate, a Haar unitary for the others.
+    """
+    if isinstance(classify_manifold(tensor), PhaseManifold):
+        drawn = np.exp(1j * rng.uniform(-np.pi, np.pi, tensor.shape))
+    else:
+        d = round(float(np.sqrt(tensor.size)))
+        q, r = np.linalg.qr(rng.normal(size=(d, d)) + 1j * rng.normal(size=(d, d)))
+        drawn = (q * (np.diag(r) / np.abs(np.diag(r)))).reshape(tensor.shape)
+    return jnp.asarray(drawn, dtype=tensor.dtype)
+
+
+def sampled_flat_modulus(
+    basis,
+    frozen_indices: list[int] | None = None,
+    *,
+    trials: int = 8,
+    atol: float = 1e-10,
+    seed: int = 0,
+) -> dict:
+    """Measure the guarantee over drawn values of the tensors left trainable.
+
+    Each trial replaces every tensor not in `frozen_indices` with a random
+    point of its manifold and measures the dense operator. The check holds
+    when every draw is flat-modulus, which is what distinguishes a basis that
+    happens to be incoherent from a training configuration that cannot leave
+    the complex Hadamard set. `certify_flat_modulus` proves the same thing
+    from the circuit's structure; this measures it, and says how far a
+    configuration without the guarantee drifts.
+
+    Returns the verdict, the worst deviation and the worst mu seen.
+    """
+    rng = np.random.default_rng(seed)
+    frozen = set(frozen_indices or [])
+    leaves, treedef = jax.tree_util.tree_flatten(basis)
+    worst_deviation, worst_mu = 0.0, 0.0
+    for _ in range(trials):
+        drawn = [t if i in frozen else _random_point(t, rng) for i, t in enumerate(leaves)]
+        u = dense_operator(jax.tree_util.tree_unflatten(treedef, drawn))
+        worst_deviation = max(worst_deviation, float(flat_modulus_deviation(u)))
+        worst_mu = max(worst_mu, float(operator_coherence(u)))
+    return {
+        "holds": worst_deviation <= atol,
+        "worst_deviation": worst_deviation,
+        "worst_mu": worst_mu,
+        "trials": trials,
+    }

@@ -45,15 +45,21 @@ def controlled_phase_diag(phi: float) -> Array:
     )
 
 
+# "H" is any one-qubit gate (it starts as a Hadamard or a rotation), "CP" a
+# diagonal two-qubit gate in compact 2x2 form, "U4" a dense two-qubit gate and
+# "CRY" a one-qubit block applied where the control is 1.
+GATE_KINDS = ("H", "CP", "U4", "CRY")
+REGISTERS = ("row", "column", "both")
+
+
 class Gate(TypedDict):
     """One gate of a circuit program.
 
-    ``kind`` is ``"H"``, ``"CP"``, ``"U4"`` or ``"CRY"``; ``qubits`` are the
-    wires it acts on; ``tensor`` is its tensor; ``phase`` is the angle
-    of a CP or CRY gate.
+    ``kind`` is one of ``GATE_KINDS``; ``qubits`` are the wires it acts on;
+    ``tensor`` is its tensor; ``phase`` is the angle of a CP or CRY gate.
     """
 
-    kind: str  # "H", "CP", "U4", or "CRY"
+    kind: str
     qubits: tuple[int, ...]
     tensor: Array
     phase: float
@@ -185,6 +191,30 @@ class Program:
         """``(kind, qubits)`` of each tensor, in the order the tensor list stores them."""
         by_slot = dict(zip(self.slot, self.steps))
         return tuple(by_slot[i] for i in range(len(self.steps)))
+
+    def tensor_indices(self, kind: str | None = None, register: str | None = None) -> list[int]:
+        """Positions in the stored tensor list of the gates of one kind, on one register, or both.
+
+        ``kind`` is one of ``GATE_KINDS``. ``register`` is ``"row"`` (every
+        qubit of the gate is one of ``1..m``), ``"column"`` (``m+1..m+n``) or
+        ``"both"`` (a gate that couples the two). The result is sorted, ready
+        to be passed as ``frozen_indices`` or to index a parameter view:
+        ``program.tensor_indices(kind="H")`` freezes every one-qubit gate.
+        """
+        if kind is not None and kind not in GATE_KINDS:
+            raise ValueError(f"kind must be one of {GATE_KINDS}, got {kind!r}")
+        if register is not None and register not in REGISTERS:
+            raise ValueError(f"register must be one of {REGISTERS}, got {register!r}")
+
+        def register_of(qubits: tuple[int, ...]) -> str:
+            rows = [q <= self.m for q in qubits]
+            return "row" if all(rows) else "both" if any(rows) else "column"
+
+        return [
+            i
+            for i, (step_kind, qubits) in enumerate(self.sorted_steps)
+            if kind in (None, step_kind) and register in (None, register_of(qubits))
+        ]
 
 
 def compile_program(gates: list[Gate], m: int, n: int) -> tuple[Program, list[Array]]:
@@ -328,6 +358,41 @@ def apply_program(
     pic = x.astype(dtype).reshape(x.shape[:-2] + (2,) * (m + n))
     out = _run(program, inverse, slices, tuple(t.astype(dtype) for t in tensors), pic)
     return out.reshape(x.shape)
+
+
+def register_width(size: int) -> int:
+    """The number of qubits of a register that holds ``size`` values; ``size`` must be a power of two."""
+    width = size.bit_length() - 1
+    if size < 1 or 2**width != size:
+        raise ValueError(f"a register holds a power-of-two number of values, got {size}")
+    return width
+
+
+def bit_reverse(x: Array) -> Array:
+    """``Pi x Pi``: ``x`` with the bits of its row index and of its column index reversed.
+
+    Yao numbers qubits from the least significant bit and the QFT circuit has
+    no final swap layer, so ``QFTBasis`` at its initial tensors is the DFT of
+    the bit-reversed image: ``forward_transform(bit_reverse(x))`` equals
+    ``ifft2(x, norm="ortho")``. A fixed permutation of the pixels changes
+    nothing about how sparse the coefficients are, which is why the bases do
+    not undo it. What is defined on the pixels themselves (a sampling mask
+    drawn from a seed, a figure) lives in the image's own frame: reverse the
+    image going in and the reconstruction coming out to work there.
+
+    An involution. ``x`` has shape ``(..., 2**m, 2**n)``; leading axes are
+    batch axes and the register widths are read off the last two.
+    """
+    m, n = register_width(x.shape[-2]), register_width(x.shape[-1])
+    lead = x.ndim - 2
+    wires = x.reshape(x.shape[:-2] + (2,) * (m + n))
+    # reversing the order of a register's axes reverses the bits of its index
+    order = (
+        list(range(lead))
+        + [lead + axis for axis in reversed(range(m))]
+        + [lead + m + axis for axis in reversed(range(n))]
+    )
+    return jnp.transpose(wires, order).reshape(x.shape)
 
 
 def compile_circuit(

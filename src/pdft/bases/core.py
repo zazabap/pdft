@@ -21,7 +21,14 @@ import jax
 import jax.numpy as jnp
 from jax import tree_util
 
-from ..circuit.builder import CircuitCode, Gate, Program, apply_circuit, compile_program
+from ..circuit.builder import (
+    CircuitCode,
+    Gate,
+    Program,
+    apply_circuit,
+    compile_program,
+    controlled_phase_diag,
+)
 
 Array = jax.Array
 
@@ -154,6 +161,48 @@ def _unflatten(cls: type[CircuitBasis], static, leaves) -> CircuitBasis:
         setattr(basis, name, value)
     basis.tensors = list(leaves)
     return basis
+
+
+def program_of(basis) -> Program:
+    """The gate program of a basis; for a blocked basis, the one of the circuit it tiles.
+
+    The stored tensor list of either is in that program's order, so its
+    ``tensor_indices`` index ``basis.tensors`` directly.
+    """
+    program = getattr(basis, "program", None)
+    return program if program is not None else program_of(basis.inner)
+
+
+def cp_phases(basis) -> Array:
+    """The angle of every controlled-phase gate, in stored order: the phase-only parameters.
+
+    A compact controlled-phase tensor is ``[[1, 1], [1, exp(i*phi)]]``; this
+    reads ``phi`` off each one. ``with_cp_phases`` is the way back. Together
+    they are the view a phase-only model trains through: the angles are
+    ordinary real parameters, the basis and its circuit stay what they are.
+    """
+    indices = program_of(basis).tensor_indices(kind="CP")
+    if not indices:
+        return jnp.zeros((0,))
+    return jnp.stack([jnp.angle(basis.tensors[i][1, 1]) for i in indices])
+
+
+def with_cp_phases(basis, phases: Array):
+    """A copy of ``basis`` whose controlled-phase gates have the angles ``phases``.
+
+    Every other tensor is kept. Traceable: ``phases`` may be a traced array,
+    so a loss can be differentiated with respect to the angles through the
+    transforms of the returned basis.
+    """
+    indices = program_of(basis).tensor_indices(kind="CP")
+    if len(phases) != len(indices):
+        raise ValueError(
+            f"basis has {len(indices)} controlled-phase gates, got {len(phases)} phases"
+        )
+    leaves, treedef = tree_util.tree_flatten(basis)
+    for i, phi in zip(indices, phases):
+        leaves[i] = controlled_phase_diag(phi).astype(leaves[i].dtype)
+    return tree_util.tree_unflatten(treedef, leaves)
 
 
 def bases_allclose(a, b, *, atol: float = 1e-10) -> bool:

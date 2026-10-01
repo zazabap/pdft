@@ -20,7 +20,11 @@ Turns a Yao-style gate list into a program and applies it to an image one gate a
    compile_circuit
    apply_program
    apply_circuit
+   bit_reverse
+   register_width
    Gate
+   GATE_KINDS
+   REGISTERS
    HADAMARD
    hadamard_gate
    phase_gate

@@ -21,11 +21,6 @@ def _require_matplotlib():
         ) from e
 
 
-def _program_of(basis):
-    """The gate program a basis keeps; for a blocked basis, the one of the circuit it tiles."""
-    return getattr(basis, "program", None) or basis.inner.program
-
-
 def plot_circuit(
     basis,
     *,
@@ -42,7 +37,9 @@ def plot_circuit(
     _require_matplotlib()
     import matplotlib.pyplot as plt
 
-    program = _program_of(basis)
+    from ..bases.core import program_of
+
+    program = program_of(basis)
     n_qubits = program.m + program.n
     fig, ax = plt.subplots(figsize=(max(8, 0.35 * len(program.steps)), 2 + 0.4 * n_qubits))
 

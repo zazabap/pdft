@@ -80,6 +80,26 @@ There is one way a circuit reaches an image: a family emits a gate list (`<famil
 
 The default arithmetic (`tensordot` with `precision="highest"`) is bit-identical to what `main` computed before the refactor; `tests/characterisation/` holds the proof. `slices=True` is the same operator in different arithmetic (faster on a GPU, slower on a small CPU problem) and is opt-in because it changes the low bits.
 
+### 11. `QFTBasis` is the DFT of the bit-reversed image, with `e^{+2 pi i kx/N}`
+
+Yao numbers qubits from the least significant bit and the QFT circuit has no final swap layer, so at its initial tensors
+
+```python
+QFTBasis(m, n).forward_transform(bit_reverse(x)) == np.fft.ifft2(x, norm="ortho")
+```
+
+where `circuit.bit_reverse` reverses the bits of the row index and of the column index (`Pi x Pi`, an involution). Two things to keep straight: the sign is numpy's *inverse* transform, and the frame is a fixed pixel permutation of the image. Neither is a bug and neither may be "fixed" in the basis: the Julia goldens encode both. Sparsity does not care about a pixel permutation. Anything defined on the pixels does (a sampling mask drawn from a seed, a figure): apply `bit_reverse` to the image going in and to the reconstruction coming out. `tests/test_hooks.py` pins the identity.
+
+### 12. Model variants are views of a basis, not new representations
+
+A model that trains part of a circuit, or trains it through other parameters, is expressed on the basis that already exists:
+
+- **Freeze by gate kind or register:** `basis.program.tensor_indices(kind="H")` (also `register="row" | "column" | "both"`) is a `frozen_indices` list. `program_of(basis)` reaches through a `BlockedBasis`.
+- **Phase-only training:** `cp_phases(basis)` reads the controlled-phase angles as a real array and `with_cp_phases(basis, angles)` puts them back; it is traceable, so a loss differentiates through it.
+- **Coherence:** `coherence.diagonal_tensor_indices` reads the gate kind from the program; `certify_flat_modulus` proves `mu == 1` for a frozen configuration and `sampled_flat_modulus` measures it.
+
+Do not add a second way to hold a circuit's parameters (an angle vector with its own applier, a gate dict) and a bridge between the two.
+
 ## Repo layout
 
 ```

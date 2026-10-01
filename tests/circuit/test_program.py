@@ -164,3 +164,22 @@ def test_slices_are_a_distinct_code_computing_the_same_thing():
         )
         assert single.dtype == jnp.complex64
         np.testing.assert_allclose(single, default, rtol=1e-5, atol=1e-5)
+
+
+def test_a_gate_outside_the_registers_or_of_an_unknown_kind_is_refused():
+    pic = jnp.zeros((2, 2), dtype=jnp.complex128)
+    stray = Program(1, 1, (("H", (3,)),), (0,))
+    with pytest.raises(ValueError, match=r"qubit index 3 out of range \(1..2\)"):
+        CircuitCode(stray)(HADAMARD, pic)
+    unknown = Program(1, 1, (("SWAP", (1, 2)),), (0,))
+    with pytest.raises(AssertionError, match="unknown gate kind: SWAP"):
+        CircuitCode(unknown)(HADAMARD, pic)
+
+
+def test_select_last_n_cp_indices_returns_what_there_is():
+    from pdft.circuit.builder import select_last_n_cp_indices
+
+    tensors = [HADAMARD, controlled_phase_diag(0.1), HADAMARD, controlled_phase_diag(0.2)]
+    assert select_last_n_cp_indices(tensors, 1) == [3]
+    assert select_last_n_cp_indices(tensors, 2) == [1, 3]
+    assert select_last_n_cp_indices(tensors, 5) == [1, 3]
