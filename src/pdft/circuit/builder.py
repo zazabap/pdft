@@ -17,6 +17,7 @@ Julia's Yao + yao2einsum output:
 from __future__ import annotations
 
 import string
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -66,6 +67,51 @@ def u4_from_phase(phi: float) -> Array:
     """
     diag = jnp.array([1.0 + 0j, 1.0 + 0j, 1.0 + 0j, jnp.exp(1j * phi)], dtype=jnp.complex128)
     return jnp.diag(diag).reshape(2, 2, 2, 2)
+
+
+def hadamard_gate(q: int) -> Gate:
+    """A Hadamard on qubit ``q``."""
+    return Gate(kind="H", qubits=(q,), tensor=HADAMARD, phase=0.0)
+
+
+_PHASE_FORMS = {"cp": ("CP", controlled_phase_diag), "u4": ("U4", u4_from_phase)}
+
+
+def phase_gate(parametrization: str) -> Callable[[int, int, float], Gate]:
+    """The constructor ``gate(q_ctrl, q_tgt, phi)`` of a controlled phase in one of its two forms.
+
+    ``"cp"`` stores the gate as the compact diagonal tensor, trained on
+    ``U(1)^4``. ``"u4"`` stores the same operator as a dense two-qubit tensor,
+    trained on ``U(4)``: both start equal for a given ``phi`` and differ only
+    in the manifold they relax over.
+    """
+    if parametrization not in _PHASE_FORMS:
+        raise ValueError(f"parametrization must be 'cp' or 'u4', got {parametrization!r}")
+    kind, tensor = _PHASE_FORMS[parametrization]
+
+    def gate(q_ctrl: int, q_tgt: int, phi: float) -> Gate:
+        return Gate(kind=kind, qubits=(q_ctrl, q_tgt), tensor=tensor(phi), phase=phi)
+
+    return gate
+
+
+cp_gate = phase_gate("cp")
+u4_gate = phase_gate("u4")
+
+
+def two_registers(emit_1d: Callable[[int, int], list[Gate]], m: int, n: int) -> list[Gate]:
+    """A separable 2-D circuit: ``emit_1d(n_qubits, offset)`` on the row qubits, then on the column qubits.
+
+    Rows are qubits ``1..m`` and columns ``m+1..m+n``; nothing couples the two registers.
+    """
+    check_qubits(m, n)
+    return emit_1d(m, 0) + emit_1d(n, m)
+
+
+def check_qubits(m: int, n: int) -> None:
+    """Every 2-D circuit needs at least one qubit per register."""
+    if m < 1 or n < 1:
+        raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
 
 
 def _hadamard_first_perm(tensor_list: list[Array]) -> list[int]:
@@ -424,6 +470,11 @@ def extract_phase_from_cp(tensor: Array) -> float:
 
     arr = np.asarray(tensor)
     return float(np.angle(arr[1, 1]))
+
+
+def extract_phases(tensors: list[Array], indices: list[int]) -> list[float]:
+    """The phase of each compact CP tensor at ``indices``, in that order."""
+    return [extract_phase_from_cp(tensors[idx]) for idx in indices]
 
 
 def select_last_n_cp_indices(tensors: list[Array], n_gates: int) -> list[int]:

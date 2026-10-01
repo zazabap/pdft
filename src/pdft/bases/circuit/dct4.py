@@ -51,11 +51,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from ...circuit.builder import (
-    HADAMARD,
     Gate,
     apply_circuit,
     compile_circuit,
-    controlled_phase_diag,
+    cp_gate,
+    hadamard_gate,
+    two_registers,
 )
 
 Array = jax.Array
@@ -66,6 +67,7 @@ __all__ = [
     "_dct4_gates_1d",
     "dct4_code",
     "dct4_ft_mat",
+    "dct4_gates",
     "dct4_ift_mat",
 ]
 
@@ -136,11 +138,23 @@ def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> l
         for p in range(n_qubits - 1 - k):
             theta = np.pi * (2**p) / size
             if parametrization == "controlled":
-                gates.append(Gate(kind="CRY", qubits=(Q(n_qubits - 1 - p), Q(b)),
-                                  tensor=_cry(theta), phase=0.0))
+                gates.append(
+                    Gate(
+                        kind="CRY",
+                        qubits=(Q(n_qubits - 1 - p), Q(b)),
+                        tensor=_cry(theta),
+                        phase=0.0,
+                    )
+                )
             else:
-                gates.append(Gate(kind="U4", qubits=(Q(n_qubits - 1 - p), Q(b)),
-                                  tensor=_cry_u4(theta), phase=0.0))
+                gates.append(
+                    Gate(
+                        kind="U4",
+                        qubits=(Q(n_qubits - 1 - p), Q(b)),
+                        tensor=_cry_u4(theta),
+                        phase=0.0,
+                    )
+                )
         # R: odd-branch reversal — the mirror-Q permutation repeated
         for q in lower:
             gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0))
@@ -148,34 +162,33 @@ def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> l
         level(k + 1)
         # D: Delta sign  +  H: branch Hadamard merge
         if lower:
-            gates.append(
-                Gate(kind="CP", qubits=(Q(b), Q(k + 1)), tensor=controlled_phase_diag(float(np.pi)), phase=float(np.pi))
-            )
-        gates.append(Gate(kind="H", qubits=(Q(b),), tensor=HADAMARD, phase=0.0))
+            gates.append(cp_gate(Q(b), Q(k + 1), float(np.pi)))
+        gates.append(hadamard_gate(Q(b)))
 
     level(0)
     return gates
 
 
-def dct4_code(
-    m: int, n: int, *, inverse: bool = False, parametrization: str = "o4"
-) -> tuple[Callable[..., Array], list[Array]]:
-    """Return `(einsum_fn, initial_tensors)` for 2D DCT-IV on (2^m, 2^n) images.
+def dct4_gates(m: int, n: int, *, parametrization: str = "o4") -> list[Gate]:
+    """The gate sequence of the 2D DCT-IV on (2^m, 2^n) images.
 
     ``parametrization`` selects how the affine twiddle is stored: ``"o4"``
     (default) emits a dense ``(2, 2, 2, 2)`` controlled-R_y trained on O(4);
     ``"controlled"`` emits a single-angle ``CRY`` gate whose trainable leaf is
     a ``(2, 2)`` block on O(2) (the mirror-Q CNOTs stay dense U4).
     """
-    if m < 1 or n < 1:
-        raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
     if parametrization not in ("o4", "controlled"):
-        raise ValueError(
-            f"parametrization must be 'o4' or 'controlled', got {parametrization!r}"
-        )
-    gates = _dct4_gates_1d(m, offset=0, parametrization=parametrization) + _dct4_gates_1d(
-        n, offset=m, parametrization=parametrization
+        raise ValueError(f"parametrization must be 'o4' or 'controlled', got {parametrization!r}")
+    return two_registers(
+        lambda n_qubits, offset: _dct4_gates_1d(n_qubits, offset, parametrization), m, n
     )
+
+
+def dct4_code(
+    m: int, n: int, *, inverse: bool = False, parametrization: str = "o4"
+) -> tuple[Callable[..., Array], list[Array]]:
+    """Return `(einsum_fn, initial_tensors)` for 2D DCT-IV; see `dct4_gates`."""
+    gates = dct4_gates(m, n, parametrization=parametrization)
     return compile_circuit(gates, m, n, inverse=inverse)
 
 
