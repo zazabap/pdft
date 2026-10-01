@@ -1,4 +1,4 @@
-"""Single-target training loop: Phase 1 API, unchanged from upstream."""
+"""Single-target training loop: upstream's one-image trainer."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 import jax
 
 from ..bases.core import with_tensors
-from ..loss import AbstractLoss, loss_function
+from ..loss import AbstractLoss, basis_loss
 from ..optimizers import AbstractRiemannianOptimizer, optimize
 from .result import TrainingResult
 
@@ -32,12 +32,10 @@ def train_basis(
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")
 
-    m, n = basis.m, basis.n
-    code = basis.code
-    inv_code = basis.inv_code
+    per_image = basis_loss(basis, loss)
 
     def loss_fn(tensors: list[Array]) -> Array:
-        return loss_function(tensors, m, n, code, target, loss, inverse_code=inv_code)
+        return per_image(tensors, target)
 
     grad_fn = jax.grad(loss_fn, argnums=0)
 

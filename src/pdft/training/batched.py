@@ -23,14 +23,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..bases.core import with_tensors
-from ..loss import AbstractLoss, loss_function
-from ..manifolds import group_by_manifold, stack_tensors
+from ..loss import AbstractLoss, mean_loss
 from ..optimizers import (
     RiemannianAdam,
     RiemannianGD,
     optimize,
 )
-from .adam_step import _build_jit_adam_step
+from .adam_step import _build_jit_adam_step, init_adam_moments
 from .eval_loop import evaluate_and_check_early_stop
 from .result import TrainingResult
 from .schedules import cosine_with_warmup
@@ -142,7 +141,9 @@ def train_basis_batched(
     """Multi-image, multi-epoch trainer with cosine LR schedule.
 
     Mirror of `ParametricDFT.jl/src/training.jl::_train_basis_core` (main).
-    See parameter docs in the original training.py docstring.
+    `optimizer` is `"adam"`, `"gd"`, or an optimizer instance whose settings
+    are kept; the learning rate always comes from the cosine schedule
+    (`lr_peak`, `lr_final`, `warmup_frac`).
 
     Parameters
     ----------
@@ -188,17 +189,10 @@ def train_basis_batched(
     n_batches = math.ceil(len(train_imgs) / batch_size)
     total_steps = max(1, epochs * n_batches)
 
-    m, n = basis.m, basis.n
-    code = basis.code
-    inv_code = basis.inv_code
-
-    def _per_image_loss(tensors: list[Array], img: Array) -> Array:
-        return loss_function(tensors, m, n, code, img, loss, inverse_code=inv_code)
-
-    _batched_loss = jax.vmap(_per_image_loss, in_axes=(None, 0))
+    _mean_loss = mean_loss(basis, loss)
 
     _val_stacked = jnp.stack(val_imgs, axis=0) if val_imgs else None
-    _val_eval = jax.jit(lambda ts, batch: jnp.mean(_batched_loss(ts, batch))) if val_imgs else None
+    _val_eval = jax.jit(_mean_loss) if val_imgs else None
 
     def _val_loss(tensors: list[Array]) -> float:
         if _val_stacked is None:
@@ -215,40 +209,25 @@ def train_basis_batched(
     global_step = 0
     epochs_completed = 0
 
-    is_adam = (isinstance(optimizer, str) and optimizer.lower() == "adam") or isinstance(
-        optimizer, RiemannianAdam
-    )
-
     # The two optimisers share the epoch loop below. Each supplies how an
-    # epoch's images are cut into batches and what one step does.
-    if is_adam:
-        if isinstance(optimizer, RiemannianAdam):
-            beta1, beta2, eps = optimizer.beta1, optimizer.beta2, optimizer.eps
-            mgn_eff = max_grad_norm if max_grad_norm is not None else optimizer.max_grad_norm
-        else:
-            beta1, beta2, eps = 0.9, 0.999, 1e-8
-            mgn_eff = max_grad_norm
-
+    # epoch's images are cut into batches and what one step does. The
+    # learning rate of `spec` is a placeholder: the schedule sets it per step.
+    spec = _resolve_optimizer(optimizer, lr=lr_peak, max_grad_norm=max_grad_norm)
+    if isinstance(spec, RiemannianAdam):
         step_fn = _build_jit_adam_step(
             basis,
             loss,
-            beta1=beta1,
-            beta2=beta2,
-            eps=eps,
-            max_grad_norm=mgn_eff,
+            beta1=spec.beta1,
+            beta2=spec.beta2,
+            eps=spec.eps,
+            max_grad_norm=spec.max_grad_norm,
             frozen_set=frozen_set if frozen_set else None,
         )
 
-        # Initialise Adam moment buffers ONCE — they persist across all steps,
-        # matching Julia's design and fixing the silent correctness bug where
-        # max_iter=1 in the old path was zeroing m/v on every batch.
-        groups_init = group_by_manifold(list(basis.tensors))
-        m_state: list = []
-        v_state: list = []
-        for manifold, idxs in groups_init.items():
-            pb = stack_tensors(list(basis.tensors), list(idxs))
-            m_state.append(jnp.zeros_like(pb))
-            v_state.append(jnp.zeros(pb.shape, dtype=jnp.float64))
+        # The moment buffers are made ONCE and persist across all steps,
+        # matching Julia's design; a per-batch `optimize(max_iter=1)` would
+        # zero them on every batch.
+        m_state, v_state = init_adam_moments(basis.tensors)
 
         pad_count = n_batches * batch_size - len(train_imgs)
 
@@ -280,10 +259,10 @@ def train_basis_batched(
             stacked = jnp.stack(batch_imgs, axis=0)
 
             def batch_loss_fn(ts: list[Array]) -> Array:
-                return jnp.mean(_batched_loss(ts, stacked))
+                return _mean_loss(ts, stacked)
 
             tensors, step_trace = optimize(
-                _resolve_optimizer(optimizer, lr=lr_t, max_grad_norm=max_grad_norm),
+                dataclasses.replace(spec, lr=lr_t),
                 tensors,
                 batch_loss_fn,
                 jax.grad(batch_loss_fn, argnums=0),

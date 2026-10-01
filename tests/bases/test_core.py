@@ -177,3 +177,54 @@ def test_with_tensors_swaps_the_tensors_and_keeps_everything_else(make):
     assert all(jnp.array_equal(a, 2 * b) for a, b in zip(doubled.tensors, basis.tensors))
     # the original is untouched
     assert pdft.bases_allclose(basis, make(), atol=0.0)
+
+
+def test_the_program_follows_a_code_that_is_passed_in():
+    """Rebuilding a basis with another instance's tensors and codes is a pattern
+    downstream code uses. The codes define the circuit, so the program has to be
+    theirs, not the one the constructor would have compiled by default."""
+    controlled = pdft.DCT4Basis(m=2, n=2, parametrization="controlled")
+    default = pdft.DCT4Basis(m=2, n=2)
+    assert controlled.program != default.program
+
+    rebuilt = pdft.DCT4Basis(
+        m=2, n=2, tensors=controlled.tensors, code=controlled.code, inv_code=controlled.inv_code
+    )
+    assert rebuilt.program == controlled.program and rebuilt.code is controlled.code
+    assert rebuilt.program.tensor_indices(kind="CRY") == controlled.program.tensor_indices(
+        kind="CRY"
+    )
+    assert rebuilt.program.tensor_indices(kind="CRY") != []
+    x = jnp.asarray(np.random.default_rng(2).standard_normal((4, 4)))
+    np.testing.assert_array_equal(rebuilt.forward_transform(x), controlled.forward_transform(x))
+    np.testing.assert_array_equal(rebuilt.inverse_transform(x), controlled.inverse_transform(x))
+
+    # a code that is not a CircuitCode says nothing about the circuit
+    def opaque(*operands):
+        return default.code(*operands)
+
+    wrapped = pdft.DCT4Basis(m=2, n=2, code=opaque)
+    assert wrapped.program == default.program and wrapped.code is opaque
+    np.testing.assert_array_equal(wrapped.forward_transform(x), default.forward_transform(x))
+
+
+@pytest.mark.parametrize("cls", [pdft.QFTBasis, pdft.RichBasis, pdft.RealRichBasis, pdft.DCT4Basis])
+def test_dataclasses_replace_works_where_every_field_is_a_constructor_argument(cls):
+    basis = cls(m=2, n=2)
+    doubled = replace(basis, tensors=[2 * t for t in basis.tensors])
+    assert type(doubled) is cls and doubled.program == basis.program
+    assert doubled.code == basis.code and doubled.inv_code == basis.inv_code
+    assert all(jnp.array_equal(a, 2 * b) for a, b in zip(doubled.tensors, basis.tensors))
+
+
+@pytest.mark.parametrize("cls", CIRCUIT_BASES)
+def test_a_basis_survives_copy_and_pickle(cls):
+    import copy
+    import pickle
+
+    basis = cls(m=2, n=2)
+    x = jnp.asarray(np.random.default_rng(4).standard_normal((4, 4)))
+    for clone in (copy.copy(basis), copy.deepcopy(basis), pickle.loads(pickle.dumps(basis))):
+        assert type(clone) is cls and clone.program == basis.program and clone.code == basis.code
+        assert bases_allclose(clone, basis, atol=0.0)
+        np.testing.assert_array_equal(clone.forward_transform(x), basis.forward_transform(x))

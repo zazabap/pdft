@@ -92,7 +92,7 @@ def compress_with_k(basis, image, *, k: int) -> CompressedImage:
     """Compress keeping exactly `k` coefficients. Mirror of upstream src/compression.jl:105-130."""
     if k <= 0:
         raise ValueError(f"k must be positive, got {k}")
-    return _compress_keeping(basis, image, lambda total: min(k, total))
+    return _compress_keeping(basis, image, lambda total: k)
 
 
 def _reconstruct_frequency_domain(compressed: CompressedImage) -> np.ndarray:

@@ -3,9 +3,7 @@
 Motivation: at small block sizes (m=n=3 = 8x8) the existing H+CP gate
 family hits an expressivity ceiling — all topologies converge ~1.75 dB
 below 8x8 DCT. The cause is that diagonal CP gates have only 1 free
-parameter each. A general 2-qubit unitary (U(4)) has 15 free parameters,
-and the H + U(4) gate family is provably universal for SU(2^n) at any
-qubit count >= 2, so it CONTAINS DCT as a special case.
+parameter each. A general 2-qubit unitary (U(4)) has 15 free parameters.
 
 RichBasis emits the same QFT topology gate sequence (H per qubit + 2-qubit
 gates between qubit pairs) but each 2-qubit gate is a learnable U(4)
@@ -15,12 +13,10 @@ diag(1, 1, 1, exp(iφ)) at its standard QFT phase). This gives Adam a
 gentle starting point: the optimiser begins exactly where plain QFT does
 and can only improve.
 
-Parameter count at m=n=3 (8x8 block):
-  - 6 H gates (3 per dim) at 4 real params each = 24
-  - 6 U(4) gates (3 per dim) at 15 real params each = 90
-  - total: 114 real params per dim
-  vs SU(8) dimension = 63 free real params
-  → strictly more parameters than needed for any 8x8 unitary.
+One layer of this topology is richer than H + CP but not universal: the
+family is a strict submanifold of SU(2^n) and does not contain the DCT. The
+parameter count and the measured distance to the DCT are in the `RichBasis`
+docstring.
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ Project-specific guidance for Claude Code working in this repo. Read this before
 
 `pdft` is a faithful Python port of [ParametricDFT.jl](https://github.com/nzy1997/ParametricDFT.jl) using JAX. Goal: a Python user can reproduce Julia results bit-for-bit (or within documented tolerances) on the same input. **Behavior parity with Julia is the primary correctness criterion** — never sacrifice it for Pythonic-ness.
 
-- Design spec: `docs/superpowers/specs/2026-04-24-pdft-migration-design.md`
+- Design spec: `docs/superpowers/specs/2026-04-24-pdft-migration-design.md` (referred to below as "the spec"; the file is not in this repository)
 - Roadmap: GitHub issue #1
 - Reliability hardening backlog: GitHub issue #2
 - Upstream is pinned to `nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef`. The pin lives in two places that must stay in sync: `reference/julia/generate_goldens.jl` (`UPSTREAM_SHA`) and `src/pdft/__init__.py` (`__upstream_ref__`).
@@ -24,7 +24,7 @@ raw_grads = grad_fn(state.current_tensors)
 raw_grads = [jnp.conj(g) for g in raw_grads]   # MUST stay
 ```
 
-Without this line, GD trajectories drift ~10% over 50 steps and Adam outright diverges. Any new optimizer added to this module must apply the same conjugation, or define a custom JAX `vjp` that matches Julia's convention.
+Without this line, GD trajectories drift ~10% over 50 steps and Adam outright diverges. The fused batched step in `training/adam_step.py` applies the same conjugation, right after its own `value_and_grad`. Those are the only two places a gradient is turned into an update (the trainers and `fit_to_dct` hand their gradient function to `optimize`); any new optimizer or training step must do the same, or define a custom JAX `vjp` that matches Julia's convention.
 
 ### 2. Yao little-endian qubit ordering
 
@@ -68,15 +68,17 @@ Python's `repr(5e-7)` gives `"5e-07"`; Julia's `string(5e-7)` gives `"5.0e-7"`. 
 
 GD on L1 loss is bit-exact for ~50 steps and stays within `atol=1e-3` over 200 steps. Beyond that, FP accumulation eventually pushes Python and Julia across the same loss cusp at slightly different alphas in Armijo line search. Both still converge to the same loss basin. Don't tighten `tests/parity/test_long_run.py` to `atol=1e-10` over 200 steps — this is mathematically expected on non-smooth losses, not a bug. Smooth losses (MSE without truncation) don't have this problem.
 
-### 9. Phase extractors classify by tensor shape, not gate-list metadata
+### 9. The upstream phase extractors classify by tensor values
 
-`get_*_gate_indices` walks the tensor list and tags any 2×2 tensor whose four entries have unit-modulus magnitudes (within `atol=0.15`) as a CP gate, then returns the LAST `n_gates` such positions. After training, individual entries can drift slightly off the unit circle; the moderate tolerance accommodates that. If you tighten the tolerance, do so in tandem with a regression test on a trained basis.
+`get_*_gate_indices` (one implementation, `select_last_n_cp_indices`, under Julia's three names) walks the tensor list and tags any 2×2 tensor whose four entries have unit-modulus magnitudes (within `atol=0.15`) as a CP gate, then returns the LAST `n_gates` such positions. After training, individual entries can drift slightly off the unit circle; the moderate tolerance accommodates that. If you tighten the tolerance, do so in tandem with a regression test on a trained basis.
+
+These mirror upstream and are kept for parity with it, limits included: "the last `n` CP tensors" is the entangle layer only for `entangle_position="back"`, and a `"u4"` parametrization has no compact-CP tensors to find. New code should not use them. The program has the exact answer for every basis (§12): `basis.program.tensor_indices(kind="CP", register="both")`. The other value-based classifier that stays is `manifolds.classify_manifold`, which picks each tensor's manifold as upstream does; a test asserts it agrees with the gate kind at the initial tensors of every basis.
 
 ### 10. One applier, and every basis keeps its program
 
 There is one way a circuit reaches an image: a family emits a gate list (`<family>_gates`), `compile_program` turns it into a `Program` (structure only, hashable) plus the tensors in stored order, and `CircuitCode(program, inverse, slices)` applies it one gate at a time through the jitted `_walk`. `CircuitCode` compares and hashes by its program, so two bases with the same circuit share one compiled applier and have equal pytree structures. The inverse is the same walk backwards with each gate's legs swapped (the transpose); the caller conjugates the tensors, as Julia's `inverse_code(conj.(tensors)...)` does.
 
-`CircuitBasis` (`bases/core.py`) stores `program` next to `tensors` and derives the rest for every family: `code`, `inv_code`, the transforms, the parameter count and the pytree. A new family is its emitter plus `emit = staticmethod(<family>_gates)` (or a constructor that calls `_init` when it has options of its own). Do not add a second applier, a per-family `forward_transform`, a per-family pytree registration, or code that recovers the gate sequence from tensor values: read `basis.program`.
+`CircuitBasis` (`bases/core.py`) stores `program` next to `tensors` and derives the rest for every family: `code`, `inv_code`, the transforms, the parameter count and the pytree. A new family is its emitter plus `emit = staticmethod(<family>_gates)` (or a constructor that calls `_init` when it has options of its own). A `code` passed to a constructor defines the circuit: when it is a `CircuitCode` the basis takes its program from it, so a basis rebuilt with another instance's tensors and codes stays consistent. Do not add a second applier, a per-family `forward_transform`, a per-family pytree registration, or code that recovers the gate sequence from tensor values: read `basis.program`.
 
 The default arithmetic (`tensordot` with `precision="highest"`) is bit-identical to what `main` computed before the refactor; `tests/characterisation/` holds the proof. `slices=True` is the same operator in different arithmetic (faster on a GPU, slower on a small CPU problem) and is opt-in because it changes the low bits.
 
@@ -114,7 +116,7 @@ src/pdft/
 │   └── block/              BlockedBasis (Rich/RealRich re-exported from circuit for back-compat)
 ├── circuit/                builder.py: Gate, Program, compile_program, CircuitCode (the one applier), gate constructors
 ├── coherence.py            Mutual coherence of a basis and the flat-modulus certificate
-├── optimizers/             core, gd (RiemannianGD + Armijo), adam (RiemannianAdam), loop
+├── optimizers/             core, gd (RiemannianGD + Armijo), adam (RiemannianAdam + the one Adam update both drivers use), loop
 ├── training/               schedules, single (train_basis), batched (one epoch loop; Adam and GD supply the batch and the step), adam_step, eval_loop
 ├── io/                     serialize (JSON), compression
 └── viz/                    loss (matplotlib loss plots), circuit (the gate sequence a basis keeps), _figure (shared import guard + save)
@@ -209,8 +211,8 @@ If you find another mismatch:
 - **Don't add `optax`** as a dependency. The optimizer logic is hand-rolled to match Julia's exact moment-update math. `optax`'s defaults and FP order will diverge from Julia.
 - **Don't bring back a whole-circuit einsum in the package.** Circuits are applied one gate at a time: no contraction path to search, no 52-label limit. The einsum form survives only as the test reference (`tests/circuit/einsum_reference.py`), which uses the `"greedy"` path; `"optimal"` is exponential in tensor count and hangs on the 3×3 QFT (12 tensors).
 - **Don't add explicit JIT to `train_basis`.** It calls a basis-typed loss closure with Python-list pytrees; JIT decisions are best left to inner functions where the static-vs-leaf split is clearer.
-- **Don't introduce backwards-compat shims** for the JSON schema. We're at v0.1.0; if the schema changes, bump the version and regenerate goldens.
-- **Don't add ML scaffolding** (no DataLoader, no Trainer-like classes, no Lightning). Upstream is one-target-image-at-a-time and we mirror that. Batched training is open work in #2.
+- **Don't introduce backwards-compat shims** for the JSON schema. If the schema changes, bump its version and regenerate goldens.
+- **Don't add ML scaffolding** (no DataLoader, no Trainer-like classes, no Lightning). `train_basis` is upstream's one-target-image loop and `train_basis_batched` its `_train_basis_core`; both are plain functions.
 - **Don't run examples in the test CI.** They write to `out/` (gitignored) and are not coverage-relevant. The one place they do run is the docs workflow (`docs.yml`): sphinx-gallery executes `examples/*.py` to render the example gallery, under `-W`, so a broken example fails the docs build rather than the test matrix.
 
 ## When making changes

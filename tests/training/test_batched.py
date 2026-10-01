@@ -570,3 +570,88 @@ def test_batched_argument_validation(argument, message):
     }
     with pytest.raises(ValueError, match=message):
         train_basis_batched(pdft.QFTBasis(m=2, n=2), **arguments)
+
+
+# ---------------------------------------------------------------------------
+# the two Adam drivers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("max_grad_norm", [None, 0.05])
+@pytest.mark.parametrize(
+    "make", [lambda: pdft.QFTBasis(m=2, n=2), lambda: pdft.RichBasis(m=2, n=2)]
+)
+def test_the_fused_adam_step_tracks_the_eager_one(make, max_grad_norm):
+    """`train_basis` drives Adam through `optimize`, one eager step at a time;
+    `train_basis_batched` runs the fused jitted step. They share the update, so on
+    one image and a flat schedule they must agree to rounding."""
+    rng = np.random.default_rng(0)
+    image = rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4))
+    lr, steps = 0.02, 6
+    eager = pdft.train_basis(
+        make(),
+        target=jnp.asarray(image),
+        loss=pdft.MSELoss(k=6),
+        optimizer=pdft.RiemannianAdam(lr=lr, max_grad_norm=max_grad_norm),
+        steps=steps,
+    )
+    fused = train_basis_batched(
+        make(),
+        dataset=[image],
+        loss=pdft.MSELoss(k=6),
+        epochs=steps,
+        batch_size=1,
+        optimizer=pdft.RiemannianAdam(max_grad_norm=max_grad_norm),
+        lr_peak=lr,
+        lr_final=lr,
+        warmup_frac=0.0,
+        shuffle=False,
+    )
+    assert cosine_with_warmup(1, steps, warmup_frac=0.0, lr_peak=lr, lr_final=lr) == lr
+    for a, b in zip(eager.basis.tensors, fused.basis.tensors):
+        np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=0, atol=1e-12)
+    # the eager trace starts with the loss before any step; the fused one records
+    # the loss each step started from
+    np.testing.assert_allclose(eager.loss_history[:-1], fused.loss_history, rtol=1e-12)
+    assert (
+        max(float(jnp.max(jnp.abs(a - b))) for a, b in zip(eager.basis.tensors, make().tensors))
+        > 1e-3
+    )
+
+
+def test_adam_update_is_the_textbook_step_on_the_manifold():
+    from pdft.manifolds import PhaseManifold
+    from pdft.optimizers.adam import _adam_update, _zero_moments
+    from pdft.training.adam_step import init_adam_moments
+
+    rng = np.random.default_rng(0)
+    points = jnp.asarray(np.exp(1j * rng.uniform(-3, 3, (2, 2, 3))))
+    manifold = PhaseManifold()
+    rgrad = manifold.project(points, jnp.asarray(rng.normal(size=(2, 2, 3)) + 0j))
+    m0, v0 = _zero_moments(points)
+    assert m0.dtype == points.dtype and v0.dtype == jnp.float64 and not m0.any() and not v0.any()
+    new_points, m1, v1 = _adam_update(
+        manifold,
+        points,
+        rgrad,
+        m0,
+        v0,
+        lr=0.1,
+        beta1=0.9,
+        beta2=0.999,
+        eps=1e-8,
+        bc1=0.1,
+        bc2=0.001,
+    )
+    np.testing.assert_allclose(v1, 0.001 * np.abs(rgrad) ** 2, rtol=1e-14)
+    direction = rgrad / (
+        np.abs(rgrad) + 1e-8
+    )  # (m / bc1) / (sqrt(v / bc2) + eps) at the first step
+    np.testing.assert_allclose(new_points, manifold.retract(points, -direction, 0.1), atol=1e-12)
+    np.testing.assert_allclose(m1, manifold.transport(points, new_points, 0.1 * rgrad), atol=1e-14)
+
+    # one moment pair per manifold group, shaped like the stacked group
+    basis = pdft.RichBasis(m=2, n=2)
+    m_list, v_list = init_adam_moments(basis.tensors)
+    assert [m.shape for m in m_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]
+    assert [v.shape for v in v_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]

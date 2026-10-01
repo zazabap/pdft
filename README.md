@@ -22,8 +22,11 @@ This is the reference implementation accompanying the paper
 
 > Status: feature-complete port. All bases (QFT, entangled QFT, TEBD, MERA,
 > Rich/RealRich, DCT-IV, blocked), both Riemannian optimizers (GD + Adam),
-> training, JSON/compression I/O, and visualization are implemented, with
-> parity against the Julia reference verified by committed goldens.
+> training, JSON/compression I/O, and visualization are implemented. Parity
+> against the Julia reference is verified by committed goldens for QFT,
+> entangled QFT, TEBD and MERA (transforms, losses, both optimizers, JSON,
+> compression); Rich/RealRich, DCT-IV and the blocked bases have no goldens and
+> are covered by property tests. JSON I/O is for `QFTBasis`.
 
 ## Installation
 
@@ -91,8 +94,10 @@ compressed sensing — is governed by a second quantity, and it is not sparsity:
 recovery from pointwise samples; `mu = N` is an atom living on one pixel,
 invisible to any sample set that misses it.
 
-Every basis here starts at `mu = 1`, and there is a structural reason it can
-stay there: if the only non-diagonal gates are one Hadamard per wire, then
+The QFT-family bases (QFT, entangled QFT, TEBD, MERA, Rich, RealRich) all start
+at `mu = 1`. (`DCT4Basis` starts near 4, and a `BlockedBasis` at its number of
+blocks, since each of its atoms lives on one block.) There is a structural
+reason `mu = 1` can stay there: if the only non-diagonal gates are one Hadamard per wire, then
 `|U_ij| = N^{-1/2}` for **every** parameter value, so `mu = 1` identically and
 `sqrt(N) U` is a complex Hadamard matrix. Training the controlled-phase gates
 arbitrarily hard, on any objective, cannot move it. Training the Hadamard /

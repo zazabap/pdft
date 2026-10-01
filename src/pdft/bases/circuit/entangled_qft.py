@@ -2,9 +2,9 @@
 
 Mirror of upstream src/entangled_qft.jl. Extends the standard 2D QFT by
 adding `n_entangle = min(m, n)` controlled-phase gates that couple
-corresponding row and column qubits. Phase 3 supports the default
-`:back` entangle_position (entanglement at the end of the circuit);
-`:front` and `:middle` positions are not yet ported.
+corresponding row and column qubits, at the end of the circuit (`"back"`,
+the default) or at its start (`"front"`). Upstream's `:middle` position is not
+ported.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from ...circuit.builder import (
     controlled_phase_diag,
     cp_gate,
     extract_phases,
+    phase_list,
     select_last_n_cp_indices,
 )
 from .qft import qft_gates
@@ -35,8 +36,10 @@ __all__ = [
 ]
 
 
-# Mirrors of upstream src/entangled_qft.jl:281-326. The entangle gates are the
-# last `n_entangle` compact-CP tensors after the Hadamard-first sort.
+# Mirrors of upstream src/entangled_qft.jl:281-326, which take the entangle gates
+# to be the last `n_entangle` compact-CP tensors after the Hadamard-first sort.
+# That holds for the default "back" position only. Whatever the position,
+# `basis.program.tensor_indices(kind="CP", register="both")` is the entangle gates.
 get_entangle_tensor_indices = select_last_n_cp_indices
 extract_entangle_phases = extract_phases
 
@@ -78,14 +81,9 @@ def entangled_qft_gates(
         )
 
     n_entangle = min(m, n)
-    if entangle_phases is None:
-        phases = [0.0] * n_entangle
-    else:
-        phases = [float(p) for p in entangle_phases]
-    if len(phases) != n_entangle:
-        raise ValueError(
-            f"entangle_phases must have length min(m, n) = {n_entangle}, got {len(phases)}"
-        )
+    phases = phase_list(
+        entangle_phases, n_entangle, f"entangle_phases must have length min(m, n) = {n_entangle}"
+    )
 
     entangle = _entangle_layer(m, n, n_entangle, phases)
     return (entangle + plain if entangle_position == "front" else plain + entangle), n_entangle

@@ -172,11 +172,11 @@ class DCT4Basis(CircuitBasis):
     per dimension, and since DCT-IV is self-inverse the basis reconstructs
     exactly. ``tensors`` holds every gate (the affine ``R_y`` rotation layer,
     the branch Hadamards, the mirror-``Q`` CNOT permutations and the ``Delta``
-    sign), each a learnable leaf on its auto-selected Riemannian manifold
-    (O(2) / O(4) / phase). The gate tensors are real-valued (stored complex128,
-    zero imaginary), so the unitary manifold trains the real-orthogonal subset
-    under a real objective: exact DCT-IV at init, then relaxed, just as QFT
-    relaxes within U.
+    sign), each a learnable leaf on the manifold the optimiser picks from its
+    values (U(2) / U(4) / phase). The gate tensors are real-valued (stored
+    complex128, zero imaginary), so those manifolds train the real-orthogonal
+    subset under a real objective: exact DCT-IV at init, then relaxed, just as
+    QFT relaxes within U.
     """
 
     def __init__(

@@ -227,3 +227,19 @@ def test_a_pixel_mask_commutes_with_the_frame_change():
     x = _image((8, 8))
     mask = jnp.asarray(np.random.default_rng(0).random((8, 8)) < 0.4)
     np.testing.assert_array_equal(bit_reverse(mask * x), bit_reverse(mask) * bit_reverse(x))
+
+
+def test_front_entanglers_are_found_by_the_program_not_by_position():
+    """The upstream helper takes the last compact-CP tensors, which are the entanglers
+    only when they are emitted last. The program knows which gates couple the registers
+    wherever they sit."""
+    phases = [0.1, 0.4, 1.7]
+    for position in ("back", "front"):
+        basis = pdft.EntangledQFTBasis(m=3, n=3, entangle_phases=phases, entangle_position=position)
+        coupling = basis.program.tensor_indices(kind="CP", register="both")
+        assert len(coupling) == basis.n_entangle == 3
+        np.testing.assert_allclose(
+            extract_entangle_phases(basis.tensors, coupling), phases, atol=1e-15
+        )
+        by_position = get_entangle_tensor_indices(basis.tensors, basis.n_entangle)
+        assert (by_position == coupling) == (position == "back")

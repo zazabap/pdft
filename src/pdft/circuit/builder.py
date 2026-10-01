@@ -45,10 +45,12 @@ def controlled_phase_diag(phi: float) -> Array:
     )
 
 
-# "H" is any one-qubit gate (it starts as a Hadamard or a rotation), "CP" a
-# diagonal two-qubit gate in compact 2x2 form, "U4" a dense two-qubit gate and
-# "CRY" a one-qubit block applied where the control is 1.
-GATE_KINDS = ("H", "CP", "U4", "CRY")
+# The gate kinds, each with the shape of the tensor it stores. "H" is any
+# one-qubit gate (it starts as a Hadamard or a rotation), "CP" a diagonal
+# two-qubit gate in compact 2x2 form, "U4" a dense two-qubit gate and "CRY" a
+# one-qubit block applied where the control is 1.
+GATE_SHAPES = {"H": (2, 2), "CP": (2, 2), "U4": (2, 2, 2, 2), "CRY": (2, 2)}
+GATE_KINDS = tuple(GATE_SHAPES)
 REGISTERS = ("row", "column", "both")
 
 
@@ -56,7 +58,9 @@ class Gate(TypedDict):
     """One gate of a circuit program.
 
     ``kind`` is one of ``GATE_KINDS``; ``qubits`` are the wires it acts on;
-    ``tensor`` is its tensor; ``phase`` is the angle of a CP or CRY gate.
+    ``tensor`` is its tensor, of shape ``GATE_SHAPES[kind]``. ``phase`` is the
+    angle the gate was built from, 0.0 when it has none. It is a record for
+    the reader: what is applied is the tensor.
     """
 
     kind: str
@@ -73,8 +77,31 @@ def u4_from_phase(phi: float) -> Array:
     behave initially like a fixed CP. Axis order: (out_ctrl, out_tgt,
     in_ctrl, in_tgt).
     """
-    diag = jnp.array([1.0 + 0j, 1.0 + 0j, 1.0 + 0j, jnp.exp(1j * phi)], dtype=jnp.complex128)
-    return jnp.diag(diag).reshape(2, 2, 2, 2)
+    return controlled(jnp.diag(jnp.array([1.0 + 0j, jnp.exp(1j * phi)], dtype=jnp.complex128)))
+
+
+def controlled(block: Array) -> Array:
+    """The dense two-qubit tensor that applies the one-qubit ``block`` where the control is 1.
+
+    ``block[out, in]`` acts on the target; where the control is 0 nothing
+    happens. Axis order: (out_ctrl, out_tgt, in_ctrl, in_tgt), the storage of
+    a ``"U4"`` gate. A controlled phase, a CNOT and a controlled rotation are
+    this with a diagonal, a bit flip and a rotation for ``block``.
+    """
+    tensor = jnp.zeros((2, 2, 2, 2), dtype=jnp.complex128)
+    tensor = tensor.at[0, :, 0, :].set(jnp.eye(2, dtype=jnp.complex128))
+    return tensor.at[1, :, 1, :].set(block)
+
+
+def identity_tensor(kind: str) -> Array:
+    """The tensor with which a gate of ``kind`` does nothing, as complex128."""
+    if kind == "CP":
+        return controlled_phase_diag(0.0)  # all ones: the compact form of diag(1, 1, 1, 1)
+    if kind == "U4":
+        return controlled(jnp.eye(2, dtype=jnp.complex128))
+    if kind in GATE_SHAPES:
+        return jnp.eye(2, dtype=jnp.complex128)
+    raise AssertionError(f"unknown gate kind: {kind}")
 
 
 def hadamard_gate(q: int) -> Gate:
@@ -122,6 +149,17 @@ def check_qubits(m: int, n: int) -> None:
         raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
 
 
+def phase_list(phases: Sequence[float] | None, count: int, requirement: str) -> list[float]:
+    """``count`` angles as floats: zeros when ``phases`` is ``None``, else ``phases`` checked for length.
+
+    ``requirement`` is the sentence a wrong length is reported with.
+    """
+    angles = [0.0] * count if phases is None else [float(p) for p in phases]
+    if len(angles) != count:
+        raise ValueError(f"{requirement}, got {len(angles)}")
+    return angles
+
+
 def hadamards_then_layers(
     layer: Callable[[int, int, list[float], Callable[[int, int, float], Gate]], list[Gate]],
     count: Callable[[int], int],
@@ -142,12 +180,11 @@ def hadamards_then_layers(
     check_qubits(m, n)
     gate = phase_gate(parametrization)
     n_row, n_col = count(m), count(n)
-    angles = [0.0] * (n_row + n_col) if phases is None else [float(p) for p in phases]
-    if len(angles) != n_row + n_col:
-        raise ValueError(
-            f"phases must have length {n_row + n_col} "
-            f"({n_row} row + {n_col} column gates), got {len(angles)}"
-        )
+    angles = phase_list(
+        phases,
+        n_row + n_col,
+        f"phases must have length {n_row + n_col} ({n_row} row + {n_col} column gates)",
+    )
     gates = [hadamard_gate(q) for q in range(1, m + n + 1)]
     gates += layer(m, 0, angles[:n_row], gate) + layer(n, m, angles[n_row:], gate)
     return gates, n_row, n_col

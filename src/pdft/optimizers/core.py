@@ -55,6 +55,19 @@ def _write_back(state: _OptimizationState) -> None:
         unstack_tensors(state.point_batches[manifold], indices, into=state.current_tensors)
 
 
+def _stack_grads(grads: list[Array], indices, frozen: frozenset[int] | None) -> Array:
+    """Stack the gradients of one manifold group, with zeros for the frozen tensors.
+
+    A zero gradient keeps a frozen tensor's Adam moments at zero, so nothing
+    accumulates for it while the rest of its group trains.
+    """
+    if not frozen:
+        return stack_tensors(grads, indices)
+    return jnp.stack(
+        [jnp.zeros_like(grads[i]) if i in frozen else grads[i] for i in indices], axis=-1
+    )
+
+
 def _batched_project(
     state: _OptimizationState,
     euclid_grads: list[Array],
@@ -65,17 +78,7 @@ def _batched_project(
     grad_norm_sq = 0.0
     for manifold, indices in state.manifold_groups.items():
         pb = state.point_batches[manifold]
-        if frozen_indices:
-            gb = jnp.stack(
-                [
-                    jnp.zeros_like(euclid_grads[i]) if i in frozen_indices else euclid_grads[i]
-                    for i in indices
-                ],
-                axis=-1,
-            )
-        else:
-            gb = stack_tensors(euclid_grads, indices)
-        rg = manifold.project(pb, gb)
+        rg = manifold.project(pb, _stack_grads(euclid_grads, indices, frozen_indices))
         rg_batches[manifold] = rg
         grad_norm_sq = grad_norm_sq + float(jnp.real(jnp.sum(jnp.conj(rg) * rg)))
     return rg_batches, jnp.sqrt(grad_norm_sq)
