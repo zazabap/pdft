@@ -10,6 +10,7 @@ cross-language JSON compatibility.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,6 +59,24 @@ def _select_top_coefficients(freq: np.ndarray, k: int):
     return indices_1b, values
 
 
+def _compress_keeping(basis, image, keep: Callable[[int], int]) -> CompressedImage:
+    """Transform `image` and keep the `keep(total)` largest of its `total` coefficients."""
+    expected = basis.image_size
+    image = np.asarray(image)
+    if image.shape != expected:
+        raise ValueError(f"image shape {image.shape} must match basis size {expected}")
+
+    freq = np.asarray(basis.forward_transform(jnp.asarray(image)))
+    indices, values = _select_top_coefficients(freq, keep(freq.size))
+    return CompressedImage(
+        indices=indices,
+        values_real=[float(v.real) for v in values],
+        values_imag=[float(v.imag) for v in values],
+        original_size=tuple(int(s) for s in image.shape),
+        basis_hash=basis_hash(basis),
+    )
+
+
 def compress(basis, image, *, ratio: float = 0.9) -> CompressedImage:
     """Compress `image` under `basis`, keeping top (1 - ratio) fraction.
 
@@ -66,43 +85,14 @@ def compress(basis, image, *, ratio: float = 0.9) -> CompressedImage:
     """
     if not (0.0 <= ratio < 1.0):
         raise ValueError(f"ratio must be in [0, 1), got {ratio}")
-    expected = basis.image_size
-    image = np.asarray(image)
-    if image.shape != expected:
-        raise ValueError(f"image shape {image.shape} must match basis size {expected}")
-
-    freq = np.asarray(basis.forward_transform(jnp.asarray(image)))
-    total = freq.size
-    keep = max(1, round(total * (1.0 - ratio)))
-    indices, values = _select_top_coefficients(freq, keep)
-    return CompressedImage(
-        indices=indices,
-        values_real=[float(v.real) for v in values],
-        values_imag=[float(v.imag) for v in values],
-        original_size=tuple(int(s) for s in image.shape),
-        basis_hash=basis_hash(basis),
-    )
+    return _compress_keeping(basis, image, lambda total: max(1, round(total * (1.0 - ratio))))
 
 
 def compress_with_k(basis, image, *, k: int) -> CompressedImage:
     """Compress keeping exactly `k` coefficients. Mirror of upstream src/compression.jl:105-130."""
     if k <= 0:
         raise ValueError(f"k must be positive, got {k}")
-    expected = basis.image_size
-    image = np.asarray(image)
-    if image.shape != expected:
-        raise ValueError(f"image shape {image.shape} must match basis size {expected}")
-
-    freq = np.asarray(basis.forward_transform(jnp.asarray(image)))
-    keep = min(k, freq.size)
-    indices, values = _select_top_coefficients(freq, keep)
-    return CompressedImage(
-        indices=indices,
-        values_real=[float(v.real) for v in values],
-        values_imag=[float(v.imag) for v in values],
-        original_size=tuple(int(s) for s in image.shape),
-        basis_hash=basis_hash(basis),
-    )
+    return _compress_keeping(basis, image, lambda total: k)
 
 
 def _reconstruct_frequency_domain(compressed: CompressedImage) -> np.ndarray:

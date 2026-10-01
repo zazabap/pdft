@@ -14,15 +14,33 @@ Turns a Yao-style gate list into a JAX einsum, and caches the contraction path a
    :toctree: generated
    :nosignatures:
 
-   build_circuit_einsum
+   Program
+   compile_program
+   CircuitCode
    compile_circuit
+   apply_program
    apply_circuit
-   optimize_code_cached
-   sorted_gate_program
+   contract_circuit
+   check_image_shape
+   bit_reverse
+   register_width
    Gate
+   GATE_KINDS
+   REGISTERS
    HADAMARD
+   hadamard_gate
+   phase_gate
+   cp_gate
+   u4_gate
+   two_registers
+   hadamards_then_layers
+   check_qubits
+   phase_list
    controlled_phase_diag
    u4_from_phase
+   controlled
+   identity_tensor
    extract_phase_from_cp
+   extract_phases
    is_compact_cp
    select_last_n_cp_indices

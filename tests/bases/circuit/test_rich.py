@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import pdft
+from pdft.circuit import apply_circuit
 from pdft.manifolds import Unitary2qManifold, UnitaryManifold, group_by_manifold
 
 
@@ -127,9 +128,7 @@ def test_rich_basis_grad_finite():
     pic = jnp.asarray(_rand_pic(2, 2, seed=44))
 
     def loss_fn(tensors):
-        from pdft.loss import _apply_circuit
-
-        out = _apply_circuit(tensors, b.code, b.m, b.n, pic)
+        out = apply_circuit(tensors, b.code, b.m, b.n, pic)
         return jnp.sum(jnp.abs(out) ** 2)
 
     grads = jax.grad(loss_fn)(list(b.tensors))
@@ -209,3 +208,64 @@ def test_rich_basis_block_wrapped_trains():
         seed=42,
     )
     assert len(res.loss_history) > 0
+
+
+# ---- fit_to_dct --------------------------------------------------------------
+
+
+def test_fit_to_dct_moves_the_circuit_towards_the_dct(capsys):
+    from pdft.bases.circuit.rich import _dct_matrix, fit_to_dct
+    from pdft.coherence import dense_operator
+
+    def distance(tensors):
+        basis = pdft.RichBasis(m=1, n=2, tensors=tensors)
+        target = jnp.kron(_dct_matrix(2), _dct_matrix(4))
+        return float(jnp.sum(jnp.abs(dense_operator(basis) - target) ** 2))
+
+    start = pdft.RichBasis(m=1, n=2)
+    fitted = fit_to_dct(lambda: pdft.RichBasis(m=1, n=2), n_steps=60, lr=0.05)
+    assert [t.shape for t in fitted] == [t.shape for t in start.tensors]
+    assert distance(fitted) < 0.5 * distance(start.tensors)
+    # the gates are still unitary: the fit moves along the manifolds
+    for t in fitted:
+        d = round(t.size**0.5)
+        mat = t.reshape(d, d)
+        assert jnp.allclose(mat @ jnp.conj(mat).T, jnp.eye(d), atol=1e-10)
+    # progress is reported at the first step, with the loss before any update
+    out = capsys.readouterr().out
+    assert out.count("fit_to_dct step") == 1
+    assert f"loss={distance(start.tensors):.4e}" in out
+
+
+def test_dct_matrix_is_the_orthonormal_dct_ii():
+    from pdft.bases.circuit.rich import _dct_matrix
+
+    for n in (2, 4, 8):
+        mat = np.asarray(_dct_matrix(n)).real
+        np.testing.assert_allclose(mat @ mat.T, np.eye(n), atol=1e-14)
+        np.testing.assert_allclose(mat[0], np.full(n, n**-0.5), atol=1e-15)
+
+
+@pytest.mark.parametrize("n_steps", [0, -1])
+def test_fit_to_dct_with_no_steps_returns_the_starting_tensors(n_steps, capsys):
+    from pdft.bases.circuit.rich import fit_to_dct
+
+    basis = pdft.RichBasis(m=1, n=1)
+    fitted = fit_to_dct(lambda: basis, n_steps=n_steps)
+    assert fitted is not basis.tensors and len(fitted) == len(basis.tensors)
+    assert all(jnp.array_equal(a, b) for a, b in zip(fitted, basis.tensors))
+    assert capsys.readouterr().out == ""
+
+
+def test_fit_to_dct_steps_at_the_learning_rate_it_is_given(capsys):
+    """On a circuit that is not the DCT already, so the first step is a real one."""
+    from pdft.bases.circuit.rich import fit_to_dct
+
+    start = pdft.RichBasis(m=2, n=1).tensors
+
+    def moved(lr):
+        fitted = fit_to_dct(lambda: pdft.RichBasis(m=2, n=1), n_steps=1, lr=lr)
+        return sum(float(jnp.sum(jnp.abs(a - b))) for a, b in zip(fitted, start))
+
+    slow, fast = moved(0.01), moved(0.05)
+    assert slow > 0.1 and fast == pytest.approx(5 * slow, rel=0.05)

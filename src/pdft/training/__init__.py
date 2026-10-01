@@ -2,9 +2,10 @@
 
 Two trainers:
 
-- `train_basis` — single-target loop (Phase 1, upstream parity).
-- `train_basis_batched` — multi-image / multi-epoch with cosine LR schedule,
-  validation + early stopping, JIT'd Adam fast path.
+- `train_basis` — `optimize` on one target image, which is what the Julia
+  goldens harness runs (upstream has no one-image trainer of its own).
+- `train_basis_batched` — upstream's `train_basis`: several images, epochs,
+  a cosine LR schedule, validation + early stopping, JIT'd Adam fast path.
 """
 
 from .batched import train_basis_batched

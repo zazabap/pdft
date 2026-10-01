@@ -2,9 +2,9 @@
 
 Mirror of upstream src/entangled_qft.jl. Extends the standard 2D QFT by
 adding `n_entangle = min(m, n)` controlled-phase gates that couple
-corresponding row and column qubits. Phase 3 supports the default
-`:back` entangle_position (entanglement at the end of the circuit);
-`:front` and `:middle` positions are not yet ported.
+corresponding row and column qubits, at the end of the circuit (`"back"`,
+the default) or at its start (`"front"`). Upstream's `:middle` position is not
+ported.
 """
 
 from __future__ import annotations
@@ -17,85 +17,68 @@ from ...circuit.builder import (
     Gate,
     compile_circuit,
     controlled_phase_diag,
+    cp_gate,
+    extract_phases,
+    phase_list,
+    select_last_n_cp_indices,
 )
-from .qft import _qft_gates_1d
+from .qft import qft_gates
 
 Array = jax.Array
 
 
 __all__ = [
     "entangled_qft_code",
+    "entangled_qft_gates",
     "entanglement_gate",
     "extract_entangle_phases",
     "get_entangle_tensor_indices",
 ]
 
 
+# Mirrors of upstream src/entangled_qft.jl:281-323, which take the entangle gates
+# to be the last `n_entangle` compact-CP tensors after the Hadamard-first sort.
+# That holds for the default "back" position only. Whatever the position,
+# `basis.program.tensor_indices(kind="CP", register="both")` is the entangle gates.
 def get_entangle_tensor_indices(tensors: list[Array], n_entangle: int) -> list[int]:
-    """Indices of the entanglement-gate tensors in `tensors`.
-
-    Mirror of upstream src/entangled_qft.jl:281-313. Entangle gates are the
-    last `n_entangle` compact-CP tensors after the Hadamard-first sort.
-    """
-    from ...circuit.builder import select_last_n_cp_indices
-
+    """Indices of the last `n_entangle` compact-CP tensors (upstream's rule)."""
     return select_last_n_cp_indices(tensors, n_entangle)
 
 
 def extract_entangle_phases(tensors: list[Array], entangle_indices: list[int]) -> list[float]:
-    """Extract phases φ_k from entanglement-gate tensors.
-
-    Mirror of upstream src/entangled_qft.jl:316-326.
-    """
-    from ...circuit.builder import extract_phase_from_cp
-
-    return [extract_phase_from_cp(tensors[idx]) for idx in entangle_indices]
+    """The phase of each compact CP tensor at `entangle_indices`."""
+    return extract_phases(tensors, entangle_indices)
 
 
-def entanglement_gate(phi: float) -> Array:
-    """2x2 tensor-network form of the 2-qubit entanglement gate.
-
-    Mirror of upstream src/entangled_qft.jl:36-42. This is the compact
-    form Yao emits: `[[1, 0], [0, exp(i*phi)]]` — NOT the full 4x4
-    diagonal gate. The CP gate used in einsum contractions is the
-    2x2 form from `controlled_phase_diag`, which differs: for entangled
-    QFT Yao specifically emits the diagonal 2x2 `diag(1, exp(i*phi))`
-    pattern, not `[[1,1],[1,exp(i*phi)]]`.
-
-    Since `controlled_phase_diag` already matches Yao's output for
-    CP gates in the yao2einsum output, we use it here too for the
-    entanglement CPs.
-    """
-    return controlled_phase_diag(phi)
+# The tensor an entanglement gate is stored as: an ordinary controlled phase, in
+# the compact 2x2 form Yao emits. Upstream exports a function of this name
+# (src/entangled_qft.jl:36-42) that returns `[1 0; 0 e^{i phi}]` instead, which is
+# not what its own circuit contracts.
+entanglement_gate = controlled_phase_diag
 
 
 def _entangle_layer(m: int, n: int, n_entangle: int, phases: list[float]) -> list[Gate]:
-    """Build the entanglement-gate layer: `n_entangle` CPs coupling row/col pairs."""
-    gates: list[Gate] = []
-    for k in range(1, n_entangle + 1):
-        x_qubit = m - k + 1
-        y_qubit = m + n - k + 1
-        phi = phases[k - 1]
-        gates.append(
-            Gate(
-                kind="CP",
-                qubits=(x_qubit, y_qubit),
-                tensor=controlled_phase_diag(phi),
-                phase=phi,
-            )
-        )
-    return gates
+    """The entanglement layer: gate `k` couples row qubit `m - k + 1` with column qubit `m + n - k + 1`.
+
+    These are the only gates between the two registers. The 2D QFT they are
+    added to is a QFT on the rows and a QFT on the columns with nothing
+    connecting them.
+    """
+    return [cp_gate(m - k + 1, m + n - k + 1, phases[k - 1]) for k in range(1, n_entangle + 1)]
 
 
-def entangled_qft_code(
+def entangled_qft_gates(
     m: int,
     n: int,
     *,
     entangle_phases: Sequence[float] | None = None,
-    inverse: bool = False,
     entangle_position: str = "back",
-) -> tuple[Callable[..., Array], list[Array], int]:
-    """Return `(einsum_fn, initial_tensors, n_entangle)` for entangled 2D QFT.
+) -> tuple[list[Gate], int]:
+    """Return `(gates, n_entangle)` for entangled 2D QFT.
+
+    The 2D QFT (`qft_gates`: a QFT on the row register and one on the column
+    register) with `min(m, n)` controlled phases added, each between a row
+    qubit and the corresponding column qubit.
 
     Mirror of upstream src/entangled_qft.jl:135-258. Supported positions:
 
@@ -107,8 +90,7 @@ def entangled_qft_code(
     `n_entangle = min(m, n)`. Each entanglement gate k couples row qubit
     (m - k + 1) with col qubit (m + n - k + 1).
     """
-    if m < 1 or n < 1:
-        raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
+    plain = qft_gates(m, n)
     if entangle_position not in ("back", "front"):
         raise ValueError(
             f"entangle_position must be 'back' or 'front', got {entangle_position!r}. "
@@ -116,22 +98,25 @@ def entangled_qft_code(
         )
 
     n_entangle = min(m, n)
-    if entangle_phases is None:
-        phases = [0.0] * n_entangle
-    else:
-        phases = [float(p) for p in entangle_phases]
-    if len(phases) != n_entangle:
-        raise ValueError(
-            f"entangle_phases must have length min(m, n) = {n_entangle}, got {len(phases)}"
-        )
+    phases = phase_list(
+        entangle_phases, n_entangle, f"entangle_phases must have length min(m, n) = {n_entangle}"
+    )
 
-    qft_gates = _qft_gates_1d(m, offset=0) + _qft_gates_1d(n, offset=m)
-    entangle_gates = _entangle_layer(m, n, n_entangle, phases)
+    entangle = _entangle_layer(m, n, n_entangle, phases)
+    return (entangle + plain if entangle_position == "front" else plain + entangle), n_entangle
 
-    if entangle_position == "front":
-        gates = entangle_gates + qft_gates
-    else:  # "back"
-        gates = qft_gates + entangle_gates
 
+def entangled_qft_code(
+    m: int,
+    n: int,
+    *,
+    entangle_phases: Sequence[float] | None = None,
+    inverse: bool = False,
+    entangle_position: str = "back",
+) -> tuple[Callable[..., Array], list[Array], int]:
+    """Return `(code, initial_tensors, n_entangle)`; see `entangled_qft_gates`."""
+    gates, n_entangle = entangled_qft_gates(
+        m, n, entangle_phases=entangle_phases, entangle_position=entangle_position
+    )
     code, tensors = compile_circuit(gates, m, n, inverse=inverse)
     return code, tensors, n_entangle

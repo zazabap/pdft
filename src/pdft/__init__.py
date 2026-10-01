@@ -2,8 +2,7 @@
 
 Importing this package enables JAX's x64 mode globally. This is required
 to match Julia's ComplexF64 numerical behavior; without it, parity
-tolerances are unreachable. See docs/superpowers/specs/2026-04-24-pdft-migration-design.md
-Section 2 and 8.1.
+tolerances are unreachable.
 
 Also enables a persistent JAX compilation cache by default, so the
 ~20-second JIT-compile cost of the Adam step is paid once per basis
@@ -12,7 +11,7 @@ or disable entirely by setting PDFT_DISABLE_COMPILE_CACHE=1.
 
 Public API: import from subpackages directly, e.g.
 
-    from pdft.bases.circuit import QFTBasis
+    from pdft.bases import QFTBasis
     from pdft.training import train_basis, train_basis_batched
     from pdft.optimizers import RiemannianGD, RiemannianAdam
     from pdft.loss import L1Norm, MSELoss

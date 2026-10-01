@@ -43,16 +43,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .loss import AbstractLoss
-from .manifolds import group_by_manifold
-from .training.adam_step import _build_jit_adam_step
+from .loss import AbstractLoss, mean_loss
+from .optimizers import RiemannianAdam
+from .training.adam_step import adam_stepper
 from .training.schedules import cosine_with_warmup as _cosine_with_warmup
 
 
 @dataclass
 class StepRecord:
     step: int
-    phase: str  # "compile" (first step JIT) | "warm" (post-JIT) | "val"
+    phase: str  # "compile" (first step JIT) | "warm" (the first of these compiles again) | "val"
     wall_s: float
     loss: float | None = None
 
@@ -159,7 +159,9 @@ def profile_training(
     HLO trace at `trace_dir` (open with `tensorboard --logdir <dir>`).
 
     The first step's wall-clock is dominated by JIT compile and tagged
-    "compile"; subsequent steps are tagged "warm". Val passes (when
+    "compile"; subsequent steps are tagged "warm". The first "warm" step
+    compiles a second time (its inputs are committed to a device, another jit
+    signature), so leave it out of a timing as well. Val passes (when
     `val_every > 0`) are tagged "val".
     """
     if optimizer.lower() != "adam":
@@ -190,38 +192,19 @@ def profile_training(
         else:
             imgs = imgs[:needed]
 
-        # Build the JIT'd Adam step (same one train_basis_batched uses).
-        step_fn = _build_jit_adam_step(
+        # The JIT'd Adam step train_basis_batched uses, at the optimizer's defaults.
+        defaults = RiemannianAdam()
+        adam_step = adam_stepper(
             basis,
             loss,
-            beta1=0.9,
-            beta2=0.999,
-            eps=1e-8,
+            beta1=defaults.beta1,
+            beta2=defaults.beta2,
+            eps=defaults.eps,
             max_grad_norm=max_grad_norm,
         )
-        # Init Adam moments.
-        groups = group_by_manifold(list(basis.tensors))
-        m_state, v_state = [], []
-        from .manifolds import stack_tensors
-
-        for _, idxs in groups.items():
-            pb = stack_tensors(list(basis.tensors), list(idxs))
-            m_state.append(jnp.zeros_like(pb))
-            v_state.append(jnp.zeros(pb.shape, dtype=jnp.float64))
-
-        # Optional val closure mirrors training.py:402.
-        from .loss import loss_function as _lf
 
         m_qb, n_qb = basis.m, basis.n
-        code, inv_code = basis.code, basis.inv_code
-
-        def _per_image_loss(tensors, img):
-            return _lf(tensors, m_qb, n_qb, code, img, loss, inverse_code=inv_code)
-
-        _batched_val = jax.vmap(_per_image_loss, in_axes=(None, 0))
-        _val_eval = (
-            jax.jit(lambda ts, b: jnp.mean(_batched_val(ts, b))) if val_imgs is not None else None
-        )
+        _val_eval = jax.jit(mean_loss(basis, loss)) if val_imgs is not None else None
 
         report = ProfileReport(
             basis_class=type(basis).__name__,
@@ -252,14 +235,7 @@ def profile_training(
 
                 with jax.profiler.StepTraceAnnotation("train_step", step_num=s):
                     t0 = time.perf_counter()
-                    current, m_state, v_state, loss_val = step_fn(
-                        current,
-                        m_state,
-                        v_state,
-                        batch,
-                        jnp.asarray(lr_t),
-                        jnp.asarray(s + 1, dtype=jnp.int32),
-                    )
+                    current, loss_val = adam_step(current, batch, lr_t, s + 1)
                     jax.block_until_ready(loss_val)
                     dt = time.perf_counter() - t0
 

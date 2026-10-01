@@ -1,9 +1,17 @@
 """JIT'd fused Adam step for the batched training fast path.
 
-This is intentionally a separate implementation from optimizers/adam.py:
-it uses static lists indexed by k (XLA-friendly, no dict lookups inside
-the JIT'd graph) instead of Python dicts keyed by manifold. The two
-implementations must stay in trajectory-parity.
+A separate driver from `optimizers.optimize`, which takes one eager step at a
+time with Python control flow on the gradient norm. This one fuses forward,
+backward, projection, clipping, update and retraction into one compiled XLA
+program with the learning rate and the step number traced.
+
+The two drivers share the arithmetic: the update itself is
+`optimizers.adam._adam_update`, the grouping is `optimizers.core._common_setup`
+and the frozen-gradient stacking is `_stack_grads`. What differs is how the
+arithmetic is run: op by op there, as one fused program here, with the clip
+as a traced `minimum` instead of a Python branch. Their trajectories therefore
+agree to rounding and not to the bit; `tests/training/test_batched.py` pins
+how closely.
 """
 
 from __future__ import annotations
@@ -11,10 +19,66 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from ..loss import AbstractLoss, loss_function
-from ..manifolds import UnitaryManifold, _make_identity_batch, group_by_manifold
+from ..loss import AbstractLoss, mean_loss
+from ..manifolds import stack_tensors
+from ..optimizers.adam import _adam_update, _zero_moments
+from ..optimizers.core import _common_setup, _stack_grads
 
 Array = jax.Array
+
+
+def init_adam_moments(tensors) -> tuple[list[Array], list[Array]]:
+    """Zero moment buffers for `tensors`: one ``(m, v)`` pair per manifold group.
+
+    In the order the step built by `_build_jit_adam_step` for the same tensors
+    takes them, since both group through `_common_setup`.
+    """
+    moments = [_zero_moments(pb) for pb in _common_setup(list(tensors)).point_batches.values()]
+    return [m for m, _ in moments], [v for _, v in moments]
+
+
+def adam_stepper(
+    basis,
+    loss: AbstractLoss,
+    *,
+    beta1: float,
+    beta2: float,
+    eps: float,
+    max_grad_norm: float | None,
+    frozen_set: frozenset[int] | None = None,
+):
+    """``step(tensors, batch, lr, step_number) -> (tensors, loss)``: the fused step with its moments.
+
+    The moment buffers are made once, at zero, and kept between calls, so
+    they accumulate over the whole run as in Julia; a per-batch
+    ``optimize(max_iter=1)`` would zero them on every batch. ``lr`` and
+    ``step_number`` are plain numbers: they reach the compiled step as traced
+    arrays, so a schedule does not recompile it.
+    """
+    step_fn = _build_jit_adam_step(
+        basis,
+        loss,
+        beta1=beta1,
+        beta2=beta2,
+        eps=eps,
+        max_grad_norm=max_grad_norm,
+        frozen_set=frozen_set,
+    )
+    m_state, v_state = init_adam_moments(basis.tensors)
+
+    def step(tensors: list[Array], batch: Array, lr: float, step_number: int):
+        nonlocal m_state, v_state
+        tensors, m_state, v_state, loss_value = step_fn(
+            tensors,
+            m_state,
+            v_state,
+            batch,
+            jnp.asarray(lr),
+            jnp.asarray(step_number, dtype=jnp.int32),
+        )
+        return tensors, loss_value
+
+    return step
 
 
 def _build_jit_adam_step(
@@ -42,74 +106,32 @@ def _build_jit_adam_step(
     Julia's ``ParametricDFT.jl``: moments accumulate across the whole training
     run rather than being re-zeroed every batch.
     """
-    m_qb, n_qb = basis.m, basis.n
-    code = basis.code
-    inv_code = basis.inv_code
+    val_grad_fn = jax.value_and_grad(mean_loss(basis, loss), argnums=0)
 
-    def per_image_loss(tensors, img):
-        return loss_function(tensors, m_qb, n_qb, code, img, loss, inverse_code=inv_code)
-
-    batched_loss = jax.vmap(per_image_loss, in_axes=(None, 0))
-
-    def stacked_loss(tensors, batch):
-        return jnp.mean(batched_loss(tensors, batch))
-
-    val_grad_fn = jax.value_and_grad(stacked_loss, argnums=0)
-
-    # Pre-classify manifolds once — static across the whole training run.
-    template_tensors = list(basis.tensors)
-    groups = group_by_manifold(template_tensors)
-    manifold_list = list(groups.keys())
-    indices_list = [tuple(groups[mfd]) for mfd in manifold_list]
-
-    # Pre-compute identity batches for unitary manifolds (closure constants
-    # — avoids rebuilding them on every step inside `retract`).
-    ibs = []
-    for manifold, idxs in zip(manifold_list, indices_list):
-        if isinstance(manifold, UnitaryManifold):
-            d = template_tensors[idxs[0]].shape[0]
-            ibs.append(_make_identity_batch(template_tensors[idxs[0]].dtype, d, len(idxs)))
-        else:
-            ibs.append(None)
-
-    # Pre-compute per-manifold-group, per-slot frozen masks (static booleans,
-    # closed over in the JIT'd step_fn — no recompiles because they're Python).
-    # slot_frozen_masks[k] is a tuple of bools, one per slot in manifold group k.
-    if frozen_set:
-        slot_frozen_masks = [
-            tuple(idx in frozen_set for idx in idxs)
-            for idxs in indices_list
-        ]
-    else:
-        slot_frozen_masks = [None] * len(indices_list)
+    # Group the tensors by manifold once: static across the whole training
+    # run. The identity batches of the unitary manifolds become closure
+    # constants, so `retract` does not rebuild them on every step.
+    setup = _common_setup(list(basis.tensors))
+    manifold_list = list(setup.manifold_groups)
+    indices_list = [tuple(setup.manifold_groups[mfd]) for mfd in manifold_list]
+    ibs = [setup.ibatch_cache.get(mfd) for mfd in manifold_list]
+    # Static Python, closed over by the jitted step: no recompiles.
+    frozen = frozenset(frozen_set or ())
 
     @jax.jit
     def step_fn(tensors_list, m_list, v_list, batch, lr, iter_1based):
         # Forward + backward; loss comes "for free" alongside grads.
         loss_val, raw_grads = val_grad_fn(tensors_list, batch)
-        # Wirtinger conjugation: JAX returns ∂f/∂z̄, Julia Zygote returns ∂f/∂z.
+        # Wirtinger conjugation: JAX returns the conjugate of what Julia's Zygote does.
         # See CLAUDE.md §1 — must stay or trajectories drift.
         grads = [jnp.conj(g) for g in raw_grads]
 
         # Per-manifold project (fused into the JIT'd graph).
-        pb_list = []
-        rg_list = []
-        for k, (manifold, idxs) in enumerate(zip(manifold_list, indices_list)):
-            pb = jnp.stack([tensors_list[i] for i in idxs], axis=-1)
-            slot_mask = slot_frozen_masks[k]
-            if slot_mask is not None and any(slot_mask):
-                # Zero gradient for frozen slots before projection so Adam's
-                # moment buffers stay zero and the tensors don't move.
-                gb = jnp.stack(
-                    [jnp.zeros_like(grads[i]) if slot_mask[k2] else grads[i]
-                     for k2, i in enumerate(idxs)],
-                    axis=-1,
-                )
-            else:
-                gb = jnp.stack([grads[i] for i in idxs], axis=-1)
-            rg = manifold.project(pb, gb)
-            pb_list.append(pb)
-            rg_list.append(rg)
+        pb_list = [stack_tensors(tensors_list, idxs) for idxs in indices_list]
+        rg_list = [
+            manifold.project(pb, _stack_grads(grads, idxs, frozen))
+            for manifold, idxs, pb in zip(manifold_list, indices_list, pb_list)
+        ]
 
         # Optional global gradient clipping (compile-time branch).
         if max_grad_norm is not None:
@@ -128,29 +150,26 @@ def _build_jit_adam_step(
         new_m_list = []
         new_v_list = []
         for k, (manifold, idxs, ib) in enumerate(zip(manifold_list, indices_list, ibs)):
-            rg = rg_list[k]
-            pb = pb_list[k]
-            m_old = m_list[k]
-            v_old = v_list[k]
-
-            new_m = beta1 * m_old + (1.0 - beta1) * rg
-            new_v = beta2 * v_old + (1.0 - beta2) * jnp.real(jnp.conj(rg) * rg)
-
-            direction = (new_m / bc1) / (jnp.sqrt(new_v / bc2) + eps)
-            new_pb = manifold.retract(pb, -direction, lr, I_batch=ib)
-            new_m = manifold.transport(pb, new_pb, new_m)
-
+            new_pb, new_m, new_v = _adam_update(
+                manifold,
+                pb_list[k],
+                rg_list[k],
+                m_list[k],
+                v_list[k],
+                lr=lr,
+                beta1=beta1,
+                beta2=beta2,
+                eps=eps,
+                bc1=bc1,
+                bc2=bc2,
+                I_batch=ib,
+            )
             new_m_list.append(new_m)
             new_v_list.append(new_v)
-            slot_mask = slot_frozen_masks[k]
+            # The last axis is the stack axis, whatever the tensor's rank. A
+            # frozen tensor is handed back as it came in, bit for bit.
             for k2, idx in enumerate(idxs):
-                # Use ellipsis so this works for any tensor storage shape:
-                # (2, 2, n) for 2x2 unitaries, (2, 2, 2, 2, n) for 2-qubit
-                # (Unitary2qManifold) gates, etc.
-                if slot_mask is not None and slot_mask[k2]:
-                    # Frozen: restore the original tensor, bit-exactly.
-                    new_tensors[idx] = tensors_list[idx]
-                else:
+                if idx not in frozen:
                     new_tensors[idx] = new_pb[..., k2]
 
         return new_tensors, new_m_list, new_v_list, loss_val

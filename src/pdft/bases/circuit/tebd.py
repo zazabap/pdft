@@ -24,11 +24,11 @@ from collections.abc import Callable, Sequence
 import jax
 
 from ...circuit.builder import (
-    HADAMARD,
     Gate,
     compile_circuit,
-    controlled_phase_diag,
-    u4_from_phase,
+    extract_phases,
+    hadamards_then_layers,
+    select_last_n_cp_indices,
 )
 
 Array = jax.Array
@@ -38,32 +38,40 @@ __all__ = [
     "extract_tebd_phases",
     "get_tebd_gate_indices",
     "tebd_code",
+    "tebd_gates",
 ]
 
 
-def get_tebd_gate_indices(tensors: list[Array], n_gates: int) -> list[int]:
-    """Indices of TEBD gate tensors. Mirror of upstream src/tebd.jl:124-140."""
-    from ...circuit.builder import select_last_n_cp_indices
-
-    return select_last_n_cp_indices(tensors, n_gates)
+# Mirrors of upstream src/tebd.jl:124-160.
+get_tebd_gate_indices = select_last_n_cp_indices
+extract_tebd_phases = extract_phases
 
 
-def extract_tebd_phases(tensors: list[Array], gate_indices: list[int]) -> list[float]:
-    """Mirror of upstream src/tebd.jl:154-160."""
-    from ...circuit.builder import extract_phase_from_cp
-
-    return [extract_phase_from_cp(tensors[idx]) for idx in gate_indices]
+def _n_tebd_gates(n_qubits: int) -> int:
+    """Number of gates in the ring of one register: one per qubit, the wrap-around included."""
+    return n_qubits
 
 
-def tebd_code(
+def _ring(
+    n_qubits: int, offset: int, phases: Sequence[float], gate: Callable[[int, int, float], Gate]
+) -> list[Gate]:
+    """The ring of one register: ``(i, i+1)`` for ``i = 1..n-1``, then the wrap-around ``(n, 1)``.
+
+    Both cases are the pair ``(i, i mod n + 1)``, one per phase.
+    """
+    return [
+        gate(offset + i, offset + i % n_qubits + 1, phi) for i, phi in enumerate(phases, start=1)
+    ]
+
+
+def tebd_gates(
     m: int,
     n: int,
     *,
     phases: Sequence[float] | None = None,
-    inverse: bool = False,
     parametrization: str = "cp",
-) -> tuple[Callable[..., Array], list[Array], int, int]:
-    """Return `(einsum_fn, initial_tensors, n_row_gates, n_col_gates)`.
+) -> tuple[list[Gate], int, int]:
+    """Return `(gates, n_row_gates, n_col_gates)`.
 
     Mirror of upstream src/tebd.jl:48-110.
 
@@ -76,70 +84,25 @@ def tebd_code(
     ``parametrization`` is ``"cp"`` (diagonal, ``U(1)^4``) or ``"u4"``
     (dense two-qubit, ``U(4)`` — the canonical TEBD gate). Both start from
     the same operator for a given ``phases``; see the module docstring.
+
+    Step 1, the split of ``phases`` between the two rings and the choice of
+    gate form are ``hadamards_then_layers``, which MERA uses too. What is
+    TEBD's own is the ring of one register, ``_ring``.
     """
-    if m < 1 or n < 1:
-        raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
-    if parametrization not in ("cp", "u4"):
-        raise ValueError(
-            f"parametrization must be 'cp' or 'u4', got {parametrization!r}"
-        )
+    return hadamards_then_layers(_ring, _n_tebd_gates, m, n, phases, parametrization)
 
-    n_row_gates = m
-    n_col_gates = n
-    n_gates = n_row_gates + n_col_gates
 
-    if phases is None:
-        phases_list = [0.0] * n_gates
-    else:
-        phases_list = [float(p) for p in phases]
-    if len(phases_list) != n_gates:
-        raise ValueError(
-            f"phases must have length n_row_gates + n_col_gates = {n_gates}, got {len(phases_list)}"
-        )
-
-    gates: list[Gate] = []
-    total = m + n
-
-    # One ring gate. "cp" keeps the compact diagonal tensor; "u4" emits the
-    # dense two-qubit tensor warm-started at the same operator.
-    def _ring_gate(q_ctrl: int, q_tgt: int, phi: float) -> Gate:
-        if parametrization == "u4":
-            return Gate(
-                kind="U4",
-                qubits=(q_ctrl, q_tgt),
-                tensor=u4_from_phase(phi),
-                phase=phi,
-            )
-        return Gate(
-            kind="CP",
-            qubits=(q_ctrl, q_tgt),
-            tensor=controlled_phase_diag(phi),
-            phase=phi,
-        )
-
-    # Layer 1: Hadamards on all qubits
-    for q in range(1, total + 1):
-        gates.append(Gate(kind="H", qubits=(q,), tensor=HADAMARD, phase=0.0))
-
-    gate_idx = 0
-
-    # Layer 2a: Row ring — (i, i+1) for i=1..m-1
-    for i in range(1, m):
-        gates.append(_ring_gate(i, i + 1, phases_list[gate_idx]))
-        gate_idx += 1
-    # Wrap-around: (m, 1)
-    gates.append(_ring_gate(m, 1, phases_list[gate_idx]))
-    gate_idx += 1
-
-    # Layer 2b: Col ring — (m+i, m+i+1) for i=1..n-1
-    for i in range(1, n):
-        gates.append(_ring_gate(m + i, m + i + 1, phases_list[gate_idx]))
-        gate_idx += 1
-    # Wrap-around: (m+n, m+1)
-    gates.append(_ring_gate(m + n, m + 1, phases_list[gate_idx]))
-    gate_idx += 1
-
-    assert gate_idx == n_gates
-
+def tebd_code(
+    m: int,
+    n: int,
+    *,
+    phases: Sequence[float] | None = None,
+    inverse: bool = False,
+    parametrization: str = "cp",
+) -> tuple[Callable[..., Array], list[Array], int, int]:
+    """Return `(code, initial_tensors, n_row_gates, n_col_gates)`; see `tebd_gates`."""
+    gates, n_row_gates, n_col_gates = tebd_gates(
+        m, n, phases=phases, parametrization=parametrization
+    )
     code, tensors = compile_circuit(gates, m, n, inverse=inverse)
     return code, tensors, n_row_gates, n_col_gates

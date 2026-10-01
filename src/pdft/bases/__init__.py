@@ -1,28 +1,21 @@
 """Sparse-basis subpackage.
 
-Two families:
+Every name is importable from here. Where things live:
 
-- ``bases.circuit`` — full circuit topologies (QFT, EntangledQFT, TEBD, MERA),
-  comparable to FFT/DCT.
-- ``bases.block`` — BlockedBasis over arbitrary block partitions (Rich/RealRich
-  are re-exported here for back-compat; they live in circuit).
-
-The abstract base class and bases_allclose helper live in bases.base.
+- ``bases.core`` — what every basis shares: CircuitBasis, the transforms,
+  bases_allclose, with_tensors and the parameter views.
+- ``bases.base`` — the QFT, EntangledQFT, TEBD, MERA and DCT4 classes.
+- ``bases.circuit`` — one module per circuit family with its gate emitter
+  (``<family>_gates``); the Rich and RealRich classes; freeze_as_blocked.
+- ``bases.block`` — BlockedBasis, an inner basis tiled over image blocks.
 """
 
-from .base import (
-    AbstractSparseBasis,
-    DCT4Basis,
-    EntangledQFTBasis,
-    MERABasis,
-    QFTBasis,
-    TEBDBasis,
-    bases_allclose,
-)
+from .base import DCT4Basis, EntangledQFTBasis, MERABasis, QFTBasis, TEBDBasis
 from .block import BlockedBasis
 from .circuit import (
     RealRichBasis,
     RichBasis,
+    dct4_code,
     entangled_qft_code,
     fit_to_dct,
     freeze_as_blocked,
@@ -32,10 +25,20 @@ from .circuit import (
     qft_code,
     tebd_code,
 )
+from .core import (
+    AbstractSparseBasis,
+    CircuitBasis,
+    bases_allclose,
+    cp_phases,
+    program_of,
+    with_cp_phases,
+    with_tensors,
+)
 
 __all__ = [
     "AbstractSparseBasis",
     "BlockedBasis",
+    "CircuitBasis",
     "DCT4Basis",
     "EntangledQFTBasis",
     "MERABasis",
@@ -44,12 +47,17 @@ __all__ = [
     "RichBasis",
     "TEBDBasis",
     "bases_allclose",
+    "cp_phases",
+    "dct4_code",
     "entangled_qft_code",
     "fit_to_dct",
     "freeze_as_blocked",
     "ft_mat",
     "ift_mat",
     "mera_code",
+    "program_of",
     "qft_code",
     "tebd_code",
+    "with_cp_phases",
+    "with_tensors",
 ]

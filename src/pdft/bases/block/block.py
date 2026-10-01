@@ -18,13 +18,13 @@ inner basis.
 Implementation strategy: BlockedBasis exposes ``m, n, tensors, code, inv_code``
 just like any other basis, so the existing training pipeline
 (``train_basis_batched``, ``loss_function``, ``_build_jit_adam_step``) works
-unchanged. The trick is in ``code``/``inv_code``: they are closures that
-permute axes, vmap the inner code over the block-index dims, and permute back.
+unchanged. The trick is in ``code``/``inv_code``: a ``BlockCode`` permutes the
+axes, vmaps the inner code over the block-index dims, and permutes back.
 
 Yao little-endian convention preserved: block-index qubits are the
 HIGHER-numbered qubits per dimension (qubits m_inner+1..m_outer for rows),
 which correspond to LOW-INDEXED axes [0..block_log_m) in the (2,)^(m+n)
-tensor layout. See CLAUDE.md §2.
+tensor layout, the same convention as `pdft.circuit.builder._axis_of_qubit`.
 """
 
 from __future__ import annotations
@@ -35,70 +35,61 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import tree_util
+
+from ...circuit.builder import contract_circuit
+from ..core import BasisTransforms
 
 Array = jax.Array
 
 
-# ---------------------------------------------------------------------------
-# Block-aware einsum closure
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class BlockCode:
+    """``code(*tensors, image)`` of a blocked basis: the inner code on every block.
 
+    The image has the outer ``(2,) * (m_outer + n_outer)`` layout (Yao
+    little-endian, see ``pdft.circuit.builder._axis_of_qubit``):
 
-def _make_block_code(
-    inner_code: Callable[..., Array],
-    *,
-    m_inner: int,
-    n_inner: int,
-    block_log_m: int,
-    block_log_n: int,
-) -> Callable[..., Array]:
-    """Return a callable with the same signature as ``inner_code`` that operates
-    on a (2,)^(m_outer+n_outer) image by vmap-ing ``inner_code`` over the
-    block-index axes.
+        [0..block_log_m)               block-index ROW qubits (msbs)
+        [block_log_m..m_outer)         within-block ROW qubits (lsbs)
+        [m_outer..m_outer+block_log_n) block-index COL qubits (msbs)
+        [m_outer+block_log_n..)        within-block COL qubits (lsbs)
 
-    Outer axis layout (Yao little-endian, see _circuit.build_circuit_einsum):
-        [0..block_log_m)              -- block-index ROW qubits (msbs)
-        [block_log_m..m_outer)        -- within-block ROW qubits (lsbs, m_inner of them)
-        [m_outer..m_outer+block_log_n) -- block-index COL qubits (msbs)
-        [m_outer+block_log_n..)        -- within-block COL qubits (lsbs, n_inner of them)
+    The block-index axes are moved to the front and the inner code is vmapped
+    over them, which works for any inner code, another ``BlockCode`` included.
+    A frozen dataclass rather than a closure, so that it compares by value like
+    the inner ``CircuitCode`` and two equal blocked bases have equal pytree
+    structures.
     """
-    m_outer = m_inner + block_log_m
-    n_outer = n_inner + block_log_n
-    n_blocks = 2 ** (block_log_m + block_log_n)
-    inner_shape = (2,) * (m_inner + n_inner)
-    outer_shape = (2,) * (m_outer + n_outer)
 
-    # Permutation: block-index axes (rows then cols) to the front, within-block
-    # axes (rows then cols) trailing. The trailing layout matches the inner
-    # einsum's expected (2,)^(m_inner+n_inner) shape.
-    perm = (
-        list(range(block_log_m))  # block row axes
-        + list(range(m_outer, m_outer + block_log_n))  # block col axes
-        + list(range(block_log_m, m_outer))  # within row axes
-        + list(range(m_outer + block_log_n, m_outer + n_outer))  # within col axes
-    )
-    inv_perm = [0] * len(perm)
-    for i, p in enumerate(perm):
-        inv_perm[p] = i
+    inner: Callable[..., Array]
+    m_inner: int
+    n_inner: int
+    block_log_m: int
+    block_log_n: int
 
-    leading_block_shape = (2,) * (block_log_m + block_log_n)
-
-    def block_code(*args: Any) -> Array:
-        *tensors, image = args
+    def __call__(self, *operands: Any) -> Array:
+        *tensors, image = operands
+        m_outer = self.m_inner + self.block_log_m
+        n_outer = self.n_inner + self.block_log_n
+        inner_shape = (2,) * (self.m_inner + self.n_inner)
+        outer_shape = (2,) * (m_outer + n_outer)
         if image.shape != outer_shape:
             raise ValueError(f"BlockedBasis expected image shape {outer_shape}, got {image.shape}")
-        x = jnp.transpose(image, perm)
-        x_flat = x.reshape((n_blocks,) + inner_shape)
-
-        def apply_one(img_one: Array) -> Array:
-            return inner_code(*tensors, img_one)
-
-        out_flat = jax.vmap(apply_one)(x_flat)
-        out = out_flat.reshape(leading_block_shape + inner_shape)
-        return jnp.transpose(out, inv_perm)
-
-    return block_code
+        # Block-index axes (rows then cols) to the front, within-block axes
+        # (rows then cols) trailing, which is the layout the inner code expects.
+        perm = (
+            list(range(self.block_log_m))
+            + list(range(m_outer, m_outer + self.block_log_n))
+            + list(range(self.block_log_m, m_outer))
+            + list(range(m_outer + self.block_log_n, m_outer + n_outer))
+        )
+        blocks = jnp.transpose(image, perm).reshape((-1,) + inner_shape)
+        out = jax.vmap(lambda block: self.inner(*tensors, block))(blocks)
+        block_axes = (2,) * (self.block_log_m + self.block_log_n)
+        back = [int(axis) for axis in np.argsort(perm)]
+        return jnp.transpose(out.reshape(block_axes + inner_shape), back)
 
 
 # ---------------------------------------------------------------------------
@@ -107,12 +98,12 @@ def _make_block_code(
 
 
 @dataclass
-class BlockedBasis:
+class BlockedBasis(BasisTransforms):
     """Wraps an inner parametric basis as a within-block transform.
 
     Parameters
     ----------
-    inner : any pdft basis (QFTBasis, EntangledQFTBasis, TEBDBasis, MERABasis)
+    inner : any pdft basis, another BlockedBasis included
         Within-block parametric circuit at smaller m_inner = inner.m,
         n_inner = inner.n.
     block_log_m, block_log_n : int
@@ -126,6 +117,8 @@ class BlockedBasis:
     a pure structural wrapper. Block parameters are SHARED across blocks
     (one inner basis tiled).
     """
+
+    _apply = staticmethod(contract_circuit)
 
     inner: Any
     block_log_m: int
@@ -150,31 +143,16 @@ class BlockedBasis:
                 f"block_log_m and block_log_n must be >= 0; got "
                 f"block_log_m={block_log_m}, block_log_n={block_log_n}"
             )
+        # A count that cannot size a shape is refused here, not at the first transform.
+        (2,) * (block_log_m + block_log_n)
         self.inner = inner
         self.block_log_m = block_log_m
         self.block_log_n = block_log_n
-        if code is None or inv_code is None:
-            built_code = _make_block_code(
-                inner.code,
-                m_inner=inner.m,
-                n_inner=inner.n,
-                block_log_m=block_log_m,
-                block_log_n=block_log_n,
-            )
-            built_inv = _make_block_code(
-                inner.inv_code,
-                m_inner=inner.m,
-                n_inner=inner.n,
-                block_log_m=block_log_m,
-                block_log_n=block_log_n,
-            )
-            self.code = code if code is not None else built_code
-            self.inv_code = inv_code if inv_code is not None else built_inv
-        else:
-            self.code = code
-            self.inv_code = inv_code
+        shape = (inner.m, inner.n, block_log_m, block_log_n)
+        self.code = code if code is not None else BlockCode(inner.code, *shape)
+        self.inv_code = inv_code if inv_code is not None else BlockCode(inner.inv_code, *shape)
 
-    # ---- AbstractSparseBasis interface (matches QFTBasis) ----
+    # m, n and tensors come from the inner basis; BasisTransforms derives the rest.
 
     @property
     def m(self) -> int:
@@ -190,40 +168,12 @@ class BlockedBasis:
         return self.inner.tensors
 
     @property
-    def inv_tensors(self) -> list[Array]:
-        return self.inner.tensors
-
-    @property
-    def image_size(self) -> tuple[int, int]:
-        return (2**self.m, 2**self.n)
-
-    @property
-    def num_parameters(self) -> int:
-        return self.inner.num_parameters
-
-    @property
     def num_blocks(self) -> int:
         return 2 ** (self.block_log_m + self.block_log_n)
 
     @property
     def block_shape(self) -> tuple[int, int]:
         return (2**self.inner.m, 2**self.inner.n)
-
-    def forward_transform(self, pic: Array) -> Array:
-        from ...loss import _apply_circuit
-
-        return _apply_circuit(self.tensors, self.code, self.m, self.n, pic)
-
-    def inverse_transform(self, pic: Array) -> Array:
-        from ...loss import _apply_circuit
-
-        return _apply_circuit(
-            [jnp.conj(t) for t in self.tensors],
-            self.inv_code,
-            self.m,
-            self.n,
-            pic,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +185,8 @@ def _blockedbasis_flatten(b: BlockedBasis):
     """Flatten by recursing into inner via JAX's pytree machinery.
 
     This delegates inner reconstruction to JAX's tree_unflatten, which
-    works for ANY pytree-registered inner — including nested wrappers
-    like StackedBasis whose constructor doesn't take (m, n, tensors, ...).
+    works for ANY pytree-registered inner — including a nested
+    BlockedBasis, whose constructor doesn't take (m, n, tensors, ...).
     """
     inner_leaves, inner_treedef = jax.tree_util.tree_flatten(b.inner)
     aux = (inner_treedef, b.block_log_m, b.block_log_n, b.code, b.inv_code)

@@ -32,11 +32,14 @@ bit reversal, realised as the bit-reversed output convention (matching
 :func:`qft_code`), so no explicit P gate is emitted.
 
 At init the forward operator equals the bit-reversed orthonormal DCT-IV per
-dimension. Every gate is a learnable leaf on its auto-selected Riemannian
-manifold — R_y and branch-H on O(2), CR_y and mirror-Q on O(4), the Delta
-sign on the phase manifold. Like QFT/RealRich, real init plus a real objective
-keep the operator real-orthogonal as it relaxes from the exact transform (cf.
-``all_real_dct_zero_ancilla.tex``).
+dimension. Every gate is a learnable leaf on the manifold the optimiser picks
+from its values: R_y and branch-H on U(2), CR_y and mirror-Q on U(4), the
+Delta sign on the phase manifold. The gate tensors are real to rounding: the
+Delta sign is stored as ``exp(i*pi)``, whose imaginary part is ``1.2e-16``, and
+everything else is exactly real. Training does not keep the operator
+real-orthogonal: the optimisers amplify that imaginary part (see
+``DCT4Basis``), so the circuit relaxes from the exact transform within the
+unitaries (cf. ``all_real_dct_zero_ancilla.tex`` for the real construction).
 
 2D DCT-IV = (m-qubit DCT-IV on row qubits) tensor (n-qubit DCT-IV on col
 qubits); no entanglement between blocks.
@@ -51,21 +54,24 @@ import jax.numpy as jnp
 import numpy as np
 
 from ...circuit.builder import (
-    HADAMARD,
     Gate,
     apply_circuit,
+    check_qubits,
     compile_circuit,
-    controlled_phase_diag,
+    controlled,
+    cp_gate,
+    hadamard_gate,
+    two_registers,
 )
 
 Array = jax.Array
 
 
 __all__ = [
-    "_cry",
     "_dct4_gates_1d",
     "dct4_code",
     "dct4_ft_mat",
+    "dct4_gates",
     "dct4_ift_mat",
 ]
 
@@ -76,36 +82,25 @@ def _ry(theta: float) -> Array:
     return jnp.asarray(np.array([[c, -s], [s, c]]), dtype=jnp.complex128)
 
 
+_BIT_FLIP = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
+
+
 def _cnot_u4() -> Array:
     """CNOT as a (2, 2, 2, 2) tensor `T[out_ctrl, out_tgt, in_ctrl, in_tgt]`."""
-    M = np.zeros((2, 2, 2, 2))
-    for ic in (0, 1):
-        for it in (0, 1):
-            M[ic, it ^ ic, ic, it] = 1.0
-    return jnp.asarray(M, dtype=jnp.complex128)
+    return controlled(_BIT_FLIP)
 
 
 def _cry_u4(theta: float) -> Array:
     """Controlled-R_y(theta) as a (2, 2, 2, 2) tensor (control fires on 1)."""
-    c, s = np.cos(theta / 2.0), np.sin(theta / 2.0)
-    R = np.array([[c, -s], [s, c]])
-    M = np.zeros((2, 2, 2, 2))
-    for it in (0, 1):
-        M[0, it, 0, it] = 1.0  # control = 0 -> identity on target
-    for ot in (0, 1):
-        for it in (0, 1):
-            M[1, ot, 1, it] = R[ot, it]  # control = 1 -> R_y on target
-    return jnp.asarray(M, dtype=jnp.complex128)
+    return controlled(_ry(theta))
 
 
-def _cry(theta: float) -> Array:
-    """Controlled-R_y trainable leaf: just the (2, 2) R_y block.
-
-    Applied with control structure by the builder's ``CRY`` kind (identity on
-    control = 0, this block on control = 1), so the leaf trains on O(2) — the
-    structured, dense-O(4)-free parametrization of the twiddle.
-    """
-    return _ry(theta)
+# The two forms of the affine twiddle, as ``(kind, tensor(theta))``. "o4" is
+# the dense controlled rotation, trained as a whole two-qubit gate.
+# "controlled" keeps only the (2, 2) rotation block as the trainable leaf: the
+# builder's ``CRY`` kind applies it where the control is 1, so the structure
+# is fixed and the leaf has one angle.
+_TWIDDLES = {"o4": ("U4", _cry_u4), "controlled": ("CRY", _ry)}
 
 
 def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> list[Gate]:
@@ -119,6 +114,7 @@ def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> l
     def Q(q: int) -> int:
         return offset + n_qubits - q
 
+    kind, twiddle = _TWIDDLES[parametrization]
     gates: list[Gate] = []
 
     def level(k: int) -> None:
@@ -132,15 +128,18 @@ def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> l
         for q in lower:
             gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0))
         # T: affine R_y phase-gradient (one base R_y on b, one CR_y per lower bit)
-        gates.append(Gate(kind="H", qubits=(Q(b),), tensor=_ry(np.pi / (2 * size)), phase=0.0))
+        base = np.pi / (2 * size)
+        gates.append(Gate(kind="H", qubits=(Q(b),), tensor=_ry(base), phase=float(base)))
         for p in range(n_qubits - 1 - k):
             theta = np.pi * (2**p) / size
-            if parametrization == "controlled":
-                gates.append(Gate(kind="CRY", qubits=(Q(n_qubits - 1 - p), Q(b)),
-                                  tensor=_cry(theta), phase=0.0))
-            else:
-                gates.append(Gate(kind="U4", qubits=(Q(n_qubits - 1 - p), Q(b)),
-                                  tensor=_cry_u4(theta), phase=0.0))
+            gates.append(
+                Gate(
+                    kind=kind,
+                    qubits=(Q(n_qubits - 1 - p), Q(b)),
+                    tensor=twiddle(theta),
+                    phase=float(theta),
+                )
+            )
         # R: odd-branch reversal — the mirror-Q permutation repeated
         for q in lower:
             gates.append(Gate(kind="U4", qubits=(Q(b), Q(q)), tensor=_cnot_u4(), phase=0.0))
@@ -148,42 +147,36 @@ def _dct4_gates_1d(n_qubits: int, offset: int, parametrization: str = "o4") -> l
         level(k + 1)
         # D: Delta sign  +  H: branch Hadamard merge
         if lower:
-            gates.append(
-                Gate(kind="CP", qubits=(Q(b), Q(k + 1)), tensor=controlled_phase_diag(float(np.pi)), phase=float(np.pi))
-            )
-        gates.append(Gate(kind="H", qubits=(Q(b),), tensor=HADAMARD, phase=0.0))
+            gates.append(cp_gate(Q(b), Q(k + 1), float(np.pi)))
+        gates.append(hadamard_gate(Q(b)))
 
     level(0)
     return gates
 
 
-def dct4_code(
-    m: int, n: int, *, inverse: bool = False, parametrization: str = "o4"
-) -> tuple[Callable[..., Array], list[Array]]:
-    """Return `(einsum_fn, initial_tensors)` for 2D DCT-IV on (2^m, 2^n) images.
+def dct4_gates(m: int, n: int, *, parametrization: str = "o4") -> list[Gate]:
+    """The gate sequence of the 2D DCT-IV on (2^m, 2^n) images.
 
     ``parametrization`` selects how the affine twiddle is stored: ``"o4"``
     (default) emits a dense ``(2, 2, 2, 2)`` controlled-R_y trained on O(4);
     ``"controlled"`` emits a single-angle ``CRY`` gate whose trainable leaf is
     a ``(2, 2)`` block on O(2) (the mirror-Q CNOTs stay dense U4).
     """
-    if m < 1 or n < 1:
-        raise ValueError(f"m and n must be >= 1, got m={m}, n={n}")
-    if parametrization not in ("o4", "controlled"):
-        raise ValueError(
-            f"parametrization must be 'o4' or 'controlled', got {parametrization!r}"
-        )
-    gates = _dct4_gates_1d(m, offset=0, parametrization=parametrization) + _dct4_gates_1d(
-        n, offset=m, parametrization=parametrization
+    check_qubits(m, n)
+    if parametrization not in _TWIDDLES:
+        raise ValueError(f"parametrization must be 'o4' or 'controlled', got {parametrization!r}")
+    return two_registers(
+        lambda n_qubits, offset: _dct4_gates_1d(n_qubits, offset, parametrization), m, n
     )
+
+
+def dct4_code(
+    m: int, n: int, *, inverse: bool = False, parametrization: str = "o4"
+) -> tuple[Callable[..., Array], list[Array]]:
+    """Return `(code, initial_tensors)` for 2D DCT-IV; see `dct4_gates`."""
+    gates = dct4_gates(m, n, parametrization=parametrization)
     return compile_circuit(gates, m, n, inverse=inverse)
 
 
-def dct4_ft_mat(tensors: list[Array], code: Callable, m: int, n: int, pic: Array) -> Array:
-    """Apply 2D DCT-IV circuit to a (2^m, 2^n) image."""
-    return apply_circuit(tensors, code, m, n, pic)
-
-
-def dct4_ift_mat(tensors: list[Array], code: Callable, m: int, n: int, pic: Array) -> Array:
-    """Apply 2D inverse DCT-IV circuit. Caller must have conjugated the tensors."""
-    return apply_circuit(tensors, code, m, n, pic)
+# The DCT-IV spellings of ``ft_mat`` / ``ift_mat``; see ``pdft.bases.circuit.qft``.
+dct4_ft_mat = dct4_ift_mat = apply_circuit

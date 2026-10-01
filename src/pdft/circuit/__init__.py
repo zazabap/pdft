@@ -1,36 +1,72 @@
-"""Circuit machinery: einsum builder + JIT closure cache.
+"""Circuit machinery shared by every basis: gates, programs and the applier.
 
-Shared by every basis. The builder converts a Yao-style gate list into a
-JAX einsum (Hadamard-first sort + Yao little-endian ordering preserved).
-The cache memoizes `jnp.einsum_path` results and the JIT'd closures.
+A family emits a Yao-style gate list; `compile_program` turns it into a
+`Program` and the tensors in stored order (Hadamard-first, Yao little-endian
+qubits); `CircuitCode` applies the program one gate at a time.
 """
 
 from .builder import (
+    GATE_KINDS,
     HADAMARD,
+    REGISTERS,
+    CircuitCode,
     Gate,
+    Program,
     apply_circuit,
-    build_circuit_einsum,
+    apply_program,
+    bit_reverse,
+    check_image_shape,
+    check_qubits,
     compile_circuit,
+    compile_program,
+    contract_circuit,
+    controlled,
     controlled_phase_diag,
+    cp_gate,
     extract_phase_from_cp,
+    extract_phases,
+    hadamard_gate,
+    hadamards_then_layers,
+    identity_tensor,
     is_compact_cp,
+    phase_gate,
+    phase_list,
+    register_width,
     select_last_n_cp_indices,
-    sorted_gate_program,
+    two_registers,
     u4_from_phase,
+    u4_gate,
 )
-from .cache import optimize_code_cached
 
 __all__ = [
+    "GATE_KINDS",
     "HADAMARD",
+    "REGISTERS",
+    "CircuitCode",
     "Gate",
+    "Program",
     "apply_circuit",
-    "build_circuit_einsum",
+    "apply_program",
+    "bit_reverse",
+    "check_image_shape",
+    "check_qubits",
     "compile_circuit",
+    "compile_program",
+    "contract_circuit",
+    "controlled",
     "controlled_phase_diag",
+    "cp_gate",
     "extract_phase_from_cp",
+    "extract_phases",
+    "hadamard_gate",
+    "hadamards_then_layers",
+    "identity_tensor",
     "is_compact_cp",
-    "optimize_code_cached",
+    "phase_gate",
+    "phase_list",
+    "register_width",
     "select_last_n_cp_indices",
-    "sorted_gate_program",
+    "two_registers",
     "u4_from_phase",
+    "u4_gate",
 ]

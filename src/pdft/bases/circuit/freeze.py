@@ -6,7 +6,6 @@ identity and returns the frozen tensor indices, so that
     train_basis_batched(frozen_basis, frozen_indices=frozen, ...)
 
 reproduces BlockedBasis(inner, block_log_m, block_log_n) training dynamics.
-See docs/superpowers/specs/2026-05-24-circuit-rich-frozen-blocked-design.md.
 
 Gradient-norm clipping note: frozen slots have their Euclidean gradient zeroed
 before manifold projection, so their Riemannian gradient is zero and they
@@ -22,22 +21,12 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from ...circuit.builder import controlled_phase_diag, sorted_gate_program
+from ...circuit.builder import identity_tensor
+from ..core import with_tensors
 
 Array = jax.Array
 
 __all__ = ["freeze_as_blocked"]
-
-
-def _identity_for_kind(kind: str) -> Array:
-    """Identity-acting tensor for a gate kind, as complex128."""
-    if kind == "H":
-        return jnp.eye(2, dtype=jnp.complex128)
-    if kind == "U4":
-        return jnp.eye(4, dtype=jnp.complex128).reshape(2, 2, 2, 2)
-    if kind == "CP":
-        return controlled_phase_diag(0.0)  # diag(1,1,1,1) in compact 2x2 form
-    raise AssertionError(f"unknown gate kind: {kind}")
 
 
 def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[Any, list[int]]:
@@ -49,34 +38,19 @@ def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[A
     The outer (block-index) gates are reset to identity; inner gates keep the
     input basis's tensor values.
 
-    Supports ``QFTBasis``, ``RichBasis``, ``RealRichBasis``.
+    Supports ``QFTBasis``, ``RichBasis``, ``RealRichBasis``: the bases that
+    declare ``freezes_to_blocked``, where the gates on the kept qubits of a
+    register are the whole circuit of a smaller register. The gates and the
+    qubits they touch are read from the basis's own program.
 
     ``block_log_m == block_log_n == 0`` is a valid no-op: no qubits are
     block-index qubits, so nothing is frozen and ``frozen_indices`` is empty
     (the returned basis is a tensor-copy of the input).
     """
-    # Lazy imports avoid a real bases.base <-> bases.circuit import cycle.
-    # base.py runs `from .circuit.qft import qft_code` at module load; importing
-    # that submodule first executes bases/circuit/__init__.py, which imports
-    # THIS module. A module-top `from ..base import QFTBasis` would then touch
-    # base.py while it is still partially initialised (before QFTBasis exists)
-    # and raise ImportError. Verified: hoisting these to the top breaks
-    # `import pdft`. Keep them inside the function.
-    from ..base import QFTBasis
-    from .qft import _qft_gates_1d
-    from .real_rich import RealRichBasis, _real_rich_qft_gates_1d
-    from .rich import RichBasis, _rich_qft_gates_1d
-
-    gate_builders = {
-        QFTBasis: _qft_gates_1d,
-        RichBasis: _rich_qft_gates_1d,
-        RealRichBasis: _real_rich_qft_gates_1d,
-    }
     btype = type(basis)
-    if btype not in gate_builders:
+    if not getattr(btype, "freezes_to_blocked", False):
         raise TypeError(
-            "freeze_as_blocked supports QFTBasis, RichBasis, RealRichBasis; "
-            f"got {btype.__name__}"
+            f"freeze_as_blocked supports QFTBasis, RichBasis, RealRichBasis; got {btype.__name__}"
         )
     if block_log_m < 0 or block_log_n < 0:
         raise ValueError(
@@ -97,20 +71,17 @@ def freeze_as_blocked(basis: Any, block_log_m: int, block_log_n: int) -> tuple[A
         range(m + n - block_log_n + 1, m + n + 1)
     )
 
-    builder = gate_builders[btype]
-    gates = builder(m, offset=0) + builder(n, offset=m)
-    program = sorted_gate_program(gates)
-    if len(program) != len(basis.tensors):
+    stored = basis.program.sorted_steps
+    if len(stored) != len(basis.tensors):
         raise AssertionError(
-            f"gate program length {len(program)} != tensor count {len(basis.tensors)}"
+            f"gate program length {len(stored)} != tensor count {len(basis.tensors)}"
         )
 
     new_tensors = [jnp.array(t, copy=True) for t in basis.tensors]
     frozen_indices: list[int] = []
-    for i, (kind, qubits) in enumerate(program):
+    for i, (kind, qubits) in enumerate(stored):
         if set(qubits) & block_qubits:
-            new_tensors[i] = _identity_for_kind(kind).astype(new_tensors[i].dtype)
+            new_tensors[i] = identity_tensor(kind).astype(new_tensors[i].dtype)
             frozen_indices.append(i)
 
-    new_basis = btype(m=m, n=n, tensors=new_tensors, code=basis.code, inv_code=basis.inv_code)
-    return new_basis, frozen_indices
+    return with_tensors(basis, new_tensors), frozen_indices

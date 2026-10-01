@@ -12,6 +12,7 @@ The eval+early-stopping bookkeeping is shared via training.eval_loop.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import operator
 import time
@@ -20,16 +21,15 @@ from collections.abc import Sequence
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import tree_util
 
-from ..loss import AbstractLoss, loss_function
-from ..manifolds import group_by_manifold, stack_tensors
+from ..bases.core import with_tensors
+from ..loss import AbstractLoss, mean_loss
 from ..optimizers import (
     RiemannianAdam,
     RiemannianGD,
     optimize,
 )
-from .adam_step import _build_jit_adam_step
+from .adam_step import adam_stepper
 from .eval_loop import evaluate_and_check_early_stop
 from .result import TrainingResult
 from .schedules import cosine_with_warmup
@@ -40,9 +40,9 @@ Array = jax.Array
 def _resolve_optimizer(spec, lr: float, max_grad_norm: float | None):
     """Build a fresh optimizer instance with the given lr/max_grad_norm.
 
-    Accepts either a string name (`"gd"`/`"adam"`) or a class
-    (`RiemannianGD`/`RiemannianAdam`); the latter is reconstructed with new
-    `lr` so the cosine schedule can vary the learning rate per step.
+    Accepts either a string name (`"gd"`/`"adam"`) or an instance
+    (`RiemannianGD(...)`/`RiemannianAdam(...)`); the latter is rebuilt with the
+    new `lr` so the cosine schedule can vary the learning rate per step.
     """
     if isinstance(spec, str):
         name = spec.lower()
@@ -51,22 +51,9 @@ def _resolve_optimizer(spec, lr: float, max_grad_norm: float | None):
         if name in ("adam",):
             return RiemannianAdam(lr=lr, max_grad_norm=max_grad_norm)
         raise ValueError(f"unknown optimizer {spec!r}; choices: 'gd', 'adam'")
-    if isinstance(spec, RiemannianGD):
-        return RiemannianGD(
-            lr=lr,
-            armijo_c=spec.armijo_c,
-            armijo_tau=spec.armijo_tau,
-            max_ls_steps=spec.max_ls_steps,
-            max_grad_norm=max_grad_norm if max_grad_norm is not None else spec.max_grad_norm,
-        )
-    if isinstance(spec, RiemannianAdam):
-        return RiemannianAdam(
-            lr=lr,
-            beta1=spec.beta1,
-            beta2=spec.beta2,
-            eps=spec.eps,
-            max_grad_norm=max_grad_norm if max_grad_norm is not None else spec.max_grad_norm,
-        )
+    if isinstance(spec, (RiemannianGD, RiemannianAdam)):
+        clip = max_grad_norm if max_grad_norm is not None else spec.max_grad_norm
+        return dataclasses.replace(spec, lr=lr, max_grad_norm=clip)
     raise ValueError(f"unknown optimizer spec: {spec!r}")
 
 
@@ -126,8 +113,7 @@ def _validate_frozen_indices(frozen_indices: list[int] | None, n_tensors: int) -
             )
         if i in seen:
             raise ValueError(
-                f"frozen_indices contains duplicate index {i}; "
-                "each index must appear at most once."
+                f"frozen_indices contains duplicate index {i}; each index must appear at most once."
             )
         seen.add(i)
     return frozenset(seen)
@@ -155,14 +141,17 @@ def train_basis_batched(
     """Multi-image, multi-epoch trainer with cosine LR schedule.
 
     Mirror of `ParametricDFT.jl/src/training.jl::_train_basis_core` (main).
-    See parameter docs in the original training.py docstring.
+    `optimizer` is `"adam"`, `"gd"`, or an optimizer instance whose settings
+    are kept; the learning rate always comes from the cosine schedule
+    (`lr_peak`, `lr_final`, `warmup_frac`).
 
     Parameters
     ----------
     frozen_indices : list[int] | None, optional
         List of integer indices into ``basis.tensors``.  Tensors at these
         indices are NOT updated during training — they stay at their initial
-        values throughout.  Each step computes gradients on all tensors
+        values throughout (bit for bit under Adam; under GD a frozen phase
+        tensor can move by one rounding, 1e-16).  Each step computes gradients on all tensors
         normally; the update is then suppressed for frozen indices BEFORE any
         optimizer state is mutated (so Adam's moment buffers for frozen indices
         remain zero).  Useful for experiments that train only a subset of a
@@ -201,17 +190,10 @@ def train_basis_batched(
     n_batches = math.ceil(len(train_imgs) / batch_size)
     total_steps = max(1, epochs * n_batches)
 
-    m, n = basis.m, basis.n
-    code = basis.code
-    inv_code = basis.inv_code
-
-    def _per_image_loss(tensors: list[Array], img: Array) -> Array:
-        return loss_function(tensors, m, n, code, img, loss, inverse_code=inv_code)
-
-    _batched_loss = jax.vmap(_per_image_loss, in_axes=(None, 0))
+    _mean_loss = mean_loss(basis, loss)
 
     _val_stacked = jnp.stack(val_imgs, axis=0) if val_imgs else None
-    _val_eval = jax.jit(lambda ts, batch: jnp.mean(_batched_loss(ts, batch))) if val_imgs else None
+    _val_eval = jax.jit(_mean_loss) if val_imgs else None
 
     def _val_loss(tensors: list[Array]) -> float:
         if _val_stacked is None:
@@ -228,171 +210,98 @@ def train_basis_batched(
     global_step = 0
     epochs_completed = 0
 
-    is_adam = (isinstance(optimizer, str) and optimizer.lower() == "adam") or isinstance(
-        optimizer, RiemannianAdam
-    )
-
-    if is_adam:
-        if isinstance(optimizer, RiemannianAdam):
-            beta1, beta2, eps = optimizer.beta1, optimizer.beta2, optimizer.eps
-            mgn_eff = max_grad_norm if max_grad_norm is not None else optimizer.max_grad_norm
-        else:
-            beta1, beta2, eps = 0.9, 0.999, 1e-8
-            mgn_eff = max_grad_norm
-
-        step_fn = _build_jit_adam_step(
+    # The two optimisers share the epoch loop below. Each supplies how an
+    # epoch's images are cut into batches and what one step does. The
+    # learning rate of `spec` is a placeholder: the schedule sets it per step.
+    spec = _resolve_optimizer(optimizer, lr=lr_peak, max_grad_norm=max_grad_norm)
+    if isinstance(spec, RiemannianAdam):
+        adam_step = adam_stepper(
             basis,
             loss,
-            beta1=beta1,
-            beta2=beta2,
-            eps=eps,
-            max_grad_norm=mgn_eff,
-            frozen_set=frozen_set if frozen_set else None,
+            beta1=spec.beta1,
+            beta2=spec.beta2,
+            eps=spec.eps,
+            max_grad_norm=spec.max_grad_norm,
+            frozen_set=frozen_set,
         )
+        pad_count = n_batches * batch_size - len(train_imgs)
 
-        # Initialise Adam moment buffers ONCE — they persist across all steps,
-        # matching Julia's design and fixing the silent correctness bug where
-        # max_iter=1 in the old path was zeroing m/v on every batch.
-        groups_init = group_by_manifold(list(basis.tensors))
-        m_state: list = []
-        v_state: list = []
-        for manifold, idxs in groups_init.items():
-            pb = stack_tensors(list(basis.tensors), list(idxs))
-            m_state.append(jnp.zeros_like(pb))
-            v_state.append(jnp.zeros(pb.shape, dtype=jnp.float64))
+        def _batches(imgs: list[Array]) -> list[list[Array]]:
+            # Pad by rotation so every batch is exactly `batch_size`: the
+            # jitted step then sees one shape and compiles once.
+            padded = imgs + imgs[:pad_count]
+            return [padded[b * batch_size : (b + 1) * batch_size] for b in range(n_batches)]
 
-        # Pad train_imgs by rotation so every batch is exactly `batch_size`.
-        n_train_imgs = len(train_imgs)
-        pad_count = n_batches * batch_size - n_train_imgs
+        def _step(tensors: list[Array], batch_imgs: list[Array], lr_t: float, step: int):
+            return adam_step(tensors, jnp.stack(batch_imgs, axis=0), lr_t, step)
 
-        t0 = time.perf_counter()
-        for epoch in range(epochs):
-            if shuffle and epoch > 0:
-                order = rng.permutation(n_train_imgs)
-                train_imgs = [train_imgs[i] for i in order]
-
-            padded_imgs = train_imgs + train_imgs[:pad_count] if pad_count > 0 else train_imgs
-
-            epoch_loss_arrs: list = []
-            for b in range(n_batches):
-                start = b * batch_size
-                end = start + batch_size
-                batch_imgs = padded_imgs[start:end]
-                stacked = jnp.stack(batch_imgs, axis=0)
-
-                global_step += 1
-                lr_t = cosine_with_warmup(
-                    global_step,
-                    total_steps,
-                    warmup_frac=warmup_frac,
-                    lr_peak=lr_peak,
-                    lr_final=lr_final,
-                )
-
-                current_tensors, m_state, v_state, loss_val = step_fn(
-                    current_tensors,
-                    m_state,
-                    v_state,
-                    stacked,
-                    jnp.asarray(lr_t),
-                    jnp.asarray(global_step, dtype=jnp.int32),
-                )
-                epoch_loss_arrs.append(loss_val)
-
-            loss_history.extend(float(L) for L in epoch_loss_arrs)
-
-            epochs_completed = epoch + 1
-            best_tensors, best_val, patience, stop, val_loss = evaluate_and_check_early_stop(
-                epoch=epoch,
-                epochs=epochs,
-                val_every_k_epochs=val_every_k_epochs,
-                val_imgs=val_imgs,
-                val_loss_fn=_val_loss,
-                current_tensors=current_tensors,
-                best_tensors=best_tensors,
-                best_val=best_val,
-                patience=patience,
-                early_stopping_patience=early_stopping_patience,
-            )
-            val_history.append(val_loss)
-            if stop:
-                break
-
-        elapsed = time.perf_counter() - t0
     else:
-        # GD path (Armijo line search).
-        def _make_batch_loss_fn(batch_imgs: list[Array]):
+        # GD path (Armijo line search). The last batch may be short: nothing
+        # is jitted on the batch shape here.
+        def _batches(imgs: list[Array]) -> list[list[Array]]:
+            return [imgs[start : start + batch_size] for start in range(0, len(imgs), batch_size)]
+
+        def _step(tensors: list[Array], batch_imgs: list[Array], lr_t: float, step: int):
             stacked = jnp.stack(batch_imgs, axis=0)
 
-            def loss_fn(tensors: list[Array]) -> Array:
-                return jnp.mean(_batched_loss(tensors, stacked))
+            def batch_loss_fn(ts: list[Array]) -> Array:
+                return _mean_loss(ts, stacked)
 
-            return loss_fn
-
-        t0 = time.perf_counter()
-        for epoch in range(epochs):
-            if shuffle and epoch > 0:
-                order = rng.permutation(len(train_imgs))
-                train_imgs = [train_imgs[i] for i in order]
-
-            for b in range(n_batches):
-                start = b * batch_size
-                end = min(start + batch_size, len(train_imgs))
-                if start >= end:
-                    continue
-                batch_imgs = train_imgs[start:end]
-
-                batch_loss_fn = _make_batch_loss_fn(batch_imgs)
-                batch_grad_fn = jax.grad(batch_loss_fn, argnums=0)
-
-                lr_t = cosine_with_warmup(
-                    global_step + 1,
-                    total_steps,
-                    warmup_frac=warmup_frac,
-                    lr_peak=lr_peak,
-                    lr_final=lr_final,
-                )
-                opt_t = _resolve_optimizer(optimizer, lr=lr_t, max_grad_norm=max_grad_norm)
-
-                current_tensors, step_trace = optimize(
-                    opt_t,
-                    current_tensors,
-                    batch_loss_fn,
-                    batch_grad_fn,
-                    max_iter=1,
-                    tol=0.0,
-                    record_loss=True,
-                    frozen_indices=frozen_set if frozen_set else None,
-                )
-                loss_history.append(step_trace[-1] if len(step_trace) >= 2 else step_trace[0])
-                global_step += 1
-
-            epochs_completed = epoch + 1
-            best_tensors, best_val, patience, stop, val_loss = evaluate_and_check_early_stop(
-                epoch=epoch,
-                epochs=epochs,
-                val_every_k_epochs=val_every_k_epochs,
-                val_imgs=val_imgs,
-                val_loss_fn=_val_loss,
-                current_tensors=current_tensors,
-                best_tensors=best_tensors,
-                best_val=best_val,
-                patience=patience,
-                early_stopping_patience=early_stopping_patience,
+            tensors, step_trace = optimize(
+                dataclasses.replace(spec, lr=lr_t),
+                tensors,
+                batch_loss_fn,
+                jax.grad(batch_loss_fn, argnums=0),
+                max_iter=1,
+                tol=0.0,
+                record_loss=True,
+                frozen_indices=frozen_set,
             )
-            val_history.append(val_loss)
-            if stop:
-                break
+            return tensors, step_trace[-1] if len(step_trace) >= 2 else step_trace[0]
 
-        elapsed = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    for epoch in range(epochs):
+        if shuffle and epoch > 0:
+            order = rng.permutation(len(train_imgs))
+            train_imgs = [train_imgs[i] for i in order]
 
-    leaves, treedef = tree_util.tree_flatten(basis)
-    n_fwd = len(basis.tensors)
-    new_leaves = list(best_tensors) + list(leaves[n_fwd:])
-    trained = tree_util.tree_unflatten(treedef, new_leaves)
+        # The Adam step returns its loss as a device array; converting after
+        # the epoch keeps the steps from waiting on each other's results.
+        epoch_losses: list = []
+        for batch_imgs in _batches(train_imgs):
+            global_step += 1
+            lr_t = cosine_with_warmup(
+                global_step,
+                total_steps,
+                warmup_frac=warmup_frac,
+                lr_peak=lr_peak,
+                lr_final=lr_final,
+            )
+            current_tensors, loss_val = _step(current_tensors, batch_imgs, lr_t, global_step)
+            epoch_losses.append(loss_val)
+        loss_history.extend(float(L) for L in epoch_losses)
+
+        epochs_completed = epoch + 1
+        best_tensors, best_val, patience, stop, val_loss = evaluate_and_check_early_stop(
+            epoch=epoch,
+            epochs=epochs,
+            val_every_k_epochs=val_every_k_epochs,
+            val_imgs=val_imgs,
+            val_loss_fn=_val_loss,
+            current_tensors=current_tensors,
+            best_tensors=best_tensors,
+            best_val=best_val,
+            patience=patience,
+            early_stopping_patience=early_stopping_patience,
+        )
+        val_history.append(val_loss)
+        if stop:
+            break
+
+    elapsed = time.perf_counter() - t0
 
     return TrainingResult(
-        basis=trained,
+        basis=with_tensors(basis, best_tensors),
         loss_history=loss_history,
         seed=seed,
         steps=global_step,

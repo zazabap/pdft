@@ -1,7 +1,8 @@
 """Cross-language JSON serialization for AbstractSparseBasis instances.
 
-Mirror of upstream src/serialization.jl (Phase 2 scope: QFTBasis only;
-EntangledQFTBasis / TEBDBasis / MERABasis are deferred to Phase 3).
+Mirror of upstream src/serialization.jl, for QFTBasis only: the other
+basis types have no JSON form here, and `basis_to_dict` / `basis_hash` must
+not be given one (they would label it a QFTBasis).
 
 Schema (QFTBasis):
     {
@@ -31,12 +32,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..bases.base import QFTBasis
+from ..bases.core import with_tensors
 
 _VERSION = "1.0"
 
 
 def _iter_column_major(arr: np.ndarray):
-    """Yield elements of `arr` in column-major (Fortran) order.
+    """The elements of `arr` as a flat array in column-major (Fortran) order.
 
     Julia iterates multi-dimensional arrays in column-major order by default;
     for cross-language hash/JSON parity, Python must do the same regardless
@@ -95,10 +97,9 @@ def basis_hash(basis: QFTBasis) -> str:
         "QFTBasis:m=<m>:n=<n>:<re0>,<im0>;<re1>,<im1>;..."
 
     Tensor elements are iterated tensor-by-tensor, column-major within each
-    tensor. Floats are formatted with Python `repr` — this matches Julia's
-    `string(Float64)` for values produced by deterministic numerical
-    operations (Julia and Python agree that `string(0.7071067811865475)`
-    equals Python's `repr(0.7071067811865475)`).
+    tensor. Floats are formatted with `format_float_julia_like`, which is
+    Python's `repr` adjusted to what Julia's `string(Float64)` prints (the two
+    agree on `0.7071067811865475` and differ on `5e-07` against `5.0e-7`).
     """
     parts: list[str] = [f"QFTBasis:m={basis.m}:n={basis.n}:"]
     for t in basis.tensors:
@@ -152,10 +153,9 @@ def dict_to_basis(d: dict) -> QFTBasis:
 
     m, n = int(d["m"]), int(d["n"])
 
-    # Rebuild the circuit to get template tensor shapes.
-    from ..bases.circuit.qft import qft_code
-
-    _code, template_tensors = qft_code(m, n)
+    # The circuit at its initial tensors gives the shapes to read into.
+    template = QFTBasis(m=m, n=n)
+    template_tensors = template.tensors
 
     serialized = d["tensors"]
     if len(serialized) != len(template_tensors):
@@ -180,7 +180,7 @@ def dict_to_basis(d: dict) -> QFTBasis:
         tensor = jnp.asarray(complex_vals.reshape(shape, order="F"))
         tensors.append(tensor)
 
-    basis = QFTBasis(m=m, n=n, tensors=tensors)
+    basis = with_tensors(template, tensors)
 
     expected_hash = d.get("hash")
     if expected_hash is not None:

@@ -7,7 +7,7 @@ via JAX; no `similar`, `copyto!`, or mutable updates — pure functional.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -41,6 +41,11 @@ def batched_inv(A: Array) -> Array:
     A_nd = jnp.transpose(A, (2, 0, 1))
     inv = jnp.linalg.inv(A_nd)
     return jnp.transpose(inv, (1, 2, 0))
+
+
+def _skew(A: Array) -> Array:
+    """The skew-Hermitian part ``(A - A^H) / 2`` of each matrix in a ``(d, d, n)`` batch."""
+    return (A - batched_adjoint(A)) / 2
 
 
 def _make_identity_batch(dtype, d: int, n: int) -> Array:
@@ -122,11 +127,7 @@ def is_unitary_2qubit(t: Array, atol: float = 1e-6) -> bool:
     (axes: out_ctrl, out_tgt, in_ctrl, in_tgt). We reshape to 4x4 and apply
     the standard unitarity check.
     """
-    if t.ndim != 4 or t.shape != (2, 2, 2, 2):
-        return False
-    M = jnp.reshape(t, (4, 4))
-    I_mat = jnp.eye(4, dtype=t.dtype)
-    return bool(jnp.allclose(M @ jnp.conj(M).T, I_mat, atol=atol))
+    return t.shape == (2, 2, 2, 2) and is_unitary_general(jnp.reshape(t, (4, 4)), atol)
 
 
 # Forward declarations — the manifold dataclasses are defined below, so
@@ -142,11 +143,12 @@ def classify_manifold(t: Array) -> AbstractRiemannianManifold:
     - otherwise → ``PhaseManifold``
 
     Note: ``OrthogonalManifold`` and ``Orthogonal2qManifold`` are defined
-    in this module for clients that want explicit O(d) constraints, but
-    they are NOT auto-selected — selection is the basis class's
-    responsibility. Real-valued tensors going through UnitaryManifold
-    stay real automatically (Cayley retraction with real W preserves
-    real-ness).
+    in this module for callers that want an explicit O(d) constraint, but
+    nothing selects them: not this function, and no basis or trainer in the
+    package. A basis whose tensors are all exactly real stays real through
+    ``UnitaryManifold`` under a real objective (the Cayley retraction with a
+    real ``W`` preserves it), which is how ``RealRichBasis`` trains. One
+    complex tensor in the circuit is enough to make the others complex.
     """
     if is_unitary_general(t):
         return UnitaryManifold(d=t.shape[0])
@@ -164,12 +166,7 @@ def group_by_manifold(tensors: list[Array]) -> dict:
     """
     groups: dict[AbstractRiemannianManifold, list[int]] = {}
     for i, t in enumerate(tensors):
-        m = classify_manifold(t)
-        existing = next((k for k in groups if k == m), None)
-        if existing is None:
-            groups[m] = [i]
-        else:
-            groups[existing].append(i)
+        groups.setdefault(classify_manifold(t), []).append(i)
     return groups
 
 
@@ -178,8 +175,21 @@ def group_by_manifold(tensors: list[Array]) -> dict:
 # ---------------------------------------------------------------------------
 
 
+class _ReprojectTransport:
+    """Vector transport by projecting onto the tangent space at the new point.
+
+    What every manifold here uses (upstream src/manifolds.jl:196). The two
+    points keep the parameter names each manifold has always had (``U_``
+    here, ``T_`` for the two-qubit storage, ``Z_`` for phases), so the
+    two-qubit and phase manifolds spell the same line out under theirs.
+    """
+
+    def transport(self, U_old: Array, U_new: Array, v: Array) -> Array:
+        return self.project(U_new, v)
+
+
 @dataclass(frozen=True)
-class UnitaryManifold:
+class UnitaryManifold(_ReprojectTransport):
     """U(d) unitary group manifold; tensors are d × d unitary matrices.
 
     The ``d`` field defaults to 2 for backward compatibility with all
@@ -194,9 +204,7 @@ class UnitaryManifold:
 
     def project(self, U: Array, G: Array) -> Array:
         """`U * skew(U^H G)` on `(d, d, n)`."""
-        UhG = batched_matmul(batched_adjoint(U), G)
-        S = (UhG - batched_adjoint(UhG)) / 2
-        return batched_matmul(U, S)
+        return batched_matmul(U, _skew(batched_matmul(batched_adjoint(U), G)))
 
     def retract(self, U: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
         """Cayley retraction: `(I - a/2 W)^{-1} (I + a/2 W) U`, W = skew(Xi U^H).
@@ -206,26 +214,21 @@ class UnitaryManifold:
         """
         alpha_half = alpha / 2
         d, _, n = U.shape
-        W_raw = batched_matmul(Xi, batched_adjoint(U))
-        W = (W_raw - batched_adjoint(W_raw)) / 2
+        W = _skew(batched_matmul(Xi, batched_adjoint(U)))
         if I_batch is None:
             I_batch = _make_identity_batch(U.dtype, d, n)
         lhs = I_batch - alpha_half * W
         rhs = I_batch + alpha_half * W
         return batched_matmul(batched_matmul(batched_inv(lhs), rhs), U)
 
-    def transport(self, U_old: Array, U_new: Array, v: Array) -> Array:
-        """Parallel transport via re-projection. Upstream src/manifolds.jl:196."""
-        return self.project(U_new, v)
-
 
 # ---------------------------------------------------------------------------
-# Orthogonal manifolds — real subgroups of U(d), used for Approach A
+# Orthogonal manifolds — real subgroups of U(d). Not selected by the package.
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class OrthogonalManifold:
+class OrthogonalManifold(_ReprojectTransport):
     """O(d) for real-valued d×d unitaries (subset of UnitaryManifold).
 
     Implementation: project gradients to the REAL skew-symmetric tangent
@@ -239,54 +242,48 @@ class OrthogonalManifold:
 
     def project(self, U: Array, G: Array) -> Array:
         # Project to skew-symmetric (real) tangent direction.
-        UhG = batched_matmul(batched_adjoint(U), G)
-        S = (UhG - batched_adjoint(UhG)) / 2
-        S_real = jnp.real(S).astype(U.dtype)
-        return batched_matmul(U, S_real)
+        S = _skew(batched_matmul(batched_adjoint(U), G))
+        return batched_matmul(U, jnp.real(S).astype(U.dtype))
 
     def retract(self, U: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
         # Reuse Unitary's Cayley retraction; output stays real if inputs are real.
         return UnitaryManifold(d=self.d).retract(U, Xi, alpha, I_batch=I_batch)
 
-    def transport(self, U_old: Array, U_new: Array, v: Array) -> Array:
-        return self.project(U_new, v)
-
 
 # ---------------------------------------------------------------------------
-# Unitary2qManifold — U(4) for 2-qubit gates stored as (2, 2, 2, 2)
+# U(4) and O(4) for 2-qubit gates stored as (2, 2, 2, 2)
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class Unitary2qManifold:
-    """U(4) manifold for 2-qubit gates stored in (2, 2, 2, 2) tensor form.
+class _TwoQubitStorage:
+    """A manifold of 4x4 matrices, for 2-qubit gates stored as ``(2, 2, 2, 2)``.
 
-    Storage convention: axes (out_ctrl, out_tgt, in_ctrl, in_tgt). This is
-    the canonical form for a 2-qubit gate as it appears in the einsum
-    builder (rank-4 to match 4 qubit-axis subscripts). All Riemannian
-    operations reshape to (4, 4, n) internally and reuse the U(d=4) math.
+    Storage convention: axes (out_ctrl, out_tgt, in_ctrl, in_tgt), the
+    canonical form for a 2-qubit gate as the circuit applier contracts it
+    (rank-4, one axis per qubit leg). Every operation reshapes to
+    ``(4, 4, n)``, runs on ``matrix``, the manifold of the 4x4 matrices, and
+    reshapes back.
     """
 
-    def _to_mat(self, T: Array) -> Array:
-        """(2, 2, 2, 2, n) -> (4, 4, n)."""
-        n = T.shape[-1]
-        return T.reshape(4, 4, n)
+    matrix: ClassVar[AbstractRiemannianManifold]
 
-    def _from_mat(self, M: Array) -> Array:
+    @staticmethod
+    def _to_mat(T: Array) -> Array:
+        """(2, 2, 2, 2, n) -> (4, 4, n)."""
+        return T.reshape(4, 4, T.shape[-1])
+
+    @staticmethod
+    def _from_mat(M: Array) -> Array:
         """(4, 4, n) -> (2, 2, 2, 2, n)."""
-        n = M.shape[-1]
-        return M.reshape(2, 2, 2, 2, n)
+        return M.reshape(2, 2, 2, 2, M.shape[-1])
 
     def project(self, T: Array, G: Array) -> Array:
-        return self._from_mat(UnitaryManifold(d=4).project(self._to_mat(T), self._to_mat(G)))
+        return self._from_mat(self.matrix.project(self._to_mat(T), self._to_mat(G)))
 
     def retract(self, T: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
-        # Caller's pre-allocated I_batch (if any) was sized for the storage
-        # shape; UnitaryManifold(d=4) builds its own (4,4,n) identity, so
-        # we just discard the passed-in I_batch here.
-        out_mat = UnitaryManifold(d=4).retract(
-            self._to_mat(T), self._to_mat(Xi), alpha, I_batch=None
-        )
+        # A caller's pre-allocated I_batch was sized for the storage shape;
+        # the matrix manifold builds its own (4, 4, n) identity.
+        out_mat = self.matrix.retract(self._to_mat(T), self._to_mat(Xi), alpha, I_batch=None)
         return self._from_mat(out_mat)
 
     def transport(self, T_old: Array, T_new: Array, v: Array) -> Array:
@@ -294,33 +291,21 @@ class Unitary2qManifold:
 
 
 @dataclass(frozen=True)
-class Orthogonal2qManifold:
+class Unitary2qManifold(_TwoQubitStorage):
+    """U(4) manifold for 2-qubit gates stored in (2, 2, 2, 2) tensor form."""
+
+    matrix = UnitaryManifold(d=4)
+
+
+@dataclass(frozen=True)
+class Orthogonal2qManifold(_TwoQubitStorage):
     """O(4) for real-valued 2-qubit gates stored as (2, 2, 2, 2).
 
-    Same reshape-and-delegate strategy as Unitary2qManifold, but projects
-    gradients to the REAL skew-symmetric tangent subspace so the tensor
-    stays in O(4) under Cayley retraction.
+    Projects gradients to the REAL skew-symmetric tangent subspace so the
+    tensor stays in O(4) under Cayley retraction.
     """
 
-    def _to_mat(self, T: Array) -> Array:
-        n = T.shape[-1]
-        return T.reshape(4, 4, n)
-
-    def _from_mat(self, M: Array) -> Array:
-        n = M.shape[-1]
-        return M.reshape(2, 2, 2, 2, n)
-
-    def project(self, T: Array, G: Array) -> Array:
-        return self._from_mat(OrthogonalManifold(d=4).project(self._to_mat(T), self._to_mat(G)))
-
-    def retract(self, T: Array, Xi: Array, alpha: float, *, I_batch=None) -> Array:
-        out_mat = OrthogonalManifold(d=4).retract(
-            self._to_mat(T), self._to_mat(Xi), alpha, I_batch=None
-        )
-        return self._from_mat(out_mat)
-
-    def transport(self, T_old: Array, T_new: Array, v: Array) -> Array:
-        return self.project(T_new, v)
+    matrix = OrthogonalManifold(d=4)
 
 
 # ---------------------------------------------------------------------------

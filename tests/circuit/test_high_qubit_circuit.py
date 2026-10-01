@@ -1,12 +1,12 @@
 """Regression tests for circuits whose flat-einsum representation would
 exceed the 52-character a-zA-Z label pool.
 
-The pre-fix `build_circuit_einsum` allocates a fresh label per Hadamard
-output and two fresh labels per U4 output. RealRichBasis at inner_m=5,
-inner_n=5 emits 2(m + m²) = 60 fresh labels — over the limit and raising
-ValueError at construction. The stepped-contraction implementation
-applies one gate per `jnp.tensordot`, recycling labels across steps so
-the limit never bites.
+The package once built every circuit as a single einsum (a builder called
+`build_circuit_einsum`, since removed), which allocated a fresh label per
+Hadamard output and two per U4 output. RealRichBasis at inner_m=5,
+inner_n=5 needs 2(m + m²) = 60 fresh labels: over the limit, a ValueError
+at construction. Circuits are now applied one gate at a time, so there are
+no labels to run out of.
 
 These tests pin both:
   - construction succeeds at inner_m=5

@@ -1,13 +1,13 @@
-"""Single-target training loop: Phase 1 API, unchanged from upstream."""
+"""Single-target training loop: `optimize` on one image, as the Julia goldens harness runs it."""
 
 from __future__ import annotations
 
 import time
 
 import jax
-from jax import tree_util
 
-from ..loss import AbstractLoss, loss_function
+from ..bases.core import with_tensors
+from ..loss import AbstractLoss, basis_loss
 from ..optimizers import AbstractRiemannianOptimizer, optimize
 from .result import TrainingResult
 
@@ -27,19 +27,15 @@ def train_basis(
     """Train `basis` to minimize `loss(basis.tensors, target)` over `steps`.
 
     Works for any basis registered as a JAX pytree whose leaves begin with
-    the forward-circuit tensor list followed by the inverse-circuit tensor
-    list (current convention for all four bases: QFTBasis, EntangledQFTBasis,
-    TEBDBasis, MERABasis).
+    its tensor list, the convention of every basis in the package.
     """
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")
 
-    m, n = basis.m, basis.n
-    code = basis.code
-    inv_code = basis.inv_code
+    per_image = basis_loss(basis, loss)
 
     def loss_fn(tensors: list[Array]) -> Array:
-        return loss_function(tensors, m, n, code, target, loss, inverse_code=inv_code)
+        return per_image(tensors, target)
 
     grad_fn = jax.grad(loss_fn, argnums=0)
 
@@ -55,13 +51,8 @@ def train_basis(
     )
     elapsed = time.perf_counter() - t0
 
-    leaves, treedef = tree_util.tree_flatten(basis)
-    n_fwd = len(basis.tensors)
-    new_leaves = list(final_tensors) + list(leaves[n_fwd:])
-    trained = tree_util.tree_unflatten(treedef, new_leaves)
-
     return TrainingResult(
-        basis=trained,
+        basis=with_tensors(basis, final_tensors),
         loss_history=history,
         seed=seed,
         steps=steps,

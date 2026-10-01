@@ -1,6 +1,9 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
+from pdft import manifolds
 from pdft.manifolds import (
     PhaseManifold,
     UnitaryManifold,
@@ -14,6 +17,8 @@ from pdft.manifolds import (
     stack_tensors,
     unstack_tensors,
 )
+
+from .helpers import complex_image, random_unitary
 
 
 def test_batched_matmul_shape():
@@ -149,3 +154,103 @@ def test_phase_manifold_retract_preserves_unit_modulus():
     for alpha in (1e-4, 1e-2, 1.0):
         Z_new = M.retract(Z, Xi_tan, alpha)
         assert jnp.allclose(jnp.abs(Z_new), 1.0, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Orthogonal manifolds, the 2-qubit storage, transport
+# ---------------------------------------------------------------------------
+
+
+def _unitaries(d, count, seed, real=False):
+    """A ``(d, d, count)`` batch of points, the layout the manifolds work on."""
+    rng = np.random.default_rng(seed)
+    points = [random_unitary(rng, d, real=real) for _ in range(count)]
+    return jnp.asarray(np.stack(points, axis=-1), dtype=jnp.complex128)
+
+
+@pytest.mark.parametrize("d", [2, 4])
+def test_orthogonal_manifold_stays_real_and_orthogonal(d):
+    from pdft.manifolds import OrthogonalManifold
+
+    manifold = OrthogonalManifold(d=d)
+    points = _unitaries(d, 3, seed=d, real=True)
+    direction = manifold.project(points, complex_image(points.shape, seed=1))
+    assert float(jnp.max(jnp.abs(jnp.imag(direction)))) == 0.0
+    moved = manifold.retract(points, direction, 0.3)
+    assert float(jnp.max(jnp.abs(jnp.imag(moved)))) == 0.0
+    for k in range(3):
+        q = moved[:, :, k]
+        assert jnp.allclose(q @ q.T, jnp.eye(d), atol=1e-12)
+    assert not jnp.allclose(moved, points)
+
+
+@pytest.mark.parametrize("name", ["Unitary2qManifold", "Orthogonal2qManifold"])
+def test_two_qubit_manifolds_are_their_matrix_manifold_through_a_reshape(name):
+    import pdft.manifolds as manifolds
+
+    manifold = getattr(manifolds, name)()
+    matrix = manifold.matrix
+    assert (
+        matrix
+        == {
+            "Unitary2qManifold": manifolds.UnitaryManifold(d=4),
+            "Orthogonal2qManifold": manifolds.OrthogonalManifold(d=4),
+        }[name]
+    )
+    mats = _unitaries(4, 3, seed=5, real=name.startswith("Orthogonal"))
+    grads = complex_image(mats.shape, seed=6)
+    stored, stored_grads = mats.reshape(2, 2, 2, 2, 3), grads.reshape(2, 2, 2, 2, 3)
+
+    projected = manifold.project(stored, stored_grads)
+    assert projected.shape == (2, 2, 2, 2, 3)
+    assert jnp.array_equal(projected.reshape(4, 4, 3), matrix.project(mats, grads))
+    # a caller's identity batch, sized for the storage shape, is not used
+    moved = manifold.retract(stored, projected, 0.2, I_batch="not an array")
+    assert jnp.array_equal(
+        moved.reshape(4, 4, 3), matrix.retract(mats, matrix.project(mats, grads), 0.2)
+    )
+    # a manifold is a value: the optimiser groups tensors by it
+    assert manifold == getattr(manifolds, name)() and hash(manifold) == hash(
+        getattr(manifolds, name)()
+    )
+    assert manifold != manifolds.PhaseManifold()
+
+
+def test_transport_is_projection_at_the_new_point_on_every_manifold():
+    import pdft.manifolds as manifolds
+
+    cases = [
+        (manifolds.UnitaryManifold(d=2), _unitaries(2, 2, seed=1)),
+        (manifolds.OrthogonalManifold(d=2), _unitaries(2, 2, seed=2, real=True)),
+        (manifolds.Unitary2qManifold(), _unitaries(4, 2, seed=3).reshape(2, 2, 2, 2, 2)),
+        (
+            manifolds.Orthogonal2qManifold(),
+            _unitaries(4, 2, seed=4, real=True).reshape(2, 2, 2, 2, 2),
+        ),
+        (manifolds.PhaseManifold(), jnp.exp(1j * jnp.real(complex_image((2, 2, 2), seed=5)))),
+    ]
+    for manifold, points in cases:
+        vector = complex_image(points.shape, seed=9)
+        new = manifold.retract(points, manifold.project(points, vector), 0.1)
+        assert jnp.array_equal(
+            manifold.transport(points, new, vector), manifold.project(new, vector)
+        )
+
+
+@pytest.mark.parametrize(
+    ("manifold", "prefix", "shape"),
+    [
+        (manifolds.UnitaryManifold(), "U", (2, 2, 3)),
+        (manifolds.OrthogonalManifold(), "U", (2, 2, 3)),
+        (manifolds.Unitary2qManifold(), "T", (2, 2, 2, 2, 3)),
+        (manifolds.Orthogonal2qManifold(), "T", (2, 2, 2, 2, 3)),
+        (manifolds.PhaseManifold(), "Z", (2, 2, 3)),
+    ],
+)
+def test_transport_takes_its_points_under_the_names_each_manifold_gives_them(
+    manifold, prefix, shape
+):
+    """Transport is re-projection at the new point, and callable by keyword."""
+    old, new, vector = (complex_image(shape, seed=seed) for seed in (1, 2, 3))
+    moved = manifold.transport(**{f"{prefix}_old": old, f"{prefix}_new": new, "v": vector})
+    np.testing.assert_array_equal(moved, manifold.project(new, vector))

@@ -22,13 +22,19 @@ Trainable sparsifying bases. Circuit bases (QFT, entangled QFT, TEBD, MERA, Rich
    RichBasis
    RealRichBasis
    BlockedBasis
+   CircuitBasis
    AbstractSparseBasis
    freeze_as_blocked
    fit_to_dct
    bases_allclose
+   program_of
+   with_tensors
+   cp_phases
+   with_cp_phases
    qft_code
    entangled_qft_code
    tebd_code
    mera_code
+   dct4_code
    ft_mat
    ift_mat

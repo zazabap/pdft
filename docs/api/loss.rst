@@ -18,4 +18,6 @@ Sparsity objectives minimized during training.
    MSELoss
    AbstractLoss
    loss_function
+   basis_loss
+   mean_loss
    topk_truncate
