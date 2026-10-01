@@ -17,7 +17,7 @@ Julia's Yao + yao2einsum output:
 from __future__ import annotations
 
 import string
-from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TypedDict
 
 import jax
@@ -83,6 +83,41 @@ def _hadamard_first_perm(tensor_list: list[Array]) -> list[int]:
     return sorted(range(len(tensor_list)), key=lambda i: is_not_hadamard[i])
 
 
+@dataclass(frozen=True)
+class Program:
+    """The structure of a circuit: which gate acts on which qubits, in what order.
+
+    It holds no tensor values, so it is hashable and can be a static argument
+    of a jitted function: every basis with the same program shares one
+    compiled applier. ``steps`` is the gate sequence in temporal order.
+    ``slot[i]`` is the position of step ``i``'s tensor in the tensor list a
+    basis stores, which is sorted Hadamards-first to match Julia's
+    ``perm_vec``; the sort is decided once, from the initial tensor values,
+    by ``compile_program``.
+    """
+
+    m: int
+    n: int
+    steps: tuple[tuple[str, tuple[int, ...]], ...]
+    slot: tuple[int, ...]
+
+    @property
+    def sorted_steps(self) -> tuple[tuple[str, tuple[int, ...]], ...]:
+        """``(kind, qubits)`` of each tensor, in the order the tensor list stores them."""
+        by_slot = dict(zip(self.slot, self.steps))
+        return tuple(by_slot[i] for i in range(len(self.steps)))
+
+
+def compile_program(gates: list[Gate], m: int, n: int) -> tuple[Program, list[Array]]:
+    """The program of a gate sequence on ``m + n`` qubits, and its tensors in stored order."""
+    perm = _hadamard_first_perm([g["tensor"] for g in gates])
+    slot = [0] * len(gates)
+    for position, step in enumerate(perm):
+        slot[step] = position
+    steps = tuple((g["kind"], tuple(g["qubits"])) for g in gates)
+    return Program(m, n, steps, tuple(slot)), [gates[step]["tensor"] for step in perm]
+
+
 def sorted_gate_program(gates: list[Gate]) -> list[tuple[str, tuple[int, ...]]]:
     """Return `(kind, qubits)` per tensor in sorted operand order.
 
@@ -91,8 +126,7 @@ def sorted_gate_program(gates: list[Gate]) -> list[tuple[str, tuple[int, ...]]]:
     stores. Handy for mapping gates (and the qubits they touch) to tensor
     indices after compilation.
     """
-    tensor_list = [g["tensor"] for g in gates]
-    perm = _hadamard_first_perm(tensor_list)
+    perm = _hadamard_first_perm([g["tensor"] for g in gates])
     return [(gates[p]["kind"], gates[p]["qubits"]) for p in perm]
 
 
@@ -164,7 +198,7 @@ def build_circuit_einsum(
             wire_state[q_ctrl] = out_c
             wire_state[q_tgt] = out_t
         else:
-            # NOTE: "CRY" is handled only by the stepped path (_stepped_apply);
+            # NOTE: "CRY" is handled only by the stepped path (_walk);
             # the legacy einsum builder does not emit it.
             raise AssertionError(f"unknown gate kind: {g['kind']}")
 
@@ -210,28 +244,19 @@ def _axis_of_qubit(q: int, m: int, n: int) -> int:
     raise ValueError(f"qubit index {q} out of range (1..{m + n})")
 
 
-def _stepped_apply(
-    program: list[tuple[str, tuple[int, ...]]],
-    tensor_index: list[int],
-    operands: tuple,
-    *,
-    m: int,
-    n: int,
-    inverse: bool,
-) -> Array:
-    """Apply gate program to pic via per-gate `jnp.tensordot` calls.
+def _walk(program: Program, inverse: bool, tensors: tuple, pic: Array) -> Array:
+    """Apply the program to ``pic``, shape ``(2,) * (m + n)``, one gate at a time.
 
-    operands = (*tensors, pic) where pic has shape (2,) * (m+n) and tensors
-    is the operand list passed to the closure (sorted Hadamard-first by
-    `compile_circuit`, matching the convention of the legacy big-einsum
-    path so saved checkpoints load with the same axis order).
-
-    `tensor_index[i]` maps program step i (in temporal order) to its index
-    in the operand `tensors` tuple.
+    ``tensors`` is in stored (Hadamard-first) order. ``inverse`` walks the
+    steps backwards with each gate's legs swapped, which is the transpose of
+    the circuit; the caller conjugates the tensors to make it the adjoint,
+    as Julia's ``inverse_code(conj.(tensors)...)`` does.
     """
-    *tensors, pic = operands
-    for i, (kind, qubits) in enumerate(program):
-        T = tensors[tensor_index[i]]
+    m, n = program.m, program.n
+    order = range(len(program.steps))
+    for i in reversed(order) if inverse else order:
+        kind, qubits = program.steps[i]
+        T = tensors[program.slot[i]]
         if kind == "H":
             (q,) = qubits
             ax = _axis_of_qubit(q, m, n)
@@ -303,64 +328,46 @@ def _stepped_apply(
     return pic
 
 
+_run = jax.jit(_walk, static_argnames=("program", "inverse"))
+
+
+@dataclass(frozen=True)
+class CircuitCode:
+    """``code(*tensors, pic)``: a program applied to ``pic`` of shape ``(2,) * (m + n)``.
+
+    The callable a basis keeps as ``code`` and ``inv_code``. It compares and
+    hashes by its program, so two bases with the same circuit share one
+    compiled applier and have equal pytree structures.
+    """
+
+    program: Program
+    inverse: bool = False
+
+    def __call__(self, *operands: Array) -> Array:
+        *tensors, pic = operands
+        return _run(self.program, self.inverse, tuple(tensors), pic)
+
+
 def compile_circuit(
     gates: list[Gate],
     m: int,
     n: int,
     *,
     inverse: bool,
-) -> tuple[Callable[..., Array], list[Array]]:
-    """Build a JIT-compiled stepped circuit closure.
+) -> tuple[CircuitCode, list[Array]]:
+    """The applier of a gate sequence and its initial tensors.
 
-    Returns ``(code, tensors)`` where ``code(*tensors, pic_reshaped)``
-    applies the gates one at a time via :func:`jnp.tensordot`, recycling
-    contraction labels across steps so the 52-character a-zA-Z label pool
-    of the legacy single-einsum path is never reached. Each step consumes
-    at most ~22 wire labels regardless of circuit size.
-
-    The returned ``tensors`` list preserves the Hadamard-first sort applied
-    by the legacy builder, so saved trained checkpoints (which serialize
-    tensors in this order) continue to load consistently.
+    Returns ``(code, tensors)`` where ``code(*tensors, pic_reshaped)`` applies
+    the gates one at a time, and ``tensors`` is in the Hadamard-first order
+    saved checkpoints serialise.
     """
-    n_gates = len(gates)
-    program: list[tuple[str, tuple[int, ...]]] = [
-        (g["kind"], g["qubits"]) for g in gates
-    ]
-    tensor_list: list[Array] = [g["tensor"] for g in gates]
-
-    # Hadamard-first sort — preserves the legacy convention for the
-    # returned tensor list. `perm[i]` is the original (temporal) gate index
-    # of the i-th sorted slot, so `sorted_tensors[i] = original[perm[i]]`.
-    perm = _hadamard_first_perm(tensor_list)
-    sorted_tensors = [tensor_list[i] for i in perm]
-
-    # Map temporal gate index → position in the sorted operand tuple.
-    # `temporal_to_sorted[j] = i` such that perm[i] = j.
-    temporal_to_sorted = [0] * n_gates
-    for sorted_pos, original_idx in enumerate(perm):
-        temporal_to_sorted[original_idx] = sorted_pos
-
-    if inverse:
-        # Apply gates in reverse temporal order. tensor_index aligns with
-        # the reversed program: program_step[i] needs the tensor for the
-        # ORIGINAL gate at index (n_gates-1-i).
-        program = list(reversed(program))
-        tensor_index = [temporal_to_sorted[n_gates - 1 - i] for i in range(n_gates)]
-    else:
-        tensor_index = [temporal_to_sorted[i] for i in range(n_gates)]
-
-    @jax.jit
-    def code(*operands):
-        return _stepped_apply(
-            program, tensor_index, operands, m=m, n=n, inverse=inverse,
-        )
-
-    return code, sorted_tensors
+    program, tensors = compile_program(gates, m, n)
+    return CircuitCode(program, inverse), tensors
 
 
 def apply_circuit(
     tensors: list[Array],
-    code: Callable,
+    code: CircuitCode,
     m: int,
     n: int,
     pic: Array,
