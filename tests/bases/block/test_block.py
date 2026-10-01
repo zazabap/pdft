@@ -220,3 +220,7 @@ def test_block_counts_must_be_integers(counts):
     """Refused when the basis is built, not at its first transform."""
     with pytest.raises(TypeError):
         pdft.BlockedBasis(pdft.QFTBasis(m=1, n=1), *counts)
+    assert pdft.BlockedBasis(pdft.QFTBasis(m=1, n=1), np.int64(1), np.bool_(True)).image_size == (
+        4,
+        4,
+    )

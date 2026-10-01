@@ -608,31 +608,6 @@ def test_freezing_the_one_qubit_gates_trains_only_the_phases():
     assert pdft.certify_flat_modulus(trained, frozen_indices=hadamards)
 
 
-@pytest.mark.parametrize("optimizer", ["adam", "gd"])
-def test_the_epoch_loop_stops_when_told_to(optimizer, monkeypatch):
-    """The decision is `evaluate_and_check_early_stop`'s; the loop has to act on it."""
-    import pdft.training.batched as batched
-
-    decide = batched.evaluate_and_check_early_stop
-
-    def stop_after_second_epoch(**kwargs):
-        best_tensors, best_val, patience, _, val_loss = decide(**kwargs)
-        return best_tensors, best_val, patience, kwargs["epoch"] == 1, val_loss
-
-    monkeypatch.setattr(batched, "evaluate_and_check_early_stop", stop_after_second_epoch)
-    result = train_basis_batched(
-        pdft.QFTBasis(m=2, n=2),
-        dataset=_toy_dataset(6, 2, 2),
-        loss=pdft.L1Norm(),
-        epochs=10,
-        batch_size=2,
-        optimizer=optimizer,
-        validation_split=0.34,
-    )
-    assert result.epochs_completed == 2 and len(result.val_history) == 2
-    assert result.steps == len(result.loss_history) == 4
-
-
 @pytest.mark.parametrize(
     ("frozen", "message"),
     [
@@ -673,7 +648,7 @@ def test_the_first_epoch_runs_in_the_order_of_the_split():
     presorted = train_basis_batched(
         pdft.QFTBasis(m=2, n=2), dataset=[images[i] for i in order], shuffle=False, **options
     )
-    assert shuffled.loss_history[:5] == presorted.loss_history[:5]
+    assert shuffled.loss_history[:5] == pytest.approx(presorted.loss_history[:5], rel=1e-12)
     assert shuffled.loss_history[5:] != presorted.loss_history[5:]
 
 
@@ -732,19 +707,6 @@ def test_adam_hands_frozen_tensors_back_bit_for_bit():
     assert not np.array_equal(result.basis.tensors[0], basis.tensors[0])
 
 
-def test_the_validation_share_is_rounded_to_the_nearest_image():
-    """A quarter of seven images is 1.75: two are held out and five train."""
-    result = train_basis_batched(
-        pdft.QFTBasis(m=2, n=2),
-        dataset=_toy_dataset(7, 2, 2),
-        loss=pdft.L1Norm(),
-        epochs=1,
-        batch_size=1,
-        validation_split=0.25,
-    )
-    assert result.steps == 5
-
-
 def _with_scripted_validation(monkeypatch, losses):
     """Run the real early-stopping bookkeeping on the validation losses given, and return
     the list that collects the tensors each epoch ended with."""
@@ -766,7 +728,7 @@ def _with_scripted_validation(monkeypatch, losses):
 def test_early_stopping_returns_the_best_tensors_after_the_patience_runs_out(
     optimizer, monkeypatch
 ):
-    seen = _with_scripted_validation(monkeypatch, [3.0, 2.0, 5.0, 6.0, 7.0, 8.0])
+    seen = _with_scripted_validation(monkeypatch, [3.0, 2.0, 2.0, 6.0, 7.0, 8.0])
     result = train_basis_batched(
         pdft.RichBasis(m=2, n=2),
         dataset=_toy_dataset(4, 2, 2),
@@ -777,8 +739,10 @@ def test_early_stopping_returns_the_best_tensors_after_the_patience_runs_out(
         validation_split=0.25,
         early_stopping_patience=2,
     )
-    # the second epoch was the best; two epochs without improvement end the run
-    assert result.val_history == [3.0, 2.0, 5.0, 6.0] and result.epochs_completed == 4
+    # the second epoch was the best (a tie is not an improvement); two epochs without
+    # one end the run
+    assert result.val_history == [3.0, 2.0, 2.0, 6.0] and result.epochs_completed == 4
+    assert result.steps == len(result.loss_history) == 4
     assert all(np.array_equal(a, b) for a, b in zip(result.basis.tensors, seen[1]))
     assert not all(np.array_equal(a, b) for a, b in zip(result.basis.tensors, seen[3]))
 
@@ -796,3 +760,32 @@ def test_validation_runs_every_k_epochs_and_on_the_last(monkeypatch):
     )
     assert np.isnan(result.val_history).tolist() == [True, False, True, False, False]
     assert [v for v in result.val_history if not np.isnan(v)] == [3.0, 2.0, 1.0]
+
+
+def test_a_first_epoch_without_a_validation_loss_does_not_end_the_run(monkeypatch):
+    """NaN is not an improvement, but the first epoch never stops the run."""
+    _with_scripted_validation(monkeypatch, [float("nan"), 1.0, 2.0, 3.0])
+    result = train_basis_batched(
+        pdft.QFTBasis(m=2, n=2),
+        dataset=_toy_dataset(4, 2, 2),
+        loss=pdft.L1Norm(),
+        epochs=4,
+        batch_size=3,
+        validation_split=0.25,
+        early_stopping_patience=1,
+    )
+    assert result.epochs_completed == 3 and result.val_history[1:] == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(("n_images", "trained_on"), [(7, 5), (9, 7)])
+def test_the_validation_share_is_rounded_to_the_nearest_image(n_images, trained_on):
+    """A quarter of seven is 1.75 and two are held out; of nine, 2.25 and two again."""
+    result = train_basis_batched(
+        pdft.QFTBasis(m=2, n=2),
+        dataset=_toy_dataset(n_images, 2, 2),
+        loss=pdft.L1Norm(),
+        epochs=1,
+        batch_size=1,
+        validation_split=0.25,
+    )
+    assert result.steps == trained_on

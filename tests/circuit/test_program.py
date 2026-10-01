@@ -12,6 +12,7 @@ from pdft.circuit.builder import (
     CircuitCode,
     Program,
     _run,
+    apply_program,
     compile_circuit,
     compile_program,
 )
@@ -98,3 +99,6 @@ def test_two_instances_of_a_basis_share_one_compiled_applier():
     compiled = _run._cache_size()
     b.forward_transform(x)
     assert a.code == b.code and _run._cache_size() == compiled
+    # one image through apply_program is that same walk
+    apply_program(a.program, a.tensors, x)
+    assert _run._cache_size() == compiled

@@ -17,13 +17,13 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import bases_allclose, program_of, with_cp_phases, with_tensors
+from pdft.bases import bases_allclose, program_of, with_cp_phases
 from pdft.bases.block.block import BlockCode
 from pdft.circuit import GATE_KINDS, REGISTERS, is_compact_cp
 from pdft.circuit.builder import GATE_SHAPES
 from pdft.manifolds import PhaseManifold, Unitary2qManifold, UnitaryManifold, classify_manifold
 
-from ..helpers import BASES, case_rng, complex_normal, generic
+from ..helpers import BASES, case_rng, complex_normal, generic, single_precision
 
 CASES = list(BASES)
 
@@ -127,10 +127,6 @@ def test_code_maps_over_a_stack_of_images(case):
 LOOSE = (pdft.RichBasis, pdft.RealRichBasis, pdft.BlockedBasis)
 
 
-def _single_precision(basis):
-    return with_tensors(basis, [t.astype(jnp.complex64) for t in basis.tensors])
-
-
 @pytest.mark.parametrize("case", CASES)
 def test_transforms_refuse_another_image_size(case):
     basis = BASES[case]()
@@ -164,7 +160,7 @@ def test_precision_of_the_transforms(case):
     tensors stay single precision through the loose bases and are promoted by the
     strict ones, which cast the image."""
     basis = BASES[case]()
-    single = _single_precision(basis)
+    single = single_precision(basis)
     real = case_rng(case).standard_normal(basis.image_size)
     for image_dtype in (jnp.float32, jnp.float64, jnp.complex64, jnp.complex128):
         image = jnp.asarray(real, dtype=image_dtype)
@@ -180,7 +176,7 @@ def test_the_loss_keeps_the_precision_of_its_operands(case):
     """`loss_function` never casts: single-precision tensors and image give a
     single-precision loss and gradient, for every basis."""
     basis = BASES[case]()
-    single = _single_precision(basis)
+    single = single_precision(basis)
     m, n = basis.m, basis.n
     image = jnp.asarray(case_rng(case).standard_normal(basis.image_size), dtype=jnp.float32)
     for loss in (pdft.L1Norm(), pdft.MSELoss(k=3)):
@@ -229,7 +225,7 @@ def test_the_gate_kind_implies_the_manifold_the_optimiser_picks(case):
 
 @pytest.mark.parametrize("case", CASES)
 def test_helpers_that_replace_tensors_keep_their_precision(case):
-    single = _single_precision(BASES[case]())
+    single = single_precision(BASES[case]())
     angles = jnp.zeros(len(program_of(single).tensor_indices(kind="CP")))
     assert {t.dtype for t in with_cp_phases(single, angles).tensors} == {jnp.dtype("complex64")}
     if getattr(type(single), "freezes_to_blocked", False) and min(single.m, single.n) > 1:

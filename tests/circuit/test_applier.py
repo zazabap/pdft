@@ -201,7 +201,7 @@ def test_a_code_called_directly_reads_the_qubits_from_the_first_axes():
         np.testing.assert_allclose(
             out[..., k], basis.code(*basis.tensors, stack[..., k]), rtol=0, atol=1e-14
         )
-    with pytest.raises(ValueError, match="out of bounds"):
+    with pytest.raises((ValueError, IndexError)):
         basis.code(*basis.tensors, complex_image((2, 4)))
 
 

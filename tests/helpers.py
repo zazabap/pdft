@@ -89,6 +89,11 @@ def random_unitary(rng: np.random.Generator, d: int, *, real: bool = False) -> n
     return np.linalg.qr(a)[0]
 
 
+def single_precision(basis):
+    """``basis`` with its tensors held as complex64."""
+    return with_tensors(basis, [t.astype(jnp.complex64) for t in basis.tensors])
+
+
 def generic(basis, rng: np.random.Generator):
     """The basis at tensors with no symmetry left.
 

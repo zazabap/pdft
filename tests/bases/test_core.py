@@ -241,3 +241,10 @@ def test_a_callable_that_is_not_a_circuit_code_is_paired_with_the_default_circui
     plain = pdft.QFTBasis(m=1, n=1)
     wrapped = pdft.QFTBasis(m=1, n=1, code=lambda *operands: plain.code(*operands))
     assert wrapped.program == plain.program and wrapped.inv_code == plain.inv_code
+
+
+def test_two_codes_given_are_kept_as_given():
+    plain = pdft.QFTBasis(m=2, n=1)
+    sliced_inverse = replace(plain.inv_code, slices=True)
+    basis = pdft.QFTBasis(m=2, n=1, code=plain.code, inv_code=sliced_inverse)
+    assert basis.code == plain.code and basis.inv_code == sliced_inverse

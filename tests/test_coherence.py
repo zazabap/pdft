@@ -12,7 +12,6 @@ from pdft.bases import (
     RichBasis,
     TEBDBasis,
     cp_phases,
-    with_tensors,
 )
 from pdft.circuit.builder import controlled_phase_diag, is_compact_cp
 from pdft.coherence import (
@@ -26,7 +25,7 @@ from pdft.coherence import (
     sampled_flat_modulus,
 )
 
-from .helpers import CIRCUIT_CLASSES
+from .helpers import CIRCUIT_CLASSES, single_precision
 
 # (3, 3) keeps the dense 64x64 operator cheap while exercising both registers.
 M = N = 3
@@ -281,21 +280,35 @@ def test_a_rebuilt_dense_basis_is_not_certified_as_diagonal():
     )
 
 
-def test_a_basis_held_in_single_precision_is_flat_modulus():
-    """It sits about ``2e-8`` from flat, beyond ``atol`` alone; the comparison is
-    `allclose`, whose relative slack covers rounding at that precision. The
-    certificate and the sampled check agree."""
-    basis = QFTBasis(m=2, n=2)
-    single = with_tensors(basis, [t.astype(jnp.complex64) for t in basis.tensors])
-    assert float(flat_modulus_deviation(dense_operator(single))) > 1e-8
-    assert is_flat_modulus(single)
-    hadamards = basis.program.tensor_indices(kind="H")
-    assert certify_flat_modulus(single, frozen_indices=hadamards).holds
-    assert sampled_flat_modulus(single, frozen_indices=hadamards)["holds"]
-    # a real departure is still one
-    assert not is_flat_modulus(None, dense_operator(basis).at[0, 0].mul(1.001))
-
-
 def test_sampled_flat_modulus_needs_a_trial():
     with pytest.raises(ValueError, match="trials must be >= 1"):
         sampled_flat_modulus(QFTBasis(m=1, n=1), trials=0)
+
+
+def test_a_basis_held_in_single_precision_is_flat_modulus():
+    """Its rounding is within the comparison's relative slack. The certificate and the
+    sampled check judge it the same way."""
+    basis = QFTBasis(m=2, n=2)
+    single = single_precision(basis)
+    hadamards = basis.program.tensor_indices(kind="H")
+    assert is_flat_modulus(single)
+    assert certify_flat_modulus(single, frozen_indices=hadamards).holds
+    assert sampled_flat_modulus(single, frozen_indices=hadamards)["holds"]
+
+
+def test_flat_modulus_tolerance_is_atol_plus_allcloses_relative_slack():
+    """`jnp.allclose(|U|, N^-1/2, atol=atol)`: on a 16-pixel basis the relative part is
+    ``1e-5 / 4 = 2.5e-6``."""
+    flat = dense_operator(QFTBasis(m=2, n=2))
+
+    def off_by(deviation):
+        return flat.at[0, 0].mul(1.0 + 4 * deviation)
+
+    assert float(flat_modulus_deviation(off_by(1e-6))) == pytest.approx(1e-6, rel=1e-3)
+    assert is_flat_modulus(None, off_by(1e-6))
+    assert not is_flat_modulus(None, off_by(4e-6))
+    assert is_flat_modulus(None, off_by(4e-6), atol=2e-6)
+    # the sampled check passes its tolerance on: no unfrozen draw is flat, unless told so
+    basis = QFTBasis(m=2, n=2)
+    assert not sampled_flat_modulus(basis)["holds"]
+    assert sampled_flat_modulus(basis, atol=1.0)["holds"]

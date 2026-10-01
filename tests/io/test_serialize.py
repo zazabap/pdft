@@ -104,3 +104,11 @@ def test_dict_to_basis_warns_on_version_mismatch():
     d["version"] = "9.9"
     with pytest.warns(UserWarning, match="version"):
         dict_to_basis(d)
+
+
+def test_dict_to_basis_rejects_a_wrong_number_of_tensors():
+    d = basis_to_dict(QFTBasis(m=2, n=2))
+    d["tensors"] = d["tensors"][:-1]
+    message = r"Tensor count mismatch: expected 6 \(from qft_code\(m=2, n=2\)\), got 5"
+    with pytest.raises(ValueError, match=message):
+        dict_to_basis(d)
