@@ -125,6 +125,10 @@ class CircuitBasis(BasisTransforms):
     # equivalent to a blocked basis; see ``freeze_as_blocked``.
     freezes_to_blocked: ClassVar[bool] = False
 
+    # The family's gate emitter, a plain function ``(m, n) -> gates``. A
+    # subclass sets it as ``emit = staticmethod(<family>_gates)``: a function
+    # stored bare on a class becomes a method, and calling ``self.emit(m, n)``
+    # would then pass the instance as its first argument.
     emit: ClassVar[Callable[[int, int], list[Gate]]]
 
     def __init__(

@@ -56,7 +56,12 @@ entanglement_gate = controlled_phase_diag
 
 
 def _entangle_layer(m: int, n: int, n_entangle: int, phases: list[float]) -> list[Gate]:
-    """Build the entanglement-gate layer: `n_entangle` CPs coupling row/col pairs."""
+    """The entanglement layer: gate `k` couples row qubit `m - k + 1` with column qubit `m + n - k + 1`.
+
+    These are the only gates between the two registers. The 2D QFT they are
+    added to is a QFT on the rows and a QFT on the columns with nothing
+    connecting them.
+    """
     return [cp_gate(m - k + 1, m + n - k + 1, phases[k - 1]) for k in range(1, n_entangle + 1)]
 
 
@@ -68,6 +73,10 @@ def entangled_qft_gates(
     entangle_position: str = "back",
 ) -> tuple[list[Gate], int]:
     """Return `(gates, n_entangle)` for entangled 2D QFT.
+
+    The 2D QFT (`qft_gates`: a QFT on the row register and one on the column
+    register) with `min(m, n)` controlled phases added, each between a row
+    qubit and the corresponding column qubit.
 
     Mirror of upstream src/entangled_qft.jl:135-258. Supported positions:
 
