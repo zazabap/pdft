@@ -53,6 +53,8 @@ def test_controlled_puts_the_block_where_the_control_is_one():
     expected[:2, :2] = np.eye(2)
     expected[2:, 2:] = np.asarray(block)
     np.testing.assert_array_equal(matrix, expected)
+    with pytest.raises(ValueError, match=r"the block of a controlled gate is \(2, 2\)"):
+        controlled(jnp.ones(2))
     # the dense controlled phase is that, with a phase for the block
     np.testing.assert_array_equal(
         np.asarray(u4_from_phase(0.7)).reshape(4, 4), np.diag([1, 1, 1, np.exp(0.7j)])

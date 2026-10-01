@@ -33,10 +33,15 @@ def test_plot_shows_one_column_per_gate(make, counts):
     two_qubit = sum(1 for _, qubits in program.steps if len(qubits) == 2)
     assert len(ax.lines) == program.m + program.n + two_qubit
     # column i is the i-th gate to act, drawn on the wires of its qubits
+    links = iter(ax.lines[program.m + program.n :])
     for column, (markers, (_, qubits)) in enumerate(zip(ax.collections, program.steps)):
         x, y = np.asarray(markers.get_offsets()).T
         assert x.tolist() == [column] * len(qubits)
         assert sorted(y.tolist()) == sorted(q - 1 for q in qubits)
+        if len(qubits) == 2:
+            link = next(links)
+            assert list(link.get_xdata()) == [column, column]
+            assert sorted(link.get_ydata()) == sorted(q - 1 for q in qubits)
     matplotlib.pyplot.close(fig)
 
 

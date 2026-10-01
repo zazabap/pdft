@@ -85,6 +85,9 @@ def test_dct4_twiddles_record_their_angle_in_both_forms():
     assert [g["kind"] for g in dense if g["kind"] != "U4"] == [
         g["kind"] for g in blocks if g["kind"] not in ("U4", "CRY")
     ]
+    # so does the base rotation of each level, pi / (2 * size) for sizes 8, 4, 2
+    rotations = [g["phase"] for g in dense if g["kind"] == "H" and g["phase"]]
+    assert rotations == pytest.approx([np.pi / 16, np.pi / 8, np.pi / 4])
 
 
 def test_front_entanglers_are_found_by_the_program_not_by_position():
@@ -124,3 +127,16 @@ def test_the_phase_helpers_keep_their_upstream_parameter_names():
         assert getattr(module, phases)(tensors=tensors, **{which: found}) == pytest.approx(
             [0.3, -1.1]
         )
+
+
+def test_controlled_phases_between_fixed_qubits_name_the_control_first():
+    """The order of a gate's qubits is the order of its tensor's axes. A controlled phase
+    starts symmetric, so the order shows only once training has made the two axes
+    differ, and a checkpoint from before would then be read transposed."""
+    entangled = pdft.EntangledQFTBasis(m=2, n=3).program
+    coupling = entangled.tensor_indices(kind="CP", register="both")
+    # row qubit first, then the column qubit it is paired with
+    assert [entangled.sorted_steps[i][1] for i in coupling] == [(2, 5), (1, 4)]
+    # the DCT-IV sign gate: the branch qubit first
+    signs = [qubits for kind, qubits in pdft.DCT4Basis(m=3, n=1).program.steps if kind == "CP"]
+    assert signs == [(2, 1), (3, 2)]

@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from pdft import manifolds
 from pdft.manifolds import (
     PhaseManifold,
     UnitaryManifold,
@@ -234,3 +235,22 @@ def test_transport_is_projection_at_the_new_point_on_every_manifold():
         assert jnp.array_equal(
             manifold.transport(points, new, vector), manifold.project(new, vector)
         )
+
+
+@pytest.mark.parametrize(
+    ("manifold", "prefix", "shape"),
+    [
+        (manifolds.UnitaryManifold(), "U", (2, 2, 3)),
+        (manifolds.OrthogonalManifold(), "U", (2, 2, 3)),
+        (manifolds.Unitary2qManifold(), "T", (2, 2, 2, 2, 3)),
+        (manifolds.Orthogonal2qManifold(), "T", (2, 2, 2, 2, 3)),
+        (manifolds.PhaseManifold(), "Z", (2, 2, 3)),
+    ],
+)
+def test_transport_takes_its_points_under_the_names_each_manifold_gives_them(
+    manifold, prefix, shape
+):
+    """Transport is re-projection at the new point, and callable by keyword."""
+    old, new, vector = (complex_image(shape, seed=seed) for seed in (1, 2, 3))
+    moved = manifold.transport(**{f"{prefix}_old": old, f"{prefix}_new": new, "v": vector})
+    np.testing.assert_array_equal(moved, manifold.project(new, vector))

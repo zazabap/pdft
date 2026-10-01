@@ -195,3 +195,33 @@ def test_maybe_trace_with_none_is_noop():
     """trace_dir=None must yield a context manager that produces None."""
     with _maybe_trace(None) as t:
         assert t is None
+
+
+def test_profiling_takes_the_steps_the_trainer_takes():
+    """Same optimizer defaults, schedule and batches as an unshuffled epoch of
+    `train_basis_batched`, so the losses it records are that epoch's."""
+    rng = np.random.default_rng(0)
+    images = [rng.standard_normal((4, 4)) for _ in range(8)]
+    schedule = {"lr_peak": 0.003, "lr_final": 0.0003, "warmup_frac": 0.05, "max_grad_norm": 1.0}
+    report = pdft.profiling.profile_training(
+        pdft.QFTBasis(m=2, n=2),
+        dataset=images,
+        loss=pdft.L1Norm(),
+        n_steps=4,
+        batch_size=2,
+        **schedule,
+    )
+    trained = pdft.train_basis_batched(
+        pdft.QFTBasis(m=2, n=2),
+        dataset=images,
+        loss=pdft.L1Norm(),
+        epochs=1,
+        batch_size=2,
+        optimizer="adam",
+        shuffle=False,
+        validation_split=0.0,
+        **schedule,
+    )
+    assert [record.loss for record in report.records] == pytest.approx(
+        trained.loss_history, rel=1e-12
+    )

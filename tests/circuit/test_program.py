@@ -10,12 +10,10 @@ from pdft.bases.circuit.qft import qft_gates_1d
 from pdft.circuit import REGISTERS
 from pdft.circuit.builder import (
     CircuitCode,
-    Gate,
     Program,
     _run,
     compile_circuit,
     compile_program,
-    u4_from_phase,
 )
 
 from ..helpers import complex_image, small_circuit
@@ -100,10 +98,3 @@ def test_two_instances_of_a_basis_share_one_compiled_applier():
     compiled = _run._cache_size()
     b.forward_transform(x)
     assert a.code == b.code and _run._cache_size() == compiled
-
-
-def test_compile_program_refuses_a_tensor_of_the_wrong_shape():
-    gates = small_circuit()
-    gates[2] = Gate(kind="CP", qubits=(2, 1), tensor=u4_from_phase(0.7), phase=0.7)
-    with pytest.raises(ValueError, match=r"gate 2 of kind 'CP' needs a tensor of shape \(2, 2\)"):
-        compile_program(gates, 1, 1)

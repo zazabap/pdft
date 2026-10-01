@@ -14,6 +14,8 @@ import pdft
 from pdft.optimizers import RiemannianAdam, RiemannianGD, optimize
 from pdft.optimizers.core import _common_setup, _write_back
 
+from ..helpers import complex_image
+
 
 def _problem(loss=None):
     basis = pdft.QFTBasis(m=2, n=2)
@@ -94,3 +96,27 @@ def test_write_back_unstacks_every_group_into_the_tensor_list():
     assert all(
         jnp.array_equal(now, 2 * before) for now, before in zip(state.current_tensors, tensors)
     )
+
+
+def test_a_clipped_gd_step_has_the_length_of_the_clip():
+    """The line search judges a clipped step against the clipped norm. Against the
+    unclipped one a small clip never shows sufficient decrease: the search runs out
+    and the step shrinks to its last candidate."""
+    basis = pdft.RichBasis(m=2, n=2)
+    image = complex_image((4, 4))
+
+    def loss_fn(tensors):
+        return pdft.loss_function(tensors, 2, 2, basis.code, image, pdft.L1Norm())
+
+    moved, _ = optimize(
+        RiemannianGD(lr=0.1, max_grad_norm=1e-6),
+        list(basis.tensors),
+        loss_fn,
+        jax.grad(loss_fn),
+        max_iter=1,
+        tol=0.0,
+    )
+    distance = math.sqrt(
+        sum(float(jnp.sum(jnp.abs(a - b) ** 2)) for a, b in zip(moved, basis.tensors))
+    )
+    assert distance == pytest.approx(0.1 * 1e-6, rel=1e-3)

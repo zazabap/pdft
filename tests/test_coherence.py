@@ -12,6 +12,7 @@ from pdft.bases import (
     RichBasis,
     TEBDBasis,
     cp_phases,
+    with_tensors,
 )
 from pdft.circuit.builder import controlled_phase_diag, is_compact_cp
 from pdft.coherence import (
@@ -186,17 +187,6 @@ def test_operator_coherence_is_traceable():
     assert max(float(jnp.max(jnp.abs(g))) for g in grads) > 1e-3
 
 
-def test_is_flat_modulus_has_no_relative_slack():
-    """`atol` is the whole tolerance. `jnp.allclose` would add `1e-5 * N^-1/2` on top
-    and call an operator flat that is `1e-6` away from it."""
-    flat = dense_operator(QFTBasis(m=2, n=2))
-    off = flat.at[0, 0].mul(1.0 + 4e-6)
-    assert float(flat_modulus_deviation(off)) == pytest.approx(1e-6, rel=1e-3)
-    assert bool(jnp.allclose(jnp.abs(off), 0.25, atol=1e-8))
-    assert not is_flat_modulus(None, off)
-    assert is_flat_modulus(None, off, atol=2e-6)
-
-
 @pytest.mark.parametrize("ctor", CIRCUIT_CLASSES)
 def test_diagonal_tensors_by_gate_kind_match_the_value_test_at_initialisation(ctor):
     b = ctor(m=2, n=2)
@@ -289,3 +279,23 @@ def test_a_rebuilt_dense_basis_is_not_certified_as_diagonal():
     assert rebuilt.program.tensor_indices(register="both") == front.program.tensor_indices(
         register="both"
     )
+
+
+def test_a_basis_held_in_single_precision_is_flat_modulus():
+    """It sits about ``2e-8`` from flat, beyond ``atol`` alone; the comparison is
+    `allclose`, whose relative slack covers rounding at that precision. The
+    certificate and the sampled check agree."""
+    basis = QFTBasis(m=2, n=2)
+    single = with_tensors(basis, [t.astype(jnp.complex64) for t in basis.tensors])
+    assert float(flat_modulus_deviation(dense_operator(single))) > 1e-8
+    assert is_flat_modulus(single)
+    hadamards = basis.program.tensor_indices(kind="H")
+    assert certify_flat_modulus(single, frozen_indices=hadamards).holds
+    assert sampled_flat_modulus(single, frozen_indices=hadamards)["holds"]
+    # a real departure is still one
+    assert not is_flat_modulus(None, dense_operator(basis).at[0, 0].mul(1.001))
+
+
+def test_sampled_flat_modulus_needs_a_trial():
+    with pytest.raises(ValueError, match="trials must be >= 1"):
+        sampled_flat_modulus(QFTBasis(m=1, n=1), trials=0)

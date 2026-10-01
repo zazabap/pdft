@@ -244,3 +244,26 @@ def test_dct_matrix_is_the_orthonormal_dct_ii():
         mat = np.asarray(_dct_matrix(n)).real
         np.testing.assert_allclose(mat @ mat.T, np.eye(n), atol=1e-14)
         np.testing.assert_allclose(mat[0], np.full(n, n**-0.5), atol=1e-15)
+
+
+def test_fit_to_dct_with_no_steps_returns_the_starting_tensors(capsys):
+    from pdft.bases.circuit.rich import fit_to_dct
+
+    start = pdft.RichBasis(m=1, n=1).tensors
+    fitted = fit_to_dct(lambda: pdft.RichBasis(m=1, n=1), n_steps=0)
+    assert len(fitted) == len(start)
+    assert all(jnp.array_equal(a, b) for a, b in zip(fitted, start))
+    assert capsys.readouterr().out == ""
+
+
+def test_fit_to_dct_steps_at_the_learning_rate_it_is_given(capsys):
+    from pdft.bases.circuit.rich import fit_to_dct
+
+    start = pdft.RichBasis(m=1, n=1).tensors
+
+    def moved(lr):
+        fitted = fit_to_dct(lambda: pdft.RichBasis(m=1, n=1), n_steps=1, lr=lr)
+        return sum(float(jnp.sum(jnp.abs(a - b))) for a, b in zip(fitted, start))
+
+    # the first Adam step has the length of the learning rate
+    assert moved(0.05) == pytest.approx(5 * moved(0.01), rel=0.05)

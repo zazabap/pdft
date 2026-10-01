@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import pdft
 from pdft.bases.circuit.qft import qft_gates_1d
 from pdft.circuit.builder import (
     GATE_SHAPES,
@@ -20,10 +21,17 @@ from pdft.circuit.builder import (
     apply_circuit,
     apply_program,
     compile_program,
-    hadamard_gate,
 )
 
-from ..helpers import BASES, case_rng, complex_image, complex_normal, random_unitary, small_circuit
+from ..helpers import (
+    BASES,
+    case_rng,
+    complex_image,
+    complex_normal,
+    generic,
+    random_unitary,
+    small_circuit,
+)
 
 
 def test_apply_program_is_apply_circuit_on_one_double_precision_image():
@@ -182,17 +190,51 @@ def test_inverse_walks_the_steps_backwards_with_swapped_legs():
     assert not jnp.allclose(CircuitCode(program, inverse=True)(*tensors, out), pic, atol=1e-6)
 
 
-def test_the_slice_arithmetic_is_what_runs_when_asked_for():
-    """The two arithmetics agree to rounding, so agreement alone cannot show which ran:
-    with slices the one-qubit gates involve no contraction at all."""
-    program, tensors = compile_program([hadamard_gate(1), hadamard_gate(2)], 1, 1)
+def test_a_code_called_directly_reads_the_qubits_from_the_first_axes():
+    """``basis.code(*tensors, pic)`` takes the first ``m + n`` axes as the qubits. An axis
+    after them rides along, and an array with too few is refused, not misread."""
+    basis = generic(pdft.RichBasis(m=1, n=2), np.random.default_rng(4))
+    stack = complex_image((2, 2, 2, 3), seed=4)
+    out = basis.code(*basis.tensors, stack)
+    assert out.shape == stack.shape
+    for k in range(3):
+        np.testing.assert_allclose(
+            out[..., k], basis.code(*basis.tensors, stack[..., k]), rtol=0, atol=1e-14
+        )
+    with pytest.raises(ValueError, match="out of bounds"):
+        basis.code(*basis.tensors, complex_image((2, 4)))
+
+
+def _primitives(jaxpr) -> set[str]:
+    """The names of the primitives in a traced graph, those inside jitted calls included."""
+    names = set()
+    for equation in jaxpr.eqns:
+        names.add(equation.primitive.name)
+        for value in equation.params.values():
+            inner = getattr(value, "jaxpr", value)
+            if hasattr(inner, "eqns"):
+                names |= _primitives(inner)
+    return names
+
+
+@pytest.mark.parametrize("kind", ["H", "CRY"])
+def test_the_slice_arithmetic_is_what_runs_when_asked_for(kind):
+    """The two arithmetics agree to rounding, so agreement cannot show which one ran. With
+    slices a one-qubit gate, and the block of a controlled rotation, involve no
+    contraction at all; and that holds for each way of asking: the walk, a
+    ``CircuitCode``, ``apply_program``."""
+    steps = (("H", (1,)), ("H", (2,))) if kind == "H" else (("CRY", (1, 2)),)
+    program = Program(1, 1, steps, tuple(range(len(steps))))
+    tensors = [HADAMARD] * len(steps)
     pic = complex_image((2, 2), seed=2)
-
-    def primitives(slices):
-        graph = jax.make_jaxpr(
-            lambda *operands: _walk(program, False, slices, operands[:-1], operands[-1])
-        )(*tensors, pic)
-        return {equation.primitive.name for equation in graph.eqns}
-
-    assert "dot_general" in primitives(False)
-    assert "dot_general" not in primitives(True)
+    ways = {
+        "walk": lambda flag: lambda *ts: _walk(program, False, flag, ts, pic),
+        "code": lambda flag: lambda *ts: CircuitCode(program, slices=flag)(*ts, pic),
+        "apply_program": lambda flag: lambda *ts: apply_program(program, ts, pic, slices=flag),
+    }
+    for name, way in ways.items():
+        contracts = {
+            flag: "dot_general" in _primitives(jax.make_jaxpr(way(flag))(*tensors).jaxpr)
+            for flag in (False, True)
+        }
+        assert contracts == {False: True, True: False}, name

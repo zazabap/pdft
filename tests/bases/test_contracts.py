@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import bases_allclose, program_of, with_tensors
+from pdft.bases import bases_allclose, program_of, with_cp_phases, with_tensors
 from pdft.bases.block.block import BlockCode
 from pdft.circuit import GATE_KINDS, REGISTERS, is_compact_cp
 from pdft.circuit.builder import GATE_SHAPES
@@ -52,7 +52,8 @@ def test_pytree_leaves_are_the_tensors_in_order(case):
     doubled = jax.tree_util.tree_unflatten(treedef, [2 * leaf for leaf in leaves])
     assert type(doubled) is type(basis) and (doubled.m, doubled.n) == (basis.m, basis.n)
     assert all(jnp.array_equal(d, 2 * t) for d, t in zip(doubled.tensors, basis.tensors))
-    assert bases_allclose(jax.tree_util.tree_map(lambda t: t, basis), basis)
+    again = jax.tree_util.tree_map(lambda t: t, basis)
+    assert bases_allclose(again, basis) and type(again.tensors) is list
     # The rebuilt basis computes with the leaves it was given, not the ones it was built from.
     probe = jnp.asarray(complex_normal(case_rng(case), basis.image_size))
     shape = (2,) * (basis.m + basis.n)
@@ -224,3 +225,13 @@ def test_the_gate_kind_implies_the_manifold_the_optimiser_picks(case):
     for (kind, _), tensor in zip(program_of(basis).sorted_steps, basis.tensors):
         assert classify_manifold(tensor) == implied[kind]
         assert is_compact_cp(tensor) == (kind == "CP")
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_helpers_that_replace_tensors_keep_their_precision(case):
+    single = _single_precision(BASES[case]())
+    angles = jnp.zeros(len(program_of(single).tensor_indices(kind="CP")))
+    assert {t.dtype for t in with_cp_phases(single, angles).tensors} == {jnp.dtype("complex64")}
+    if getattr(type(single), "freezes_to_blocked", False) and min(single.m, single.n) > 1:
+        frozen, indices = pdft.freeze_as_blocked(single, 1, 1)
+        assert indices and {t.dtype for t in frozen.tensors} == {jnp.dtype("complex64")}

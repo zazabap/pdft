@@ -222,12 +222,22 @@ def test_a_subclass_that_is_not_a_dataclass_keeps_its_attributes():
     assert jax.tree_util.tree_structure(_Plainer(2, 2)) != jax.tree_util.tree_structure(basis)
 
 
-def test_the_inverse_follows_a_code_passed_alone():
-    """A code passed without its inverse still gets the inverse of its own circuit."""
+@pytest.mark.parametrize("given", ["code", "inv_code"])
+def test_a_code_passed_alone_brings_its_counterpart(given):
+    """Its program, the other direction, the same arithmetic."""
     front = pdft.EntangledQFTBasis(m=2, n=2, seed=1, entangle_position="front")
-    rebuilt = pdft.EntangledQFTBasis(m=2, n=2, tensors=front.tensors, code=front.code)
-    assert rebuilt.program == front.program and rebuilt.inv_code == front.inv_code
+    passed = replace(getattr(front, given), slices=True)
+    rebuilt = pdft.EntangledQFTBasis(m=2, n=2, tensors=front.tensors, **{given: passed})
+    assert rebuilt.program == front.program
+    assert rebuilt.code == replace(front.code, slices=True)
+    assert rebuilt.inv_code == replace(front.inv_code, slices=True)
     x = complex_image((4, 4))
     np.testing.assert_allclose(
         rebuilt.inverse_transform(rebuilt.forward_transform(x)), x, atol=1e-12
     )
+
+
+def test_a_callable_that_is_not_a_circuit_code_is_paired_with_the_default_circuit():
+    plain = pdft.QFTBasis(m=1, n=1)
+    wrapped = pdft.QFTBasis(m=1, n=1, code=lambda *operands: plain.code(*operands))
+    assert wrapped.program == plain.program and wrapped.inv_code == plain.inv_code
