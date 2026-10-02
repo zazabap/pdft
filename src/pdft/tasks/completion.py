@@ -40,7 +40,8 @@ def complete(basis, observed: Array, mask: Array, *, k: int, steps: int) -> Arra
     Parameters
     ----------
     basis
-        Any basis: only ``forward_transform`` and ``inverse_transform`` are called.
+        Any basis: it is used through ``forward_transform``,
+        ``inverse_transform`` and ``image_size`` alone.
     observed : Array
         The image, of the basis's ``image_size``. Only the pixels under
         ``mask`` are read.
@@ -57,6 +58,8 @@ def complete(basis, observed: Array, mask: Array, *, k: int, steps: int) -> Arra
         The reconstruction: equal to ``observed`` under the mask, real, in the
         precision the basis's transforms return.
 
+    Notes
+    -----
     Traceable in the basis's tensors, ``observed`` and ``mask``; ``k`` and
     ``steps`` are static. Each step is rematerialised in the backward pass, so
     a gradient holds one image per step, not the intermediates of every gate.
@@ -65,7 +68,8 @@ def complete(basis, observed: Array, mask: Array, *, k: int, steps: int) -> Arra
     of equal magnitude, and a cut between the two of a pair would be decided
     by rounding. Magnitudes within ``sqrt(eps)`` of the cut count as tied and
     the tie is settled by position (``topk_truncate``'s ``rtol``), so the
-    result does not depend on the device or on the arithmetic of the applier.
+    reconstruction and its gradient are the same, up to rounding, on a CPU and
+    on a GPU and with either arithmetic of the applier.
     """
     if k < 1 or steps < 1:
         raise ValueError(f"k and steps must be positive, got k={k}, steps={steps}")
