@@ -12,11 +12,11 @@ or disable entirely by setting PDFT_DISABLE_COMPILE_CACHE=1.
 Public API: import from subpackages directly, e.g.
 
     from pdft.bases import QFTBasis
-    from pdft.training import train_basis, train_basis_batched
+    from pdft.training import train_basis, train_basis_batched, train_basis_steps
     from pdft.optimizers import RiemannianGD, RiemannianAdam
     from pdft.loss import L1Norm, MSELoss
     from pdft.io import save_basis, load_basis
-    from pdft.tasks import compress, recover
+    from pdft.tasks import compress, recover, complete, completion_loss
     from pdft.coherence import coherence, certify_flat_modulus
 
 The names re-exported at the package root below are kept only for the
@@ -63,7 +63,7 @@ from .bases import (
 from .coherence import certify_flat_modulus, coherence
 from .loss import AbstractLoss, L1Norm, MSELoss, loss_function
 from .optimizers import RiemannianAdam, RiemannianGD, optimize
-from .training import TrainingResult, train_basis, train_basis_batched
+from .training import TrainingResult, train_basis, train_basis_batched, train_basis_steps
 
 __all__ = [
     "AbstractLoss",
@@ -91,4 +91,5 @@ __all__ = [
     "optimize",
     "train_basis",
     "train_basis_batched",
+    "train_basis_steps",
 ]
