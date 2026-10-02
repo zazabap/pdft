@@ -15,7 +15,8 @@ Public API: import from subpackages directly, e.g.
     from pdft.training import train_basis, train_basis_batched
     from pdft.optimizers import RiemannianGD, RiemannianAdam
     from pdft.loss import L1Norm, MSELoss
-    from pdft.io import save_basis, load_basis, compress
+    from pdft.io import save_basis, load_basis
+    from pdft.tasks import compress, recover
     from pdft.coherence import coherence, certify_flat_modulus
 
 The names re-exported at the package root below are kept only for the

@@ -1,9 +1,9 @@
-Serialization and compression
-=============================
+Serialization
+=============
 
 .. currentmodule:: pdft.io
 
-JSON serialization of a trained ``QFTBasis`` (the Julia package's schema, tensor order and hash, so a basis saved by Julia loads here) and top-k lossy compression of images in a learned basis.
+JSON serialization of a trained ``QFTBasis`` (the Julia package's schema, tensor order and hash, so a basis saved by Julia loads here). Compression of an image in a basis, with its JSON form, is in :mod:`pdft.tasks`.
 
 .. automodule:: pdft.io
    :no-members:
@@ -20,12 +20,3 @@ JSON serialization of a trained ``QFTBasis`` (the Julia package's schema, tensor
    dict_to_basis
    basis_hash
    format_float_julia_like
-   compress
-   compress_with_k
-   recover
-   CompressedImage
-   compression_stats
-   save_compressed
-   load_compressed
-   compressed_to_dict
-   dict_to_compressed
