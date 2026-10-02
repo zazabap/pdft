@@ -113,16 +113,23 @@ def train_basis_steps(
     there.
 
     Under the default view the tensors come back as complex128 whatever they
-    went in as, as ``RiemannianAdam`` returns them everywhere. A flat view
-    trains its angles in double precision and writes them into tensors of the
-    precision the basis had.
+    went in as, as ``RiemannianAdam`` returns them everywhere (a frozen tensor
+    comes back as it went in). A flat view trains its angles in double
+    precision and writes them into tensors of the precision the basis had.
+
+    Single-precision tensors on a GPU cannot be trained under the default
+    view: the manifold of a tensor is read off its values, and there that test
+    runs in reduced precision and takes unitary gates for phase tensors, so
+    the run fails or leaves the manifold. It is the same defect as in the
+    other trainers. Train in double precision, or through a flat view, which
+    names its manifold and is not affected.
     """
     if not isinstance(optimizer, RiemannianAdam):
         raise TypeError(
             f"train_basis_steps takes a RiemannianAdam, got {type(optimizer).__name__}: "
             "a line search needs a loss that is the same function on every evaluation"
         )
-    if optimizer.lr <= 0:
+    if not optimizer.lr > 0:
         raise ValueError(f"optimizer.lr must be > 0, got {optimizer.lr}")
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")

@@ -76,7 +76,7 @@ def test_the_view_reaches_through_a_blocked_basis():
 
 def test_bases_without_controlled_phases_have_an_empty_view():
     basis = pdft.RichBasis(m=2, n=2)
-    assert cp_phases(basis).shape == (0,)
+    assert cp_phases(basis).shape == (0,) and cp_phases(basis).dtype == jnp.float64
     assert pdft.bases_allclose(with_cp_phases(basis, jnp.zeros((0,))), basis, atol=0.0)
     with pytest.raises(ValueError, match="has 0 controlled-phase gates, got 2 phases"):
         with_cp_phases(basis, jnp.zeros(2))
@@ -126,7 +126,8 @@ def test_cp_diagonals_reads_all_four_phases():
     # a compact controlled-phase tensor has one phase, in its last entry
     np.testing.assert_array_equal(diagonals[:, 1, 1], cp_phases(basis))
     assert not diagonals.reshape(4, 4)[:, :3].any()
-    assert cp_diagonals(pdft.RichBasis(m=2, n=2)).shape == (0, 2, 2)
+    empty = cp_diagonals(pdft.RichBasis(m=2, n=2))
+    assert empty.shape == (0, 2, 2) and empty.dtype == jnp.float64
 
 
 def test_with_cp_diagonals_writes_every_phase_and_nothing_else():
@@ -147,6 +148,8 @@ def test_with_cp_diagonals_writes_every_phase_and_nothing_else():
     # one angle per gate is the other view's shape
     with pytest.raises(ValueError, match=r"a gate has phases of shape \(2, 2\), got \(\)"):
         with_cp_diagonals(basis, cp_phases(basis))
+    with pytest.raises(ValueError, match=r"a gate has phases of shape \(2, 2\), got \(4, 1\)"):
+        with_cp_diagonals(basis, angles.reshape(6, 4, 1))
 
 
 @pytest.mark.parametrize("view", [TENSORS, CP_PHASES, CP_DIAGONALS], ids=lambda v: v.name)

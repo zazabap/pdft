@@ -179,6 +179,11 @@ def test_a_loss_that_is_not_finite_stops_the_run():
         ({"optimizer": pdft.RiemannianGD()}, TypeError, "takes a RiemannianAdam, got RiemannianGD"),
         ({"optimizer": "adam"}, TypeError, "takes a RiemannianAdam, got str"),
         ({"optimizer": pdft.RiemannianAdam(lr=0.0)}, ValueError, "optimizer.lr must be > 0"),
+        (
+            {"optimizer": pdft.RiemannianAdam(lr=float("nan"))},
+            ValueError,
+            "optimizer.lr must be > 0",
+        ),
         ({"steps": 0}, ValueError, "steps must be >= 1, got 0"),
         ({"batch_size": 0}, ValueError, "batch_size must be >= 1, got 0"),
         ({"rate": 0.0}, ValueError, r"rate must be in \(0, 1\], got 0.0"),
@@ -232,6 +237,16 @@ def test_single_precision_tensors(view, returned, traces):
     # a flat view holds its angles in double precision from the start, so the step
     # compiles once; Riemannian Adam promotes the tensors after its first step
     assert len(seen) == traces
+
+
+def test_a_frozen_single_precision_tensor_comes_back_as_it_went_in():
+    basis = single_precision(pdft.QFTBasis(m=3, n=3))
+    result = _run(
+        basis, _smooth_images(4), completion_loss(k=7, steps=2), steps=3, frozen_indices=[0, 7]
+    )
+    dtypes = [t.dtype for t in result.basis.tensors]
+    assert [d == jnp.complex64 for d in dtypes] == [i in (0, 7) for i in range(12)]
+    assert all(d == jnp.complex128 for i, d in enumerate(dtypes) if i not in (0, 7))
 
 
 def test_a_rate_of_one_observes_every_pixel():

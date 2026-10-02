@@ -97,9 +97,17 @@ def test_topk_truncate_keeps_an_infinite_entry(rtol):
     assert jitted.tolist() == [jnp.inf, 0.0, 0.0, 0.0]
 
 
-def test_topk_truncate_rejects_a_negative_band():
-    with pytest.raises(ValueError, match="rtol must be >= 0"):
-        topk_truncate(jnp.ones(4), k=2, rtol=-1e-8)
+@pytest.mark.parametrize("rtol", [-1e-8, float("nan"), float("inf")])
+def test_topk_truncate_rejects_a_band_that_is_not_a_width(rtol):
+    with pytest.raises(ValueError, match="rtol must be finite and >= 0"):
+        topk_truncate(jnp.ones(4), k=2, rtol=rtol)
+
+
+def test_topk_truncate_compares_integers_exactly():
+    # magnitudes a float cannot tell apart; the default rule never leaves the integers
+    x = jnp.array([2**53, 2**53 + 1, 5])
+    assert topk_truncate(x, k=1).tolist() == [0, 2**53 + 1, 0]
+    assert jax.jit(lambda a: topk_truncate(a, k=1))(x).tolist() == [0, 2**53 + 1, 0]
 
 
 def test_mseloss_no_extra_loss_unchanged():

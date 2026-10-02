@@ -7,6 +7,7 @@ differentiate.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -77,8 +78,8 @@ def topk_truncate(x: Array, k: int, *, rtol: float = 0.0) -> Array:
     Array
         Same shape and dtype as `x`; all but k entries are zero.
     """
-    if rtol < 0:
-        raise ValueError(f"rtol must be >= 0, got {rtol}")
+    if not 0 <= rtol < math.inf:
+        raise ValueError(f"rtol must be finite and >= 0, got {rtol}")
     # `k` is a Python int (static under vmap); the size comparison is also
     # static. We branch on it OUTSIDE any traced computation.
     k2 = min(int(k), x.size)
@@ -97,14 +98,19 @@ def topk_truncate(x: Array, k: int, *, rtol: float = 0.0) -> Array:
     # always kept; among the entries equal to the threshold, keep just enough
     # to reach k, in flattened-order. The `cumsum <= needed_from_ties`
     # construction selects the FIRST `needed_from_ties` ties.
-    # With rtol=0 the band is empty: `strict_mask` is `flat > threshold` and
-    # `tie_mask` is `flat == threshold`, upstream's two masks. A threshold that
-    # is not finite has no band either (`0 * inf` would be NaN).
-    band = jnp.where(jnp.isfinite(threshold), rtol * threshold, 0.0)
-    strict_mask = flat > threshold + band
+    if rtol:
+        # A band around the threshold; none at a threshold that is not finite
+        # (`rtol * inf - inf` would be NaN).
+        band = jnp.where(jnp.isfinite(threshold), rtol * threshold, 0.0)
+        strict_mask = flat > threshold + band
+        tie_mask = (flat >= threshold - band) & ~strict_mask
+    else:
+        # Upstream's two masks, on the magnitudes as they are: a float band
+        # would round integers above 2**53.
+        strict_mask = flat > threshold
+        tie_mask = flat == threshold
     n_strict = jnp.sum(strict_mask.astype(jnp.int32))
     needed_from_ties = jnp.int32(k2) - n_strict
-    tie_mask = (flat >= threshold - band) & ~strict_mask
     tie_cumsum = jnp.cumsum(tie_mask.astype(jnp.int32))
     keep_tie = tie_mask & (tie_cumsum <= needed_from_ties)
     final_flat_mask = strict_mask | keep_tie
