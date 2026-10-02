@@ -13,7 +13,7 @@ from pdft.circuit import bit_reverse
 from pdft.tasks import completion_loss
 from pdft.training import TrainingResult, train_basis_steps
 
-from ..helpers import case_rng
+from ..helpers import PlainAdam, case_rng
 
 
 def _smooth_images(count: int, seed: int = 0) -> list[np.ndarray]:
@@ -61,25 +61,27 @@ def test_each_step_draws_a_batch_then_its_masks_and_frames_both(batch_size, fram
     assert len({round(v, 9) for v in result.loss_history}) == 6  # a fresh draw at every step
 
 
+@pytest.mark.parametrize("clip", [None, 0.004], ids=["unclipped", "clipped"])
 @pytest.mark.parametrize("view", [CP_DIAGONALS, CP_PHASES], ids=lambda v: v.name)
-def test_on_a_flat_view_the_run_is_plain_adam_on_what_the_view_reads(view):
+def test_on_a_flat_view_the_run_is_plain_adam_on_what_the_view_reads(view, clip):
     basis = pdft.QFTBasis(m=3, n=3)
     images = _smooth_images(5)
     objective = completion_loss(k=7, steps=3)
     lr, beta1, beta2, eps = 0.02, 0.8, 0.99, 1e-8
-    optimizer = pdft.RiemannianAdam(lr=lr, beta1=beta1, beta2=beta2, eps=eps)
+    optimizer = pdft.RiemannianAdam(lr=lr, beta1=beta1, beta2=beta2, eps=eps, max_grad_norm=clip)
     result = _run(basis, images, objective, optimizer=optimizer, view=view, seed=3, steps=5)
 
-    # the same run restated: the draws above, jax's gradient, Adam in numpy
+    # the same run restated: the draws above, jax's gradient, plain Adam
     value_and_grad = jax.value_and_grad(lambda a, x, o: objective(view.write(basis, [a]), x, o))
     (angles,) = (np.asarray(p) for p in view.read(basis))
-    m, v, losses = np.zeros_like(angles), np.zeros_like(angles), []
-    for t, (x, o) in enumerate(_draws(images, 5, 3, 0.4, 3), start=1):
-        loss, g = value_and_grad(jnp.asarray(angles), x, o)
+    adam, losses, norms = PlainAdam(lr, beta1, beta2, eps), [], []
+    for x, o in _draws(images, 5, 3, 0.4, 3):
+        loss, gradient = value_and_grad(jnp.asarray(angles), x, o)
         losses.append(float(loss))
-        m = beta1 * m + (1 - beta1) * np.asarray(g)
-        v = beta2 * v + (1 - beta2) * np.asarray(g) ** 2
-        angles = angles - lr * (m / (1 - beta1**t)) / (np.sqrt(v / (1 - beta2**t)) + eps)
+        norms.append(float(jnp.linalg.norm(gradient)))
+        scale = 1.0 if clip is None else min(1.0, clip / norms[-1])
+        angles = adam.step(angles, scale * np.asarray(gradient))
+    assert clip is None or norms[0] > 1.1 * clip  # the clip bites from the first step
 
     np.testing.assert_allclose(result.loss_history, losses, rtol=1e-10)
     np.testing.assert_allclose(view.read(result.basis)[0], angles, atol=1e-10)

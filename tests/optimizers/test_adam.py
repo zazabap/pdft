@@ -7,6 +7,8 @@ import numpy as np
 import pdft
 from pdft.optimizers import RiemannianAdam, optimize
 
+from ..helpers import PlainAdam
+
 
 def test_riemannian_adam_defaults_match_upstream():
     opt = RiemannianAdam()
@@ -117,13 +119,9 @@ def test_adam_update_on_flat_parameters_is_plain_adam():
     lr, beta1, beta2, eps = 2e-3, 0.9, 0.999, 1e-8
     start = np.random.default_rng(5).normal(size=7)
 
-    # Adam as Kingma and Ba state it, in numpy
-    expected, m, v = start.copy(), np.zeros(7), np.zeros(7)
-    for t in range(1, 41):
-        g = gradient(expected)
-        m = beta1 * m + (1 - beta1) * g
-        v = beta2 * v + (1 - beta2) * g * g
-        expected = expected - lr * (m / (1 - beta1**t)) / (np.sqrt(v / (1 - beta2**t)) + eps)
+    expected, adam = start.copy(), PlainAdam(lr, beta1, beta2, eps)
+    for _ in range(40):
+        expected = adam.step(expected, gradient(expected))
 
     flat = EuclideanManifold(start.shape)
     points = jnp.asarray(start)

@@ -8,6 +8,8 @@ import numpy as np
 from pdft.manifolds import EuclideanManifold
 from pdft.training.adam_step import adam_stepper, init_adam_moments
 
+from ..helpers import PlainAdam
+
 
 def test_the_fused_step_on_flat_parameters_is_plain_adam():
     rng = np.random.default_rng(11)
@@ -20,15 +22,12 @@ def test_the_fused_step_on_flat_parameters_is_plain_adam():
         return jnp.sum(scale * jnp.sin(3.0 * p)) + 0.1 * jnp.sum((p - shift) ** 4) + jnp.sum(q**2)
 
     lr, beta1, beta2, eps = 5e-3, 0.9, 0.999, 1e-8
-    # Adam as Kingma and Ba state it, in numpy, with the gradient written out
-    expected, m, v = start.copy(), np.zeros(5), np.zeros(5)
-    losses = []
-    for t in range(1, 31):
+    # plain Adam, with the gradient written out
+    expected, adam, losses = start.copy(), PlainAdam(lr, beta1, beta2, eps), []
+    for _ in range(30):
         losses.append(float(objective([expected, held], (scale, shift))))
-        g = 3.0 * scale * np.cos(3.0 * expected) + 0.4 * (expected - shift) ** 3
-        m = beta1 * m + (1 - beta1) * g
-        v = beta2 * v + (1 - beta2) * g * g
-        expected = expected - lr * (m / (1 - beta1**t)) / (np.sqrt(v / (1 - beta2**t)) + eps)
+        gradient = 3.0 * scale * np.cos(3.0 * expected) + 0.4 * (expected - shift) ** 3
+        expected = adam.step(expected, gradient)
 
     params = [jnp.asarray(start), jnp.asarray(held)]
     manifolds = [EuclideanManifold(p.shape) for p in params]

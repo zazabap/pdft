@@ -105,3 +105,18 @@ def generic(basis, rng: np.random.Generator):
     return with_tensors(
         basis, [t * jnp.asarray(1 + 0.2 * complex_normal(rng, t.shape)) for t in basis.tensors]
     )
+
+
+class PlainAdam:
+    """Adam as Kingma and Ba state it, in numpy: what the package's update is on flat parameters."""
+
+    def __init__(self, lr: float, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8):
+        self.lr, self.beta1, self.beta2, self.eps = lr, beta1, beta2, eps
+        self.t, self.m, self.v = 0, 0.0, 0.0
+
+    def step(self, point: np.ndarray, gradient: np.ndarray) -> np.ndarray:
+        self.t += 1
+        self.m = self.beta1 * self.m + (1 - self.beta1) * gradient
+        self.v = self.beta2 * self.v + (1 - self.beta2) * gradient**2
+        m_hat, v_hat = self.m / (1 - self.beta1**self.t), self.v / (1 - self.beta2**self.t)
+        return point - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
