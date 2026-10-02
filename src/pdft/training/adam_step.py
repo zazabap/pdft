@@ -1,4 +1,4 @@
-"""JIT'd fused Adam step for the batched training fast path.
+"""JIT'd fused Adam step: one compiled program per training step, for both dataset trainers.
 
 A separate driver from `optimizers.optimize`, which takes one eager step at a
 time with Python control flow on the gradient norm. This one fuses forward,
@@ -16,31 +16,36 @@ how closely.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+
 import jax
 import jax.numpy as jnp
 
-from ..loss import AbstractLoss, mean_loss
-from ..manifolds import stack_tensors
+from ..manifolds import AbstractRiemannianManifold, stack_tensors
 from ..optimizers.adam import _adam_update, _zero_moments
 from ..optimizers.core import _common_setup, _stack_grads
 
 Array = jax.Array
 
 
-def init_adam_moments(tensors) -> tuple[list[Array], list[Array]]:
+def init_adam_moments(
+    tensors, manifolds: Sequence[AbstractRiemannianManifold] | None = None
+) -> tuple[list[Array], list[Array]]:
     """Zero moment buffers for `tensors`: one ``(m, v)`` pair per manifold group.
 
     In the order the step built by `_build_jit_adam_step` for the same tensors
-    takes them, since both group through `_common_setup`.
+    and manifolds takes them, since both group through `_common_setup`.
     """
-    moments = [_zero_moments(pb) for pb in _common_setup(list(tensors)).point_batches.values()]
+    groups = _common_setup(list(tensors), manifolds).point_batches
+    moments = [_zero_moments(pb) for pb in groups.values()]
     return [m for m, _ in moments], [v for _, v in moments]
 
 
 def adam_stepper(
-    basis,
-    loss: AbstractLoss,
+    objective: Callable,
+    tensors,
     *,
+    manifolds: Sequence[AbstractRiemannianManifold] | None = None,
     beta1: float,
     beta2: float,
     eps: float,
@@ -49,6 +54,12 @@ def adam_stepper(
 ):
     """``step(tensors, batch, lr, step_number) -> (tensors, loss)``: the fused step with its moments.
 
+    ``objective(tensors, batch)`` is the scalar to minimise and ``tensors``
+    the point the run starts from. They need not be gate tensors: with
+    ``manifolds`` naming the geometry of each, they are whatever a
+    ``ParameterView`` reads, and ``batch`` is whatever the objective takes
+    (an array, or a tuple of arrays).
+
     The moment buffers are made once, at zero, and kept between calls, so
     they accumulate over the whole run as in Julia; a per-batch
     ``optimize(max_iter=1)`` would zero them on every batch. ``lr`` and
@@ -56,15 +67,16 @@ def adam_stepper(
     arrays, so a schedule does not recompile it.
     """
     step_fn = _build_jit_adam_step(
-        basis,
-        loss,
+        objective,
+        tensors,
+        manifolds=manifolds,
         beta1=beta1,
         beta2=beta2,
         eps=eps,
         max_grad_norm=max_grad_norm,
         frozen_set=frozen_set,
     )
-    m_state, v_state = init_adam_moments(basis.tensors)
+    m_state, v_state = init_adam_moments(tensors, manifolds)
 
     def step(tensors: list[Array], batch: Array, lr: float, step_number: int):
         nonlocal m_state, v_state
@@ -82,16 +94,17 @@ def adam_stepper(
 
 
 def _build_jit_adam_step(
-    basis,
-    loss: AbstractLoss,
+    objective: Callable,
+    tensors,
     *,
+    manifolds: Sequence[AbstractRiemannianManifold] | None = None,
     beta1: float,
     beta2: float,
     eps: float,
     max_grad_norm: float | None,
     frozen_set: frozenset[int] | None = None,
 ):
-    """Build a single JIT'd Adam step for `train_basis_batched`'s fast path.
+    """Build a single JIT'd Adam step: `train_basis_batched`'s fast path, and `train_basis_steps`.
 
     Returns ``step_fn(tensors_list, m_list, v_list, batch, lr_arr, iter_arr)
     -> (new_tensors_list, new_m_list, new_v_list, loss_value)``.
@@ -106,12 +119,12 @@ def _build_jit_adam_step(
     Julia's ``ParametricDFT.jl``: moments accumulate across the whole training
     run rather than being re-zeroed every batch.
     """
-    val_grad_fn = jax.value_and_grad(mean_loss(basis, loss), argnums=0)
+    val_grad_fn = jax.value_and_grad(objective, argnums=0)
 
     # Group the tensors by manifold once: static across the whole training
     # run. The identity batches of the unitary manifolds become closure
     # constants, so `retract` does not rebuild them on every step.
-    setup = _common_setup(list(basis.tensors))
+    setup = _common_setup(list(tensors), manifolds)
     manifold_list = list(setup.manifold_groups)
     indices_list = [tuple(setup.manifold_groups[mfd]) for mfd in manifold_list]
     ibs = [setup.ibatch_cache.get(mfd) for mfd in manifold_list]

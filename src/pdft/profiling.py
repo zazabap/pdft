@@ -195,8 +195,8 @@ def profile_training(
         # The JIT'd Adam step train_basis_batched uses, at the optimizer's defaults.
         defaults = RiemannianAdam()
         adam_step = adam_stepper(
-            basis,
-            loss,
+            mean_loss(basis, loss),
+            basis.tensors,
             beta1=defaults.beta1,
             beta2=defaults.beta2,
             eps=defaults.eps,

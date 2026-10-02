@@ -216,8 +216,8 @@ def train_basis_batched(
     spec = _resolve_optimizer(optimizer, lr=lr_peak, max_grad_norm=max_grad_norm)
     if isinstance(spec, RiemannianAdam):
         adam_step = adam_stepper(
-            basis,
-            loss,
+            _mean_loss,
+            basis.tensors,
             beta1=spec.beta1,
             beta2=spec.beta2,
             eps=spec.eps,
