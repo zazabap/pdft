@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -86,6 +87,14 @@ def test_topk_truncate_band_keeps_exactly_k_and_leaves_clear_cuts_alone():
     # a band wider than the gaps: everything inside it is tied, the first by position kept
     wide = topk_truncate(jnp.array([1.0, 1.05, 3.0, 0.95, 0.2]), k=2, rtol=0.2)
     assert wide.tolist() == [1.0, 0.0, 3.0, 0.0, 0.0]
+
+
+@pytest.mark.parametrize("rtol", [0.0, 1e-8])
+def test_topk_truncate_keeps_an_infinite_entry(rtol):
+    x = jnp.array([jnp.inf, 1.0, 2.0, 3.0])
+    assert topk_truncate(x, k=1, rtol=rtol).tolist() == [jnp.inf, 0.0, 0.0, 0.0]
+    jitted = jax.jit(lambda a: topk_truncate(a, k=1, rtol=rtol))(x)
+    assert jitted.tolist() == [jnp.inf, 0.0, 0.0, 0.0]
 
 
 def test_topk_truncate_rejects_a_negative_band():

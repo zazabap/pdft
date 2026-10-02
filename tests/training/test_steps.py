@@ -13,7 +13,7 @@ from pdft.circuit import bit_reverse
 from pdft.tasks import completion_loss
 from pdft.training import TrainingResult, train_basis_steps
 
-from ..helpers import PlainAdam, case_rng
+from ..helpers import PlainAdam, case_rng, single_precision
 
 
 def _smooth_images(count: int, seed: int = 0) -> list[np.ndarray]:
@@ -67,7 +67,7 @@ def test_on_a_flat_view_the_run_is_plain_adam_on_what_the_view_reads(view, clip)
     basis = pdft.QFTBasis(m=3, n=3)
     images = _smooth_images(5)
     objective = completion_loss(k=7, steps=3)
-    lr, beta1, beta2, eps = 0.02, 0.8, 0.99, 1e-8
+    lr, beta1, beta2, eps = 0.02, 0.8, 0.99, 1e-4  # none of them the default
     optimizer = pdft.RiemannianAdam(lr=lr, beta1=beta1, beta2=beta2, eps=eps, max_grad_norm=clip)
     result = _run(basis, images, objective, optimizer=optimizer, view=view, seed=3, steps=5)
 
@@ -178,6 +178,7 @@ def test_a_loss_that_is_not_finite_stops_the_run():
     [
         ({"optimizer": pdft.RiemannianGD()}, TypeError, "takes a RiemannianAdam, got RiemannianGD"),
         ({"optimizer": "adam"}, TypeError, "takes a RiemannianAdam, got str"),
+        ({"optimizer": pdft.RiemannianAdam(lr=0.0)}, ValueError, "optimizer.lr must be > 0"),
         ({"steps": 0}, ValueError, "steps must be >= 1, got 0"),
         ({"batch_size": 0}, ValueError, "batch_size must be >= 1, got 0"),
         ({"rate": 0.0}, ValueError, r"rate must be in \(0, 1\], got 0.0"),
@@ -185,8 +186,12 @@ def test_a_loss_that_is_not_finite_stops_the_run():
         ({"dataset": []}, ValueError, "dataset must be non-empty"),
         ({"dataset": [np.zeros((4, 8))]}, ValueError, r"dataset\[0\] has shape \(4, 8\)"),
         ({"dataset": [np.zeros((8, 8), dtype=complex)]}, ValueError, r"dataset\[0\] is complex"),
-        ({"frozen_indices": [14]}, ValueError, "out-of-range index 14"),
-        ({"frozen_indices": [1], "view": CP_PHASES}, ValueError, "out-of-range index 1"),
+        ({"frozen_indices": [14]}, ValueError, "index 14; view 'tensors' has 12 parameters"),
+        (
+            {"frozen_indices": [1], "view": CP_PHASES},
+            ValueError,
+            "index 1; view 'cp_phases' has 1 parameters",
+        ),
     ],
 )
 def test_arguments_are_validated(kwargs, error, message):
@@ -200,6 +205,33 @@ def test_arguments_are_validated(kwargs, error, message):
     }
     with pytest.raises(error, match=message):
         train_basis_steps(basis, **(settings | kwargs))
+
+
+@pytest.mark.parametrize("view", [CP_PHASES, CP_DIAGONALS], ids=lambda v: v.name)
+def test_a_view_that_reads_nothing_is_refused(view):
+    # a basis of dense gates has no controlled-phase tensor to train
+    with pytest.raises(ValueError, match=f"the view '{view.name}' reads no parameters"):
+        _run(pdft.RichBasis(m=3, n=3), _smooth_images(3), completion_loss(k=7, steps=2), view=view)
+
+
+@pytest.mark.parametrize(
+    ("view", "returned", "traces"),
+    [(CP_DIAGONALS, jnp.complex64, 1), (CP_PHASES, jnp.complex64, 1), (TENSORS, jnp.complex128, 2)],
+    ids=lambda v: getattr(v, "name", None),
+)
+def test_single_precision_tensors(view, returned, traces):
+    basis = single_precision(pdft.QFTBasis(m=3, n=3))
+    seen = []
+
+    def objective(basis, images, masks):
+        seen.append(basis.tensors[-1].dtype)
+        return completion_loss(k=7, steps=2)(basis, images, masks)
+
+    result = _run(basis, _smooth_images(4), objective, view=view, steps=4)
+    assert {t.dtype for t in result.basis.tensors} == {jnp.dtype(returned)}
+    # a flat view holds its angles in double precision from the start, so the step
+    # compiles once; Riemannian Adam promotes the tensors after its first step
+    assert len(seen) == traces
 
 
 def test_a_rate_of_one_observes_every_pixel():

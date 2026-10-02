@@ -98,8 +98,9 @@ def topk_truncate(x: Array, k: int, *, rtol: float = 0.0) -> Array:
     # to reach k, in flattened-order. The `cumsum <= needed_from_ties`
     # construction selects the FIRST `needed_from_ties` ties.
     # With rtol=0 the band is empty: `strict_mask` is `flat > threshold` and
-    # `tie_mask` is `flat == threshold`, upstream's two masks.
-    band = rtol * threshold
+    # `tie_mask` is `flat == threshold`, upstream's two masks. A threshold that
+    # is not finite has no band either (`0 * inf` would be NaN).
+    band = jnp.where(jnp.isfinite(threshold), rtol * threshold, 0.0)
     strict_mask = flat > threshold + band
     n_strict = jnp.sum(strict_mask.astype(jnp.int32))
     needed_from_ties = jnp.int32(k2) - n_strict

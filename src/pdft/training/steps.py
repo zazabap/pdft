@@ -26,7 +26,7 @@ import numpy as np
 from ..bases.core import TENSORS, ParameterView
 from ..optimizers import RiemannianAdam
 from .adam_step import adam_stepper
-from .batched import _validate_frozen_indices
+from .batched import _check_image_shape, _validate_frozen_indices
 from .result import TrainingResult
 
 Array = jax.Array
@@ -39,8 +39,7 @@ def _stack_real_images(dataset: Sequence, expected_size: tuple[int, int]) -> np.
     images = []
     for i, img in enumerate(dataset):
         arr = np.asarray(img)
-        if arr.shape != expected_size:
-            raise ValueError(f"dataset[{i}] has shape {arr.shape}, expected {expected_size}")
+        _check_image_shape(i, arr, expected_size)
         if np.iscomplexobj(arr):
             raise ValueError(f"dataset[{i}] is complex; a mask is drawn over real images")
         images.append(arr)
@@ -102,12 +101,19 @@ def train_basis_steps(
     Returns a ``TrainingResult`` whose ``loss_history`` holds, per step, the
     loss of that step's batch before its update. Raises ``FloatingPointError``
     on a loss that is not finite.
+
+    Precision: under the default view the tensors come back as complex128
+    whatever they went in as, as ``RiemannianAdam`` returns them everywhere.
+    A flat view trains its angles in double precision and writes them into
+    tensors of the precision the basis had.
     """
     if not isinstance(optimizer, RiemannianAdam):
         raise TypeError(
             f"train_basis_steps takes a RiemannianAdam, got {type(optimizer).__name__}: "
             "a line search needs a loss that is the same function on every evaluation"
         )
+    if optimizer.lr <= 0:
+        raise ValueError(f"optimizer.lr must be > 0, got {optimizer.lr}")
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")
     if batch_size < 1:
@@ -117,7 +123,11 @@ def train_basis_steps(
     images = _stack_real_images(dataset, basis.image_size)
 
     params = [jnp.asarray(p) for p in view.read(basis)]
-    frozen_set = _validate_frozen_indices(frozen_indices, len(params))
+    if not any(p.size for p in params):
+        raise ValueError(f"the view {view.name!r} reads no parameters from this basis")
+    frozen_set = _validate_frozen_indices(
+        frozen_indices, len(params), holder=f"view {view.name!r}", held="parameters"
+    )
 
     def in_parameters(params: list[Array], batch: tuple[Array, Array]) -> Array:
         return objective(view.write(basis, params), *batch)

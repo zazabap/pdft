@@ -353,10 +353,11 @@ class EuclideanManifold:
 
     Not in upstream. The tangent space at every point is the space itself, so
     there is nothing to project onto, nothing to retract to and nothing to
-    transport: a step is ``points + alpha * tangent``. On it ``RiemannianAdam``
-    is Adam (Kingma & Ba) and ``RiemannianGD`` is gradient descent with a line
-    search. It is the geometry of parameters that are not gate tensors, such as
-    the angles a ``ParameterView`` reads off the controlled-phase gates.
+    transport: a step is ``points + alpha * tangent``. On real parameters
+    ``RiemannianAdam`` is then Adam as Kingma and Ba state it. (A complex array
+    is not treated as two real ones: its real and imaginary parts share one
+    second moment.) It is the geometry of parameters that are not gate tensors,
+    such as the angles a ``ParameterView`` reads off the controlled-phase gates.
 
     ``classify_manifold`` never returns it, since values cannot tell a free
     array from a phase tensor: name it through ``group_by_manifold``'s

@@ -29,7 +29,7 @@ from ..circuit.builder import (
     compile_program,
     controlled_phase_diag,
 )
-from ..manifolds import EuclideanManifold, classify_manifold
+from ..manifolds import EuclideanManifold
 
 Array = jax.Array
 
@@ -235,6 +235,14 @@ def _with_cp_tensors(basis, phases: Array, tensor_of: Callable[[Array], Array]):
     return with_tensors(basis, tensors)
 
 
+def _read_cp(basis, read: Callable[[Array], Array], shape: tuple[int, ...]) -> Array:
+    """``read`` of every controlled-phase tensor, stacked; ``shape`` is what it reads per gate."""
+    indices = _cp_indices(basis)
+    if not indices:
+        return jnp.zeros((0, *shape))
+    return jnp.stack([read(basis.tensors[i]) for i in indices])
+
+
 def cp_phases(basis) -> Array:
     """The angle of every controlled-phase gate, in stored order: the phase-only parameters.
 
@@ -250,10 +258,7 @@ def cp_phases(basis) -> Array:
     one of the four phases, and writing it back resets the other three.
     ``cp_diagonals`` is the view of all four.
     """
-    indices = _cp_indices(basis)
-    if not indices:
-        return jnp.zeros((0,))
-    return jnp.stack([jnp.angle(basis.tensors[i][1, 1]) for i in indices])
+    return _read_cp(basis, lambda tensor: jnp.angle(tensor[1, 1]), ())
 
 
 def with_cp_phases(basis, phases: Array):
@@ -276,14 +281,17 @@ def cp_diagonals(basis) -> Array:
     the view is exact for every tensor with unit-modulus entries, so it also
     round-trips a basis the Riemannian trainers have moved.
     """
-    indices = _cp_indices(basis)
-    if not indices:
-        return jnp.zeros((0, 2, 2))
-    return jnp.stack([jnp.angle(basis.tensors[i]) for i in indices])
+    return _read_cp(basis, jnp.angle, (2, 2))
 
 
 def with_cp_diagonals(basis, phases: Array):
-    """A copy of ``basis`` whose controlled-phase tensors are ``exp(i * phases)``. Traceable."""
+    """A copy of ``basis`` whose controlled-phase tensors are ``exp(i * phases)``. Traceable.
+
+    ``phases`` has the shape ``cp_diagonals`` returns, ``(gates, 2, 2)``.
+    """
+    phases = jnp.asarray(phases)
+    if phases.shape[1:] != (2, 2):
+        raise ValueError(f"a gate has phases of shape (2, 2), got {phases.shape[1:]}")
     return _with_cp_tensors(basis, phases, lambda phi: jnp.exp(1j * phi))
 
 
@@ -293,10 +301,19 @@ class ParameterView:
 
     ``read(basis)`` gives the parameters as a list of arrays, ``write(basis,
     params)`` a copy of the basis that holds them, and ``manifolds(params)``
-    the manifold each one lives on. ``write`` is traceable, so a loss
+    the manifold each one lives on, or ``None`` to have it read off their
+    values as ``classify_manifold`` does. ``write`` is traceable, so a loss
     differentiates through it and the parameters are trained like any others:
     the basis and its circuit stay what they are, and whatever the view does
     not read is not trained.
+
+    The package's views: ``TENSORS``, the tensors themselves, each on the
+    manifold its values put it on (what the trainers move when no view is
+    named); ``CP_PHASES``, one angle per controlled-phase gate
+    (``cp_phases``); ``CP_DIAGONALS``, all four phases of every
+    controlled-phase tensor (``cp_diagonals``). The last two are free real
+    numbers on ``EuclideanManifold``, read in double precision whatever the
+    precision of the tensors, and written back in the tensors' own.
     """
 
     name: str
@@ -309,25 +326,21 @@ def _flat(params: Sequence[Array]) -> list[EuclideanManifold]:
     return [EuclideanManifold(tuple(p.shape)) for p in params]
 
 
-#: The tensors themselves, each on the manifold its values put it on: what the
-#: trainers move when no view is named.
 TENSORS = ParameterView(
     "tensors",
     read=lambda basis: list(basis.tensors),
     write=with_tensors,
-    manifolds=lambda params: [classify_manifold(p) for p in params],
+    manifolds=lambda params: None,
 )
-#: One angle per controlled-phase gate (``cp_phases``), as free real numbers.
 CP_PHASES = ParameterView(
     "cp_phases",
-    read=lambda basis: [cp_phases(basis)],
+    read=lambda basis: [cp_phases(basis).astype(jnp.float64)],
     write=lambda basis, params: with_cp_phases(basis, *params),
     manifolds=_flat,
 )
-#: All four phases of every controlled-phase tensor (``cp_diagonals``), as free real numbers.
 CP_DIAGONALS = ParameterView(
     "cp_diagonals",
-    read=lambda basis: [cp_diagonals(basis)],
+    read=lambda basis: [cp_diagonals(basis).astype(jnp.float64)],
     write=lambda basis, params: with_cp_diagonals(basis, *params),
     manifolds=_flat,
 )

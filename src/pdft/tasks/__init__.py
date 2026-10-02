@@ -1,7 +1,8 @@
 """What a basis is used for: one module per task.
 
-A task is written against ``forward_transform`` and ``inverse_transform``
-alone, so it runs on every basis in the package.
+A task takes a basis and data and transforms through ``forward_transform``
+and ``inverse_transform``, never through the circuit, so it runs on every
+basis in the package.
 
 - ``tasks.compression`` — keep the largest coefficients of an image and
   rebuild it from them. Mirror of upstream ``src/compression.jl``.

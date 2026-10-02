@@ -79,11 +79,19 @@ def _validate_batched_args(
         raise ValueError(f"warmup_frac must be in [0, 1), got {warmup_frac}")
 
 
-def _validate_frozen_indices(frozen_indices: list[int] | None, n_tensors: int) -> frozenset:
+def _check_image_shape(index: int, image, expected_size: tuple[int, int]) -> None:
+    if image.shape != expected_size:
+        raise ValueError(f"dataset[{index}] has shape {image.shape}, expected {expected_size}")
+
+
+def _validate_frozen_indices(
+    frozen_indices: list[int] | None, n_tensors: int, holder: str = "basis", held: str = "tensors"
+) -> frozenset:
     """Validate and normalise ``frozen_indices``.
 
     Returns a ``frozenset[int]`` of validated frozen indices (empty set means
-    no freezing).  Raises ``ValueError`` on any violation.
+    no freezing).  Raises ``ValueError`` on any violation. ``holder`` and
+    ``held`` word the message for what the indices count.
     """
     if frozen_indices is None or len(frozen_indices) == 0:
         return frozenset()
@@ -109,7 +117,7 @@ def _validate_frozen_indices(frozen_indices: list[int] | None, n_tensors: int) -
         if i >= n_tensors:
             raise ValueError(
                 f"frozen_indices contains out-of-range index {i}; "
-                f"basis has {n_tensors} tensors (valid range 0..{n_tensors - 1})."
+                f"{holder} has {n_tensors} {held} (valid range 0..{n_tensors - 1})."
             )
         if i in seen:
             raise ValueError(
@@ -172,8 +180,7 @@ def train_basis_batched(
     images = []
     for i, img in enumerate(dataset):
         arr = jnp.asarray(np.asarray(img), dtype=jnp.complex128)
-        if arr.shape != expected_size:
-            raise ValueError(f"dataset[{i}] has shape {arr.shape}, expected {expected_size}")
+        _check_image_shape(i, arr, expected_size)
         images.append(arr)
 
     rng = np.random.default_rng(seed)
