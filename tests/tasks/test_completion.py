@@ -161,6 +161,21 @@ def test_the_gradient_through_the_solver_is_the_derivative():
         assert float(gradient[index]) == pytest.approx(float(numeric), abs=1e-8)
 
 
+def test_the_real_part_is_taken_behind_an_optimization_barrier():
+    """Not a numerical property, a compile-time one that no fast test can time.
+
+    As of JAX 0.11, XLA carries a real part back through the complex gates
+    before it, and compiling the solver takes exponentially long in the depth
+    of the circuit: half an hour for this suite instead of a minute. The
+    barrier in `complete` stops that and changes no number, so nothing else
+    would notice it being tidied away.
+    """
+    basis = pdft.QFTBasis(m=2, n=2)
+    image, mask = _problem(basis, case_rng("barrier"))
+    traced = jax.make_jaxpr(lambda x: complete(basis, x, mask, k=3, steps=2))(image)
+    assert "optimization_barrier" in str(traced)
+
+
 def _nudged(basis, eps):
     """`basis` with one controlled phase moved by `eps`: far below any tolerance, above rounding."""
     index = basis.program.tensor_indices(kind="CP")[0]

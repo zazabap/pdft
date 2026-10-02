@@ -87,7 +87,12 @@ def complete(basis, observed: Array, mask: Array, *, k: int, steps: int) -> Arra
         coefficients = basis.forward_transform(x)
         tie_band = float(jnp.finfo(coefficients.dtype).eps) ** 0.5
         sparse = topk_truncate(coefficients, k, rtol=tie_band)
-        return jnp.where(mask, zero_filled, jnp.real(basis.inverse_transform(sparse))), None
+        # The barrier changes no number. Without it XLA, as of JAX 0.11, carries
+        # the real part back through every complex gate before it, and compiling
+        # takes exponentially long in the depth of the circuit (104 s against
+        # 0.1 s for 4 + 4 qubits).
+        recovered = jnp.real(jax.lax.optimization_barrier(basis.inverse_transform(sparse)))
+        return jnp.where(mask, zero_filled, recovered), None
 
     # The iterate has the precision the transforms return, which need not be the image's.
     precision = jax.eval_shape(lambda x: step(x, None)[0], zero_filled).dtype
