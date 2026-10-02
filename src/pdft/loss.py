@@ -47,7 +47,7 @@ class MSELoss:
             raise ValueError(f"k must be positive, got k={self.k}")
 
 
-def topk_truncate(x: Array, k: int) -> Array:
+def topk_truncate(x: Array, k: int, *, rtol: float = 0.0) -> Array:
     """Keep the k coefficients with largest absolute value; zero the rest.
 
     Mirror of upstream src/loss.jl:28-63. Basis-agnostic (no frequency
@@ -60,12 +60,25 @@ def topk_truncate(x: Array, k: int) -> Array:
     k : int
         Number of coefficients to keep. Clamped to `x.size` if larger.
         Returns `x` unchanged when k >= x.size.
+    rtol : float, optional
+        Half-width of the band around the k-th largest magnitude inside which
+        entries count as tied, as a fraction of that magnitude. Ties are
+        settled by position, the first in flattened order kept. The default 0
+        is upstream's rule: only exactly equal magnitudes tie.
+
+        A band is what makes the choice reproducible where magnitudes are
+        equal by symmetry and so differ only by rounding. The Fourier
+        coefficients of a real image come in conjugate pairs; when the cut
+        falls inside a pair, which of the two survives is decided at rtol=0
+        by the last bit, and changes with the device and the arithmetic.
 
     Returns
     -------
     Array
         Same shape and dtype as `x`; all but k entries are zero.
     """
+    if rtol < 0:
+        raise ValueError(f"rtol must be >= 0, got {rtol}")
     # `k` is a Python int (static under vmap); the size comparison is also
     # static. We branch on it OUTSIDE any traced computation.
     k2 = min(int(k), x.size)
@@ -84,10 +97,13 @@ def topk_truncate(x: Array, k: int) -> Array:
     # always kept; among the entries equal to the threshold, keep just enough
     # to reach k, in flattened-order. The `cumsum <= needed_from_ties`
     # construction selects the FIRST `needed_from_ties` ties.
-    strict_mask = flat > threshold
+    # With rtol=0 the band is empty: `strict_mask` is `flat > threshold` and
+    # `tie_mask` is `flat == threshold`, upstream's two masks.
+    band = rtol * threshold
+    strict_mask = flat > threshold + band
     n_strict = jnp.sum(strict_mask.astype(jnp.int32))
     needed_from_ties = jnp.int32(k2) - n_strict
-    tie_mask = flat == threshold
+    tie_mask = (flat >= threshold - band) & ~strict_mask
     tie_cumsum = jnp.cumsum(tie_mask.astype(jnp.int32))
     keep_tie = tie_mask & (tie_cumsum <= needed_from_ties)
     final_flat_mask = strict_mask | keep_tie

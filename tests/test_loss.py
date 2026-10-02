@@ -7,7 +7,7 @@ from pdft.bases.circuit.qft import qft_code
 from pdft.circuit.builder import GATE_SHAPES
 from pdft.loss import L1Norm, MSELoss, loss_function, topk_truncate
 
-from .helpers import complex_normal, random_unitary
+from .helpers import case_rng, complex_normal, random_unitary
 
 
 def test_l1norm_is_stateless():
@@ -49,6 +49,39 @@ def test_topk_truncate_k_larger_than_length_clamps():
     x = jnp.array([[1.0 + 0j, 2.0]])
     out = topk_truncate(x, k=10)
     assert jnp.allclose(out, x)
+
+
+def test_topk_truncate_settles_exact_ties_by_position():
+    x = jnp.array([2.0, 1.0, 5.0, 2.0, 2.0, 0.5])
+    assert topk_truncate(x, k=3).tolist() == [2.0, 0.0, 5.0, 2.0, 0.0, 0.0]
+
+
+@pytest.mark.parametrize("nudged", [1, 3])
+def test_topk_truncate_band_makes_a_rounding_tie_reproducible(nudged):
+    # Two magnitudes equal up to rounding, the cut between them. Which of the
+    # two is the larger depends on `nudged`; the kept position must not.
+    x = jnp.array([4.0, 1.0, 0.25, 1.0, 3.0]).at[nudged].mul(1 + 1e-13)
+    kept = topk_truncate(x, k=3, rtol=1e-8) != 0
+    assert kept.tolist() == [True, True, False, False, True]
+    # without the band the survivor is whichever rounding made larger
+    exact = topk_truncate(x, k=3) != 0
+    assert exact.tolist() == [True, nudged == 1, False, nudged == 3, True]
+
+
+def test_topk_truncate_band_keeps_exactly_k_and_leaves_clear_cuts_alone():
+    x = jnp.asarray(complex_normal(case_rng("band"), (6, 5)))
+    for k in (1, 7, 29):
+        banded = topk_truncate(x, k, rtol=1e-8)
+        assert int(jnp.sum(banded != 0)) == k
+        assert jnp.array_equal(banded, topk_truncate(x, k))
+    # a band wider than the gaps: everything inside it is tied, the first by position kept
+    wide = topk_truncate(jnp.array([1.0, 1.05, 3.0, 0.95, 0.2]), k=2, rtol=0.2)
+    assert wide.tolist() == [1.0, 0.0, 3.0, 0.0, 0.0]
+
+
+def test_topk_truncate_rejects_a_negative_band():
+    with pytest.raises(ValueError, match="rtol must be >= 0"):
+        topk_truncate(jnp.ones(4), k=2, rtol=-1e-8)
 
 
 def test_mseloss_no_extra_loss_unchanged():
