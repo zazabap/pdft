@@ -93,19 +93,29 @@ def train_basis_steps(
         ``callback(step, basis, loss)`` after every step: the basis as that
         step left it, and the loss the step started from.
 
-    The draw, per step and from one ``np.random.default_rng(seed)``: the batch
-    (``choice`` over the dataset, without replacement within a batch), then its
-    masks (``random(batch.shape) < rate``). That order is the completion
-    paper's, so a seed names the same batches and masks as it does there.
+    Returns
+    -------
+    TrainingResult
+        Its ``loss_history`` holds, per step, the loss of that step's batch
+        before its update.
 
-    Returns a ``TrainingResult`` whose ``loss_history`` holds, per step, the
-    loss of that step's batch before its update. Raises ``FloatingPointError``
-    on a loss that is not finite.
+    Raises
+    ------
+    FloatingPointError
+        On a loss that is not finite.
 
-    Precision: under the default view the tensors come back as complex128
-    whatever they went in as, as ``RiemannianAdam`` returns them everywhere.
-    A flat view trains its angles in double precision and writes them into
-    tensors of the precision the basis had.
+    Notes
+    -----
+    The draw, per step and from one ``np.random.default_rng(seed)``, is the
+    batch (``choice`` over the dataset, without replacement within a batch)
+    and then its masks (``random(batch.shape) < rate``). That order is the
+    completion paper's, so a seed names the same batches and masks as it does
+    there.
+
+    Under the default view the tensors come back as complex128 whatever they
+    went in as, as ``RiemannianAdam`` returns them everywhere. A flat view
+    trains its angles in double precision and writes them into tensors of the
+    precision the basis had.
     """
     if not isinstance(optimizer, RiemannianAdam):
         raise TypeError(
