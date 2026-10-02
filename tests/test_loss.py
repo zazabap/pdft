@@ -68,6 +68,15 @@ def test_topk_truncate_band_makes_a_rounding_tie_reproducible(nudged):
     assert exact.tolist() == [True, nudged == 1, False, nudged == 3, True]
 
 
+def test_topk_truncate_band_reaches_above_the_cut_as_well_as_below():
+    # Three magnitudes equal up to rounding, two of them to keep. The largest
+    # of the three is tied like the others, not kept for being the largest.
+    x = jnp.array([1.0, 5.0, 1.0 + 1e-13, 1.0 + 2e-13, 0.1])
+    kept = topk_truncate(x, k=3, rtol=1e-8) != 0
+    assert kept.tolist() == [True, True, True, False, False]
+    assert (topk_truncate(x, k=3) != 0).tolist() == [False, True, True, True, False]
+
+
 def test_topk_truncate_band_keeps_exactly_k_and_leaves_clear_cuts_alone():
     x = jnp.asarray(complex_normal(case_rng("band"), (6, 5)))
     for k in (1, 7, 29):
