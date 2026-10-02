@@ -32,7 +32,7 @@ class RiemannianAdam:
 
 
 def _zero_moments(points: Array) -> tuple[Array, Array]:
-    """Zero first (complex) and second (real) moment buffers for a batch of points."""
+    """Zero moment buffers for a batch of points: the first in the points' dtype, the second real."""
     return jnp.zeros_like(points), jnp.zeros(points.shape, dtype=jnp.float64)
 
 

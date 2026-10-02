@@ -5,6 +5,8 @@ import pytest
 
 from pdft import manifolds
 from pdft.manifolds import (
+    AbstractRiemannianManifold,
+    EuclideanManifold,
     PhaseManifold,
     UnitaryManifold,
     _make_identity_batch,
@@ -121,6 +123,31 @@ def test_group_by_manifold_buckets_indices():
     pm = next(k for k in groups if isinstance(k, PhaseManifold))
     assert groups[um] == [0, 2]
     assert groups[pm] == [1]
+
+
+def test_group_by_manifold_takes_named_manifolds():
+    H = jnp.array([[1, 1], [1, -1]], dtype=jnp.complex128) / jnp.sqrt(2)
+    angles = jnp.linspace(0.0, 1.0, 6)
+    flat, u2 = EuclideanManifold((6,)), UnitaryManifold(d=2)
+    assert group_by_manifold([angles, H, angles], [flat, u2, flat]) == {flat: [0, 2], u2: [1]}
+    # read off its values, a free array would be taken for a phase tensor
+    assert group_by_manifold([angles]) == {PhaseManifold(): [0]}
+    with pytest.raises(ValueError, match="2 tensors but 1 manifolds"):
+        group_by_manifold([angles, H], [flat])
+
+
+def test_euclidean_manifold_is_flat():
+    rng = np.random.default_rng(3)
+    points, grads, tangent = (jnp.asarray(rng.normal(size=(4, 2))) for _ in range(3))
+    flat = EuclideanManifold((4,))
+    assert isinstance(flat, AbstractRiemannianManifold)
+    assert jnp.array_equal(flat.project(points=points, grads=grads), grads)
+    stepped = flat.retract(points=points, tangent=tangent, alpha=0.3, I_batch=None)
+    assert jnp.array_equal(stepped, points + 0.3 * tangent)
+    assert jnp.array_equal(flat.transport(old=points, new=stepped, vec=grads), grads)
+    # real points stay real, and arrays of another shape are another group
+    assert stepped.dtype == points.dtype == jnp.float64
+    assert flat != EuclideanManifold((5,))
 
 
 def test_unitary_manifold_retract_preserves_unitarity():

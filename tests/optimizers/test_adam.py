@@ -103,3 +103,45 @@ def test_adam_update_is_the_textbook_step_on_the_manifold():
     m_list, v_list = init_adam_moments(basis.tensors)
     assert [m.shape for m in m_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]
     assert [v.shape for v in v_list] == [(2, 2, 4), (2, 2, 2, 2, 2)]
+
+
+def test_adam_update_on_flat_parameters_is_plain_adam():
+    from pdft.manifolds import EuclideanManifold
+    from pdft.optimizers.adam import _adam_update, _zero_moments
+
+    weights = np.arange(1.0, 8.0)
+
+    def gradient(p):
+        return 3.0 * np.cos(3.0 * p) * weights + 0.4 * p**3
+
+    lr, beta1, beta2, eps = 2e-3, 0.9, 0.999, 1e-8
+    start = np.random.default_rng(5).normal(size=7)
+
+    # Adam as Kingma and Ba state it, in numpy
+    expected, m, v = start.copy(), np.zeros(7), np.zeros(7)
+    for t in range(1, 41):
+        g = gradient(expected)
+        m = beta1 * m + (1 - beta1) * g
+        v = beta2 * v + (1 - beta2) * g * g
+        expected = expected - lr * (m / (1 - beta1**t)) / (np.sqrt(v / (1 - beta2**t)) + eps)
+
+    flat = EuclideanManifold(start.shape)
+    points = jnp.asarray(start)
+    moments = _zero_moments(points)
+    for t in range(1, 41):
+        rgrad = flat.project(points, jnp.asarray(gradient(np.asarray(points))))
+        points, *moments = _adam_update(
+            flat,
+            points,
+            rgrad,
+            *moments,
+            lr=lr,
+            beta1=beta1,
+            beta2=beta2,
+            eps=eps,
+            bc1=1 - beta1**t,
+            bc2=1 - beta2**t,
+        )
+    assert points.dtype == jnp.float64
+    np.testing.assert_allclose(points, expected, rtol=1e-13)
+    assert np.abs(expected - start).max() > 0.05  # the run moved

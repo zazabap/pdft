@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import jax
@@ -27,9 +28,15 @@ class _OptimizationState:
     current_tensors: list[Array]
 
 
-def _common_setup(tensors: list[Array]) -> _OptimizationState:
-    """Mirror of upstream src/optimizers.jl:45-78."""
-    groups = group_by_manifold(tensors)
+def _common_setup(
+    tensors: list[Array], manifolds: Sequence[AbstractRiemannianManifold] | None = None
+) -> _OptimizationState:
+    """Mirror of upstream src/optimizers.jl:45-78.
+
+    ``manifolds`` names each tensor's manifold instead of classifying it by
+    value; see ``group_by_manifold``.
+    """
+    groups = group_by_manifold(tensors, manifolds)
     point_batches: dict[AbstractRiemannianManifold, Array] = {}
     ibatch_cache: dict[AbstractRiemannianManifold, Array] = {}
     for manifold, indices in groups.items():
