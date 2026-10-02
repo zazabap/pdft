@@ -309,22 +309,22 @@ def _flat(params: Sequence[Array]) -> list[EuclideanManifold]:
     return [EuclideanManifold(tuple(p.shape)) for p in params]
 
 
-# The tensors themselves, each on the manifold its values put it on: what the
-# trainers move when no view is named.
+#: The tensors themselves, each on the manifold its values put it on: what the
+#: trainers move when no view is named.
 TENSORS = ParameterView(
     "tensors",
     read=lambda basis: list(basis.tensors),
     write=with_tensors,
     manifolds=lambda params: [classify_manifold(p) for p in params],
 )
-# One angle per controlled-phase gate, as free real numbers.
+#: One angle per controlled-phase gate (``cp_phases``), as free real numbers.
 CP_PHASES = ParameterView(
     "cp_phases",
     read=lambda basis: [cp_phases(basis)],
     write=lambda basis, params: with_cp_phases(basis, *params),
     manifolds=_flat,
 )
-# All four phases of every controlled-phase tensor, as free real numbers.
+#: All four phases of every controlled-phase tensor (``cp_diagonals``), as free real numbers.
 CP_DIAGONALS = ParameterView(
     "cp_diagonals",
     read=lambda basis: [cp_diagonals(basis)],
