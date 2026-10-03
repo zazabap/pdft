@@ -26,25 +26,25 @@ from .circuit import (
     tebd_code,
 )
 from .core import (
-    CP_DIAGONALS,
-    CP_PHASES,
-    TENSORS,
     AbstractSparseBasis,
     CircuitBasis,
     ParameterView,
     bases_allclose,
     cp_diagonals,
+    cp_diagonals_view,
     cp_phases,
+    cp_phases_view,
     program_of,
+    tensors_view,
     with_cp_diagonals,
     with_cp_phases,
     with_tensors,
 )
 
 __all__ = [
-    "CP_DIAGONALS",
-    "CP_PHASES",
-    "TENSORS",
+    "cp_diagonals_view",
+    "cp_phases_view",
+    "tensors_view",
     "AbstractSparseBasis",
     "BlockedBasis",
     "CircuitBasis",

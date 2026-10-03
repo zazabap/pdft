@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import CP_DIAGONALS, with_tensors
+from pdft.bases import cp_diagonals_view, with_tensors
 from pdft.loss import topk_truncate
 from pdft.tasks import complete, completion, completion_loss
 
@@ -147,11 +147,11 @@ def test_the_gradient_through_the_solver_is_the_derivative():
     masks = jnp.asarray(rng.random((2, 8, 8)) < 0.5)
     objective = completion_loss(k=9, steps=3)
     # away from the Fourier point, where the coefficients are tied in pairs
-    (angles,) = CP_DIAGONALS.read(basis)
+    (angles,) = cp_diagonals_view.read(basis)
     angles = angles + jnp.asarray(0.3 * rng.normal(size=angles.shape))
 
     def loss(angles):
-        return objective(CP_DIAGONALS.write(basis, [angles]), images, masks)
+        return objective(cp_diagonals_view.write(basis, [angles]), images, masks)
 
     gradient = jax.grad(loss)(angles)
     assert float(jnp.abs(gradient).max()) > 1e-4

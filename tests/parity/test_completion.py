@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import CP_DIAGONALS, cp_diagonals
+from pdft.bases import cp_diagonals, cp_diagonals_view
 from pdft.circuit import bit_reverse
 from pdft.tasks import complete, completion_loss
 from pdft.training import train_basis_steps
@@ -42,7 +42,7 @@ def _train(golden):
             k=int(golden["train_k"]), steps=int(golden["train_solver_steps"])
         ),
         optimizer=pdft.RiemannianAdam(lr=float(golden["lr"])),
-        view=CP_DIAGONALS,
+        view=cp_diagonals_view,
         steps=int(golden["steps"]),
         rate=float(golden["rate"]),
         batch_size=int(golden["batch_size"]),

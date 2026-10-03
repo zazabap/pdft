@@ -307,10 +307,10 @@ class ParameterView:
     the basis and its circuit stay what they are, and whatever the view does
     not read is not trained.
 
-    The package's views: ``TENSORS``, the tensors themselves, each on the
+    The package's views: ``tensors_view``, the tensors themselves, each on the
     manifold its values put it on (what the trainers move when no view is
-    named); ``CP_PHASES``, one angle per controlled-phase gate
-    (``cp_phases``); ``CP_DIAGONALS``, all four phases of every
+    named); ``cp_phases_view``, one angle per controlled-phase gate
+    (``cp_phases``); ``cp_diagonals_view``, all four phases of every
     controlled-phase tensor (``cp_diagonals``). The last two are free real
     numbers on ``EuclideanManifold``, read in double precision whatever the
     precision of the tensors, and written back in the tensors' own.
@@ -332,14 +332,14 @@ def _flat_view(name: str, read: Callable, write: Callable) -> ParameterView:
     )
 
 
-TENSORS = ParameterView(
+tensors_view = ParameterView(
     "tensors",
     read=lambda basis: list(basis.tensors),
     write=with_tensors,
     manifolds=lambda params: None,
 )
-CP_PHASES = _flat_view("cp_phases", cp_phases, with_cp_phases)
-CP_DIAGONALS = _flat_view("cp_diagonals", cp_diagonals, with_cp_diagonals)
+cp_phases_view = _flat_view("cp_phases", cp_phases, with_cp_phases)
+cp_diagonals_view = _flat_view("cp_diagonals", cp_diagonals, with_cp_diagonals)
 
 
 def bases_allclose(a, b, *, atol: float = 1e-10) -> bool:

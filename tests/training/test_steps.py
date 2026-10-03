@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases import CP_DIAGONALS, CP_PHASES, TENSORS, bases_allclose
+from pdft.bases import bases_allclose, cp_diagonals_view, cp_phases_view, tensors_view
 from pdft.circuit import bit_reverse
 from pdft.tasks import completion_loss
 from pdft.training import TrainingResult, train_basis_steps
@@ -62,7 +62,7 @@ def test_each_step_draws_a_batch_then_its_masks_and_frames_both(batch_size, fram
 
 
 @pytest.mark.parametrize("clip", [None, 0.004], ids=["unclipped", "clipped"])
-@pytest.mark.parametrize("view", [CP_DIAGONALS, CP_PHASES], ids=lambda v: v.name)
+@pytest.mark.parametrize("view", [cp_diagonals_view, cp_phases_view], ids=lambda v: v.name)
 def test_on_a_flat_view_the_run_is_plain_adam_on_what_the_view_reads(view, clip):
     basis = pdft.QFTBasis(m=3, n=3)
     images = _smooth_images(5)
@@ -97,7 +97,9 @@ def test_on_a_flat_view_the_run_is_plain_adam_on_what_the_view_reads(view, clip)
     assert result.wall_time_s > 0
 
 
-@pytest.mark.parametrize("view", [TENSORS, CP_DIAGONALS, CP_PHASES], ids=lambda v: v.name)
+@pytest.mark.parametrize(
+    "view", [tensors_view, cp_diagonals_view, cp_phases_view], ids=lambda v: v.name
+)
 def test_training_through_the_solver_lowers_the_loss_on_problems_it_did_not_see(view):
     basis = pdft.QFTBasis(m=3, n=3)
     objective = completion_loss(k=7, steps=6)
@@ -135,7 +137,7 @@ def test_the_callback_sees_every_step():
         basis,
         _smooth_images(5),
         completion_loss(k=7, steps=3),
-        view=CP_DIAGONALS,
+        view=cp_diagonals_view,
         callback=lambda step, trained, loss: seen.append((step, trained, loss)),
     )
     assert [step for step, _, _ in seen] == list(range(6))
@@ -193,7 +195,7 @@ def test_a_loss_that_is_not_finite_stops_the_run():
         ({"dataset": [np.zeros((8, 8), dtype=complex)]}, ValueError, r"dataset\[0\] is complex"),
         ({"frozen_indices": [14]}, ValueError, "index 14; view 'tensors' has 12 parameters"),
         (
-            {"frozen_indices": [1], "view": CP_PHASES},
+            {"frozen_indices": [1], "view": cp_phases_view},
             ValueError,
             "index 1; view 'cp_phases' has 1 parameters",
         ),
@@ -212,7 +214,7 @@ def test_arguments_are_validated(kwargs, error, message):
         train_basis_steps(basis, **(settings | kwargs))
 
 
-@pytest.mark.parametrize("view", [CP_PHASES, CP_DIAGONALS], ids=lambda v: v.name)
+@pytest.mark.parametrize("view", [cp_phases_view, cp_diagonals_view], ids=lambda v: v.name)
 def test_a_view_that_reads_nothing_is_refused(view):
     # a basis of dense gates has no controlled-phase tensor to train
     with pytest.raises(ValueError, match=f"the view '{view.name}' reads no parameters"):
@@ -221,7 +223,11 @@ def test_a_view_that_reads_nothing_is_refused(view):
 
 @pytest.mark.parametrize(
     ("view", "returned", "traces"),
-    [(CP_DIAGONALS, jnp.complex64, 1), (CP_PHASES, jnp.complex64, 1), (TENSORS, jnp.complex128, 2)],
+    [
+        (cp_diagonals_view, jnp.complex64, 1),
+        (cp_phases_view, jnp.complex64, 1),
+        (tensors_view, jnp.complex128, 2),
+    ],
     ids=lambda v: getattr(v, "name", None),
 )
 def test_single_precision_tensors(view, returned, traces):

@@ -9,13 +9,13 @@ import pytest
 
 import pdft
 from pdft.bases import (
-    CP_DIAGONALS,
-    CP_PHASES,
-    TENSORS,
     bases_allclose,
     cp_diagonals,
+    cp_diagonals_view,
     cp_phases,
+    cp_phases_view,
     program_of,
+    tensors_view,
     with_cp_diagonals,
     with_cp_phases,
 )
@@ -154,7 +154,9 @@ def test_with_cp_diagonals_writes_the_four_phases_of_each_gate():
         with_cp_diagonals(basis, angles.reshape(6, 4, 1))
 
 
-@pytest.mark.parametrize("view", [TENSORS, CP_PHASES, CP_DIAGONALS], ids=lambda v: v.name)
+@pytest.mark.parametrize(
+    "view", [tensors_view, cp_phases_view, cp_diagonals_view], ids=lambda v: v.name
+)
 @pytest.mark.parametrize("case", ["qft_3x2", "tebd_cp_3x2", "blocked_qft_2x2_in_3x3"])
 def test_a_view_writes_back_what_it_reads(view, case):
     basis = BASES[case]()
@@ -164,20 +166,22 @@ def test_a_view_writes_back_what_it_reads(view, case):
     assert type(same) is type(basis) and bases_allclose(same, basis, atol=1e-15)
     # what the view does not read, it does not replace
     cp = program_of(basis).tensor_indices(kind="CP")
-    read = set(range(len(basis.tensors))) if view is TENSORS else set(cp)
+    read = set(range(len(basis.tensors))) if view is tensors_view else set(cp)
     assert all(a is b for i, (a, b) in enumerate(zip(same.tensors, basis.tensors)) if i not in read)
 
 
 def test_the_views_name_the_geometry_of_their_parameters():
     basis = pdft.QFTBasis(m=3, n=2)
-    assert CP_PHASES.manifolds(CP_PHASES.read(basis)) == [EuclideanManifold((4,))]
-    assert CP_DIAGONALS.manifolds(CP_DIAGONALS.read(basis)) == [EuclideanManifold((4, 2, 2))]
+    assert cp_phases_view.manifolds(cp_phases_view.read(basis)) == [EuclideanManifold((4,))]
+    assert cp_diagonals_view.manifolds(cp_diagonals_view.read(basis)) == [
+        EuclideanManifold((4, 2, 2))
+    ]
     # the tensors name none: theirs is read off their values, as it always was
-    assert TENSORS.manifolds(TENSORS.read(basis)) is None
-    assert repr(CP_PHASES) == "ParameterView(name='cp_phases')"
+    assert tensors_view.manifolds(tensors_view.read(basis)) is None
+    assert repr(cp_phases_view) == "ParameterView(name='cp_phases')"
 
 
-@pytest.mark.parametrize("view", [CP_PHASES, CP_DIAGONALS], ids=lambda v: v.name)
+@pytest.mark.parametrize("view", [cp_phases_view, cp_diagonals_view], ids=lambda v: v.name)
 def test_a_flat_view_reads_in_double_precision_and_writes_in_the_tensors_own(view):
     basis = single_precision(pdft.QFTBasis(m=3, n=2))
     (angles,) = view.read(basis)
@@ -186,7 +190,7 @@ def test_a_flat_view_reads_in_double_precision_and_writes_in_the_tensors_own(vie
     assert {t.dtype for t in written.tensors} == {jnp.dtype(jnp.complex64)}
 
 
-@pytest.mark.parametrize("view", [CP_PHASES, CP_DIAGONALS], ids=lambda v: v.name)
+@pytest.mark.parametrize("view", [cp_phases_view, cp_diagonals_view], ids=lambda v: v.name)
 def test_a_loss_differentiates_through_a_view(view):
     basis = pdft.QFTBasis(m=2, n=2)
     x = complex_image((4, 4))

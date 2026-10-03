@@ -23,7 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..bases.core import TENSORS, ParameterView
+from ..bases.core import ParameterView, tensors_view
 from ..optimizers import RiemannianAdam
 from .adam_step import adam_stepper
 from .batched import _at_least_one, _check_dataset, _check_image_shape, _validate_frozen_indices
@@ -55,7 +55,7 @@ def train_basis_steps(
     steps: int,
     rate: float,
     batch_size: int = 2,
-    view: ParameterView = TENSORS,
+    view: ParameterView = tensors_view,
     frozen_indices: list[int] | None = None,
     frame: Callable[[Array], Array] | None = None,
     seed: int = 0,
@@ -78,7 +78,7 @@ def train_basis_steps(
         The probability that a pixel is observed.
     view
         What is trained. The default is the tensors, each on its manifold.
-        ``CP_PHASES`` and ``CP_DIAGONALS`` train the controlled-phase angles
+        ``cp_phases_view`` and ``cp_diagonals_view`` train the controlled-phase angles
         as free numbers, on which the update is plain Adam; every other tensor
         is then left as it is.
     frozen_indices

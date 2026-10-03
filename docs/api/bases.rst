@@ -34,9 +34,9 @@ Trainable sparsifying bases. Circuit bases (QFT, entangled QFT, TEBD, MERA, Rich
    cp_diagonals
    with_cp_diagonals
    ParameterView
-   TENSORS
-   CP_PHASES
-   CP_DIAGONALS
+   tensors_view
+   cp_phases_view
+   cp_diagonals_view
    qft_code
    entangled_qft_code
    tebd_code
