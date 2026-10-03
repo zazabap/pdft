@@ -7,30 +7,32 @@
 
 # pdft
 
-[![arXiv](https://img.shields.io/badge/arXiv-2608.00053-b31b1b.svg)](https://arxiv.org/abs/2608.00053)
+[![compression: arXiv 2608.00053](https://img.shields.io/badge/compression-arXiv%202608.00053-b31b1b.svg)](https://arxiv.org/abs/2608.00053)
+[![inpainting: arXiv 2609.17298](https://img.shields.io/badge/inpainting-arXiv%202609.17298-b31b1b.svg)](https://arxiv.org/abs/2609.17298)
 [![Docs](https://img.shields.io/badge/docs-zazabap.github.io%2Fpdft-blue.svg)](https://zazabap.github.io/pdft/)
 
-A Python port of [ParametricDFT.jl](https://github.com/nzy1997/ParametricDFT.jl):
-learning parametric quantum Fourier transforms via manifold optimization. The
-package implements a variational approach that approximates the Discrete
-Fourier Transform (DFT) with parameterized quantum circuits.
+Trainable quantum-circuit transforms for images, in JAX. A circuit of
+Hadamard and controlled-phase gates starts as the quantum Fourier transform;
+its gates are trained so that images become sparse in the basis (compression),
+or so that a sparse-recovery solver fills them in from a fraction of their
+pixels (inpainting). Training moves the gates on their unitary manifolds, or
+the phases alone as free numbers, and the circuit's structure keeps its
+coherence with the pixel basis at the minimum throughout.
 
-This is the reference implementation accompanying the paper
-[*Fast Trainable Multilinear Bases for Image Compression*](https://arxiv.org/abs/2608.00053)
-(An, Ni, Zhou, Liu, 2026). The API reference and example gallery are at
-[zazabap.github.io/pdft](https://zazabap.github.io/pdft/).
+`pdft` is a Python port of [ParametricDFT.jl](https://github.com/nzy1997/ParametricDFT.jl)
+and the reference implementation of the two papers above. The API reference
+and example gallery are at [zazabap.github.io/pdft](https://zazabap.github.io/pdft/).
 
-> Status: the bases (QFT, entangled QFT, TEBD, MERA, Rich/RealRich, DCT-IV,
-> blocked), both Riemannian optimizers (GD + Adam), training, compression and
-> visualization are implemented. Parity with the Julia reference is verified
-> by committed goldens: for `QFTBasis`, the transform, the losses and top-k
-> truncation, the manifold operations, both optimizers' trajectories, the JSON
-> format and compression; for entangled QFT, TEBD and MERA, the forward
-> transform at default options, and for entangled QFT the phase extraction.
-> Rich/RealRich, DCT-IV and the blocked bases have no Julia counterpart and
-> are covered by property tests. Not everything upstream exports is ported:
-> JSON for bases other than `QFTBasis`, the `:middle` entangle position, the
-> loss-history files, device transfer and some of the plots are not.
+> Parity with the Julia reference is verified by committed goldens: for
+> `QFTBasis`, the transform, the losses and top-k truncation, the manifold
+> operations, both optimizers' trajectories, the JSON format and compression;
+> for entangled QFT, TEBD and MERA, the forward transform at default options,
+> and for entangled QFT the phase extraction. Rich/RealRich, DCT-IV, the
+> blocked bases and everything under `pdft.tasks.completion` have no Julia
+> counterpart: they are covered by property tests, and completion by a golden
+> from the inpainting paper's own code. Not everything upstream exports is
+> ported: JSON for bases other than `QFTBasis`, the `:middle` entangle
+> position, the loss-history files, device transfer and some of the plots.
 
 ## Installation
 
@@ -40,10 +42,10 @@ From PyPI (Python 3.11+):
 pip install "pdft>=0.2.4"
 ```
 
-> **Note:** the older `pdft==0.2.2` wheel predates `DCT4Basis` and the
-> `parametrization="u4"` option of `TEBDBasis` / `MERABasis`, so it cannot run
-> the paper's DCT-IV, TEBD-U4, or MERA-U4 configurations. If
-> `pdft.__version__` reports `0.2.2`, upgrade with `pip install -U pdft`.
+> **Note:** the completion task, the step trainer and the parameter views
+> are on `main` and not yet in a released wheel; install from source for
+> them. The older `pdft==0.2.2` wheel predates `DCT4Basis` and the
+> `parametrization="u4"` option of `TEBDBasis` / `MERABasis`.
 
 From source:
 
@@ -56,7 +58,7 @@ pip install -e ".[dev]"
 ## Quick start
 
 Train a parametric QFT basis on a target image with Riemannian gradient
-descent:
+descent, the compression objective:
 
 ```python
 import jax
@@ -77,84 +79,74 @@ result = pdft.train_basis(
 print(result.loss_history[0], "->", result.loss_history[-1])
 ```
 
-Runnable demos live in [`examples/`](examples/) (each takes about
-10 seconds):
+Fill in an image from a tenth of its pixels, then train the phases of the
+circuit through that solver (the inpainting paper's Model B):
+
+```python
+from pdft.bases import cp_diagonals_view
+from pdft.circuit import bit_reverse
+from pdft.tasks import complete, completion_loss
+
+# image: a (64, 64) array in [0, 1]; mask: bool, True where a pixel was observed;
+# images: a stack of training images. A QFTBasis works on the bit-reversed
+# image, and a mask lives on the pixels, hence the reversals.
+basis = pdft.QFTBasis(m=6, n=6)
+filled = bit_reverse(complete(basis, bit_reverse(image * mask), bit_reverse(mask), k=61, steps=60))
+
+result = pdft.train_basis_steps(
+    basis,
+    dataset=images,                                  # in the image's own frame
+    objective=completion_loss(k=61, steps=10),
+    view=cp_diagonals_view,                          # the four phases of every gate, plain Adam
+    optimizer=pdft.RiemannianAdam(lr=0.02),
+    steps=60, rate=0.10, batch_size=2, seed=0,
+    frame=bit_reverse,
+)
+```
+
+Runnable demos live in [`examples/`](examples/) (each takes a few seconds):
 
 ```bash
 python examples/basis_demo.py           # train a QFTBasis, plot the loss
 python examples/optimizer_benchmark.py  # GD vs Adam comparison
 python examples/mera_demo.py            # MERA basis training
+python examples/completion_demo.py      # fill in an image, train through the solver
 ```
 
 ## Coherence with the pixel basis
 
-Compression cares only how few coefficients a basis needs. Anything that
-recovers an image from a *subset of its pixels* — inpainting, completion,
-compressed sensing — is governed by a second quantity, and it is not sparsity:
+Compression cares only how few coefficients a basis needs. Recovering an
+image from a *subset of its pixels* is governed by a second quantity, the
+coherence `mu(U) = N max_ij |U_ij|^2` in `[1, N]`: `mu = 1` is maximal
+incoherence with the pixel basis, `mu = N` an atom living on one pixel.
 
-    mu(U) = N max_ij |U_ij|^2  in [1, N]
-
-`mu = 1` is maximal incoherence with the pixel basis, the best case for
-recovery from pointwise samples; `mu = N` is an atom living on one pixel,
-invisible to any sample set that misses it.
-
-The QFT-family bases (QFT, entangled QFT, TEBD, MERA, Rich, RealRich) all start
-at `mu = 1`. (`DCT4Basis` starts between 2.9 and 4 depending on its size, and a `BlockedBasis` at its number of
-blocks times its inner basis's `mu`, since each of its atoms lives on one block.) There is a structural
-reason `mu = 1` can stay there: if the only non-diagonal gates are one Hadamard per wire, then
-`|U_ij| = N^{-1/2}` for **every** parameter value, so `mu = 1` identically and
-`sqrt(N) U` is a complex Hadamard matrix. Training the controlled-phase gates
-arbitrarily hard, on any objective, cannot move it. Training the Hadamard /
-`U(4)` gates can and does — over eight random draws of them, `mu` reached 26.7
-out of 64 on a `(3, 3)` `QFTBasis`, and 22.5 on `RichBasis`, which has no
-diagonal gates at all (`pdft.coherence.sampled_flat_modulus`, on the
-development version, at its defaults).
-
-`certify_flat_modulus` answers that before a run rather than measuring it
-after, using the same `frozen_indices` that `train_basis_batched` takes:
+The QFT-family bases start at `mu = 1`, and there is a structural reason it
+can stay there: if the only non-diagonal gates are one Hadamard per wire,
+then `|U_ij| = N^{-1/2}` for every parameter value. Training the
+controlled-phase gates, on any objective, cannot move `mu`; training the
+Hadamard or `U(4)` gates can and does. `certify_flat_modulus` answers that
+before a run, with the same `frozen_indices` the trainers take, and the
+phase views (`cp_phases_view`, `cp_diagonals_view`) train nothing else:
 
 ```python
-from pdft.coherence import certify_flat_modulus, coherence, diagonal_tensor_indices
+from pdft.coherence import certify_flat_modulus
 
 basis = pdft.QFTBasis(m=3, n=3)
-coherence(basis)                      # 1.0
-
-cert = certify_flat_modulus(basis)    # nothing frozen
-print(cert.holds, cert.reason)        # False: the Hadamards are trainable
-
-frozen = cert.offending_indices       # exactly what must be held fixed
+cert = certify_flat_modulus(basis)              # False: the Hadamards are trainable
+frozen = cert.offending_indices                 # exactly what must be held fixed
 assert certify_flat_modulus(basis, frozen_indices=frozen)
 result = pdft.train_basis_batched(basis, frozen_indices=frozen, ...)
 ```
 
-Freezing gates is a real trade — it removes the freedom that `RichBasis` and
-the dense (`"u4"`) gates of TEBD and MERA add for compression. The point is that the trade is now visible and
-checkable, so it can be made deliberately per task.
-
 ## Background
 
-For the theory, see the paper:
-- [Fast Trainable Multilinear Bases for Image Compression](https://arxiv.org/abs/2608.00053) (arXiv:2608.00053)
-
-and the upstream notes:
-- [`note/stepbystep.pdf`](https://github.com/nzy1997/ParametricDFT.jl/blob/main/note/stepbystep.pdf)
-- [`note/main.pdf`](https://github.com/nzy1997/ParametricDFT.jl/blob/main/note/main.pdf)
-
-## Citation
-
-If you use this package in your research, please cite:
-
-```bibtex
-@misc{an2026fast,
-  title         = {Fast Trainable Multilinear Bases for Image Compression},
-  author        = {An, Shiwen and Ni, Zhongyi and Zhou, Huanhai and Liu, Jin-Guo},
-  year          = {2026},
-  eprint        = {2608.00053},
-  archivePrefix = {arXiv},
-  primaryClass  = {eess.IV},
-  url           = {https://arxiv.org/abs/2608.00053},
-}
-```
+- [Fast Trainable Multilinear Bases for Image Compression](https://arxiv.org/abs/2608.00053)
+  (An, Ni, Zhou, Liu, 2026): the bases, the losses, the Riemannian optimizers.
+- [Quantum-Inspired Trainable and Parameter-Efficient Tensor Networks for Image Inpainting](https://arxiv.org/abs/2609.17298)
+  (An, Slavakis, 2026): the completion solver, training through it, and the
+  coherence argument.
+- The upstream notes: [`note/stepbystep.pdf`](https://github.com/nzy1997/ParametricDFT.jl/blob/main/note/stepbystep.pdf),
+  [`note/main.pdf`](https://github.com/nzy1997/ParametricDFT.jl/blob/main/note/main.pdf).
 
 ## License
 
