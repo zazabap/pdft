@@ -57,6 +57,21 @@ def _resolve_optimizer(spec, lr: float, max_grad_norm: float | None):
     raise ValueError(f"unknown optimizer spec: {spec!r}")
 
 
+def _at_least_one(name: str, value: int) -> None:
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1, got {value}")
+
+
+def _check_dataset(dataset: Sequence) -> None:
+    if len(dataset) == 0:
+        raise ValueError("dataset must be non-empty")
+
+
+def _check_image_shape(index: int, image, expected_size: tuple[int, int]) -> None:
+    if image.shape != expected_size:
+        raise ValueError(f"dataset[{index}] has shape {image.shape}, expected {expected_size}")
+
+
 def _validate_batched_args(
     dataset: Sequence,
     epochs: int,
@@ -65,23 +80,14 @@ def _validate_batched_args(
     early_stopping_patience: int,
     warmup_frac: float,
 ):
-    if len(dataset) == 0:
-        raise ValueError("dataset must be non-empty")
-    if epochs < 1:
-        raise ValueError(f"epochs must be >= 1, got {epochs}")
-    if batch_size < 1:
-        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    _check_dataset(dataset)
+    _at_least_one("epochs", epochs)
+    _at_least_one("batch_size", batch_size)
     if not (0.0 <= validation_split < 1.0):
         raise ValueError(f"validation_split must be in [0, 1), got {validation_split}")
-    if early_stopping_patience < 1:
-        raise ValueError(f"early_stopping_patience must be >= 1, got {early_stopping_patience}")
+    _at_least_one("early_stopping_patience", early_stopping_patience)
     if not (0.0 <= warmup_frac < 1.0):
         raise ValueError(f"warmup_frac must be in [0, 1), got {warmup_frac}")
-
-
-def _check_image_shape(index: int, image, expected_size: tuple[int, int]) -> None:
-    if image.shape != expected_size:
-        raise ValueError(f"dataset[{index}] has shape {image.shape}, expected {expected_size}")
 
 
 def _validate_frozen_indices(
@@ -173,8 +179,7 @@ def train_basis_batched(
     _validate_batched_args(
         dataset, epochs, batch_size, validation_split, early_stopping_patience, warmup_frac
     )
-    if val_every_k_epochs < 1:
-        raise ValueError(f"val_every_k_epochs must be >= 1, got {val_every_k_epochs}")
+    _at_least_one("val_every_k_epochs", val_every_k_epochs)
 
     expected_size = basis.image_size
     images = []

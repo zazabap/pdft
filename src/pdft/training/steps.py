@@ -26,7 +26,7 @@ import numpy as np
 from ..bases.core import TENSORS, ParameterView
 from ..optimizers import RiemannianAdam
 from .adam_step import adam_stepper
-from .batched import _check_image_shape, _validate_frozen_indices
+from .batched import _at_least_one, _check_dataset, _check_image_shape, _validate_frozen_indices
 from .result import TrainingResult
 
 Array = jax.Array
@@ -34,8 +34,7 @@ Array = jax.Array
 
 def _stack_real_images(dataset: Sequence, expected_size: tuple[int, int]) -> np.ndarray:
     """The dataset as one real array, in the precision it came in (integers become float64)."""
-    if len(dataset) == 0:
-        raise ValueError("dataset must be non-empty")
+    _check_dataset(dataset)
     images = []
     for i, img in enumerate(dataset):
         arr = np.asarray(img)
@@ -131,10 +130,8 @@ def train_basis_steps(
         )
     if not optimizer.lr > 0:
         raise ValueError(f"optimizer.lr must be > 0, got {optimizer.lr}")
-    if steps < 1:
-        raise ValueError(f"steps must be >= 1, got {steps}")
-    if batch_size < 1:
-        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    _at_least_one("steps", steps)
+    _at_least_one("batch_size", batch_size)
     if not (0.0 < rate <= 1.0):
         raise ValueError(f"rate must be in (0, 1], got {rate}")
     images = _stack_real_images(dataset, basis.image_size)

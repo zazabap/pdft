@@ -30,15 +30,23 @@ def test_cp_phases_reads_the_qft_angles():
     np.testing.assert_allclose(phases, [np.pi / 2, np.pi / 4, np.pi / 2, np.pi / 2], atol=1e-15)
 
 
+PAIRS = {
+    "phases": (cp_phases, with_cp_phases, ()),
+    "diagonals": (cp_diagonals, with_cp_diagonals, (2, 2)),
+}
+
+
+@pytest.mark.parametrize("pair", list(PAIRS))
 @pytest.mark.parametrize("case", ["qft_3x2", "entangled_3x2", "tebd_cp_3x2", "mera_cp_4x2"])
-def test_with_cp_phases_round_trips(case):
+def test_the_cp_writers_round_trip_and_touch_nothing_else(case, pair):
+    read, write, per_gate = PAIRS[pair]
     basis = BASES[case]()
-    same = with_cp_phases(basis, cp_phases(basis))
+    same = write(basis, read(basis))
     assert type(same) is type(basis) and pdft.bases_allclose(same, basis, atol=1e-15)
-    angles = jnp.asarray(np.random.default_rng(3).uniform(-3, 3, len(cp_phases(basis))))
-    moved = with_cp_phases(basis, angles)
-    np.testing.assert_allclose(cp_phases(moved), angles, atol=1e-14)
-    cp = set(basis.program.tensor_indices(kind="CP"))
+    cp = basis.program.tensor_indices(kind="CP")
+    angles = jnp.asarray(np.random.default_rng(3).uniform(-3, 3, (len(cp), *per_gate)))
+    moved = write(basis, angles)
+    np.testing.assert_allclose(read(moved), angles, atol=1e-14)
     for i, (before, after) in enumerate(zip(basis.tensors, moved.tensors)):
         assert (i in cp) or (after is before)
     x = complex_image(basis.image_size)
@@ -130,19 +138,13 @@ def test_cp_diagonals_reads_all_four_phases():
     assert empty.shape == (0, 2, 2) and empty.dtype == jnp.float64
 
 
-def test_with_cp_diagonals_writes_every_phase_and_nothing_else():
+def test_with_cp_diagonals_writes_the_four_phases_of_each_gate():
     basis = pdft.EntangledQFTBasis(m=3, n=2, seed=1)
-    angles = jnp.asarray(np.random.default_rng(4).uniform(-3, 3, cp_diagonals(basis).shape))
-    moved = with_cp_diagonals(basis, angles)
-    np.testing.assert_allclose(cp_diagonals(moved), angles, atol=1e-14)
     cp = basis.program.tensor_indices(kind="CP")
-    for i, (before, after) in enumerate(zip(basis.tensors, moved.tensors)):
-        if i in cp:
-            np.testing.assert_allclose(after, np.exp(1j * angles[cp.index(i)]), atol=1e-15)
-        else:
-            assert after is before
-    x = complex_image(basis.image_size)
-    np.testing.assert_allclose(moved.inverse_transform(moved.forward_transform(x)), x, atol=1e-12)
+    angles = jnp.asarray(np.random.default_rng(4).uniform(-3, 3, (len(cp), 2, 2)))
+    moved = with_cp_diagonals(basis, angles)
+    for i, phi in zip(cp, angles):
+        np.testing.assert_allclose(moved.tensors[i], np.exp(1j * phi), atol=1e-15)
     with pytest.raises(ValueError, match="has 6 controlled-phase gates, got 2 phases"):
         with_cp_diagonals(basis, angles[:2])
     # one angle per gate is the other view's shape

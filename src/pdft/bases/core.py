@@ -322,8 +322,14 @@ class ParameterView:
     manifolds: Callable = field(repr=False)
 
 
-def _flat(params: Sequence[Array]) -> list[EuclideanManifold]:
-    return [EuclideanManifold(tuple(p.shape)) for p in params]
+def _flat_view(name: str, read: Callable, write: Callable) -> ParameterView:
+    """A view of one real array, read in double precision, on flat space."""
+    return ParameterView(
+        name,
+        read=lambda basis: [read(basis).astype(jnp.float64)],
+        write=lambda basis, params: write(basis, *params),
+        manifolds=lambda params: [EuclideanManifold(tuple(p.shape)) for p in params],
+    )
 
 
 TENSORS = ParameterView(
@@ -332,18 +338,8 @@ TENSORS = ParameterView(
     write=with_tensors,
     manifolds=lambda params: None,
 )
-CP_PHASES = ParameterView(
-    "cp_phases",
-    read=lambda basis: [cp_phases(basis).astype(jnp.float64)],
-    write=lambda basis, params: with_cp_phases(basis, *params),
-    manifolds=_flat,
-)
-CP_DIAGONALS = ParameterView(
-    "cp_diagonals",
-    read=lambda basis: [cp_diagonals(basis).astype(jnp.float64)],
-    write=lambda basis, params: with_cp_diagonals(basis, *params),
-    manifolds=_flat,
-)
+CP_PHASES = _flat_view("cp_phases", cp_phases, with_cp_phases)
+CP_DIAGONALS = _flat_view("cp_diagonals", cp_diagonals, with_cp_diagonals)
 
 
 def bases_allclose(a, b, *, atol: float = 1e-10) -> bool:
