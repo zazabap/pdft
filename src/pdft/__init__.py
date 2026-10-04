@@ -42,7 +42,7 @@ if not _os.environ.get("PDFT_DISABLE_COMPILE_CACHE"):
     except OSError:
         pass
 
-__version__ = "0.2.4"
+__version__ = "0.3.0"
 __upstream_ref__ = "nzy1997/ParametricDFT.jl@a201a27e47df2f0f3ab460f83d49b6e5f5d1e9ef"
 
 # Slim public re-export hub: most-used names only. Anything else: import
