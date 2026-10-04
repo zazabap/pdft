@@ -1,11 +1,31 @@
 """Train a QFT basis
 =================
 
-Train a QFTBasis on a random 4x4 image and plot the loss.
+Train a QFTBasis on a random 4x4 image and plot the loss: the sparsity
+objective of the compression paper, minimised by Riemannian gradient descent
+on the unitary manifold of every gate.
 
 Run: ``python examples/basis_demo.py``
 
 Requires: pdft + pdft[plot] extra.
+
+Reference
+---------
+
+The bases, the losses and the optimizers, and their evaluation on image
+compression:
+
+.. code-block:: bibtex
+
+   @misc{an2026fast,
+     title         = {Fast Trainable Multilinear Bases for Image Compression},
+     author        = {An, Shiwen and Ni, Zhongyi and Zhou, Huanhai and Liu, Jin-Guo},
+     year          = {2026},
+     eprint        = {2608.00053},
+     archivePrefix = {arXiv},
+     primaryClass  = {eess.IV},
+     url           = {https://arxiv.org/abs/2608.00053},
+   }
 """
 from __future__ import annotations
 
@@ -26,7 +46,7 @@ def main(out_dir: str | Path = "out") -> None:
     target = jax.random.normal(jax.random.PRNGKey(7), (4, 4)).astype(jnp.complex128)
     basis = pdft.QFTBasis(m=2, n=2)
 
-    print(f"Training QFTBasis on a 4x4 target image for 50 steps with RiemannianGD...")
+    print("Training QFTBasis on a 4x4 target image for 50 steps with RiemannianGD...")
     t0 = time.perf_counter()
     result = pdft.train_basis(
         basis,
