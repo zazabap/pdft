@@ -39,13 +39,14 @@ and example gallery are at [zazabap.github.io/pdft](https://zazabap.github.io/pd
 From PyPI (Python 3.11+):
 
 ```bash
-pip install "pdft>=0.2.4"
+pip install "pdft>=0.3.0"
 ```
 
-> **Note:** the completion task, the step trainer and the parameter views
-> are on `main` and not yet in a released wheel; install from source for
-> them. The older `pdft==0.2.2` wheel predates `DCT4Basis` and the
-> `parametrization="u4"` option of `TEBDBasis` / `MERABasis`.
+> **Note:** 0.3.0 is the first release with the completion task, the step
+> trainer and the parameter views, and it moves `compress` / `recover` from
+> `pdft.io` to `pdft.tasks`. The older `pdft==0.2.2` wheel predates
+> `DCT4Basis` and the `parametrization="u4"` option of `TEBDBasis` /
+> `MERABasis`.
 
 From source:
 
