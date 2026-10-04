@@ -2,14 +2,16 @@
 
 ```{rst-class} hero-tagline
 ```
-Learning parametric quantum Fourier transforms via manifold optimization, in JAX.
+Trainable quantum-circuit transforms for image compression and inpainting, in JAX.
 
-`pdft` approximates the discrete Fourier transform with a trainable,
-parameterized quantum circuit and optimizes it on the unitary manifold so an
-image becomes sparse in the learned basis. It is a faithful Python port of
+`pdft` starts from the quantum Fourier transform as a circuit of Hadamard and
+controlled-phase gates and trains the gates: on their unitary manifolds so an
+image becomes sparse in the basis, or the phases alone, as free numbers,
+through a solver that fills an image in from a fraction of its pixels. It is a
+faithful Python port of
 [ParametricDFT.jl](https://github.com/nzy1997/ParametricDFT.jl), with results
-checked against committed Julia goldens, and the reference implementation for
-the paper [*Fast Trainable Multilinear Bases for Image Compression*](paper.md).
+checked against committed Julia goldens, and the reference implementation of
+[two papers](paper.md).
 
 ::::{grid} 1 1 3 3
 :gutter: 3
@@ -18,23 +20,24 @@ the paper [*Fast Trainable Multilinear Bases for Image Compression*](paper.md).
 :link: api/index
 :link-type: doc
 
-Bases, Riemannian optimizers, losses, training loops, I/O and coherence
-tools, generated from the source docstrings.
+Bases, optimizers, losses, training loops, the compression and completion
+tasks, I/O and coherence tools, generated from the source docstrings.
 :::
 
 :::{grid-item-card} Example gallery
 :link: auto_examples/index
 :link-type: doc
 
-Short runnable scripts that train bases and compare optimizers, with their
-loss curves rendered at build time.
+Short runnable scripts that train bases, compare optimizers and fill in an
+image from a tenth of its pixels, with their figures rendered at build time.
 :::
 
-:::{grid-item-card} Paper & citation
+:::{grid-item-card} Papers
 :link: paper
 :link-type: doc
 
-The arXiv paper this package accompanies, and the BibTeX entry to cite it.
+The two arXiv papers this package accompanies, and which example
+demonstrates each.
 :::
 ::::
 
@@ -69,9 +72,11 @@ any JAX arrays.
 | Block bases | {class}`~pdft.bases.BlockedBasis`, {func}`~pdft.bases.freeze_as_blocked` |
 | Optimizers | {class}`~pdft.optimizers.RiemannianGD` (Armijo line search), {class}`~pdft.optimizers.RiemannianAdam` |
 | Losses | {class}`~pdft.loss.L1Norm`, {class}`~pdft.loss.MSELoss` with top-k truncation |
-| Training | {func}`~pdft.training.train_basis` (single target), {func}`~pdft.training.train_basis_batched` (multi-image, cosine schedule, early stopping) |
+| Training | {func}`~pdft.training.train_basis` (single target), {func}`~pdft.training.train_basis_batched` (multi-image, cosine schedule, early stopping), {func}`~pdft.training.train_basis_steps` (a fresh batch and mask per step, for training through a solver) |
+| Parameter views | {data}`~pdft.bases.tensors_view`, {data}`~pdft.bases.cp_phases_view`, {data}`~pdft.bases.cp_diagonals_view`: what a trainer moves |
+| Tasks | {mod}`pdft.tasks`: top-k compression ({func}`~pdft.tasks.compress`, {func}`~pdft.tasks.recover`) and completion from observed pixels ({func}`~pdft.tasks.complete`, {func}`~pdft.tasks.completion_loss`) |
 | Coherence | {func}`~pdft.coherence.coherence`, {func}`~pdft.coherence.certify_flat_modulus` |
-| I/O | {mod}`pdft.io`: JSON serialization compatible with Julia, and top-k compression |
+| I/O | {mod}`pdft.io`: JSON serialization compatible with Julia |
 
 ```{toctree}
 :hidden:
