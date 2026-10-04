@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from pdft.bases.base import QFTBasis
-from pdft.io.compression import (
+from pdft.tasks.compression import (
     compress,
     compress_with_k,
     compression_stats,
@@ -103,7 +103,7 @@ def test_compression_stats():
 
 def test_both_entry_points_keep_the_same_coefficients_for_the_same_count():
     """`compress` and `compress_with_k` differ only in how the count is chosen."""
-    from pdft.io import compressed_to_dict
+    from pdft.tasks import compressed_to_dict
 
     basis = QFTBasis(m=3, n=2)
     image = np.random.default_rng(3).normal(size=(8, 4))

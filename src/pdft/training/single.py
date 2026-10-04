@@ -9,6 +9,7 @@ import jax
 from ..bases.core import with_tensors
 from ..loss import AbstractLoss, basis_loss
 from ..optimizers import AbstractRiemannianOptimizer, optimize
+from .batched import _at_least_one
 from .result import TrainingResult
 
 Array = jax.Array
@@ -29,8 +30,7 @@ def train_basis(
     Works for any basis registered as a JAX pytree whose leaves begin with
     its tensor list, the convention of every basis in the package.
     """
-    if steps < 1:
-        raise ValueError(f"steps must be >= 1, got {steps}")
+    _at_least_one("steps", steps)
 
     per_image = basis_loss(basis, loss)
 

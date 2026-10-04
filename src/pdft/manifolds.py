@@ -6,6 +6,7 @@ via JAX; no `similar`, `copyto!`, or mutable updates — pure functional.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, runtime_checkable
 
@@ -157,16 +158,26 @@ def classify_manifold(t: Array) -> AbstractRiemannianManifold:
     return PhaseManifold()
 
 
-def group_by_manifold(tensors: list[Array]) -> dict:
+def group_by_manifold(
+    tensors: list[Array], manifolds: Sequence[AbstractRiemannianManifold] | None = None
+) -> dict:
     """`{manifold: [indices]}` bucket map.
 
     Mirror of upstream src/manifolds.jl:113-119, with size-aware bucketing
     (U(2) and U(4) go to separate buckets because UnitaryManifold has a
     `d` field that participates in equality).
+
+    Each tensor's manifold is read off its values by ``classify_manifold``,
+    as upstream does, unless ``manifolds`` names it: one manifold per tensor,
+    for parameters whose geometry their values cannot tell (a real array of
+    angles is flat, and would be classified as a phase tensor).
     """
+    if manifolds is not None and len(manifolds) != len(tensors):
+        raise ValueError(f"{len(tensors)} tensors but {len(manifolds)} manifolds")
     groups: dict[AbstractRiemannianManifold, list[int]] = {}
     for i, t in enumerate(tensors):
-        groups.setdefault(classify_manifold(t), []).append(i)
+        manifold = classify_manifold(t) if manifolds is None else manifolds[i]
+        groups.setdefault(manifold, []).append(i)
     return groups
 
 
@@ -329,3 +340,39 @@ class PhaseManifold:
 
     def transport(self, Z_old: Array, Z_new: Array, v: Array) -> Array:
         return self.project(Z_new, v)
+
+
+# ---------------------------------------------------------------------------
+# EuclideanManifold — flat space
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EuclideanManifold:
+    """Flat space: arrays of ``shape`` whose entries are free numbers.
+
+    Not in upstream. The tangent space at every point is the space itself, so
+    there is nothing to project onto, nothing to retract to and nothing to
+    transport: a step is ``points + alpha * tangent``. On real parameters
+    ``RiemannianAdam`` is then Adam as Kingma and Ba state it. (A complex array
+    is not treated as two real ones: its real and imaginary parts share one
+    second moment.) It is the geometry of parameters that are not gate tensors,
+    such as the angles a ``ParameterView`` reads off the controlled-phase gates.
+
+    ``classify_manifold`` never returns it, since values cannot tell a free
+    array from a phase tensor: name it through ``group_by_manifold``'s
+    ``manifolds``. ``shape`` takes part in equality, as ``UnitaryManifold``'s
+    ``d`` does, so arrays of different shapes fall into separate groups (a
+    group is stacked into one array).
+    """
+
+    shape: tuple[int, ...]
+
+    def project(self, points: Array, grads: Array) -> Array:
+        return grads
+
+    def retract(self, points: Array, tangent: Array, alpha: float, *, I_batch=None) -> Array:
+        return points + alpha * tangent
+
+    def transport(self, old: Array, new: Array, vec: Array) -> Array:
+        return vec

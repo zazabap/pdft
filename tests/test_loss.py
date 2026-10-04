@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -7,7 +8,7 @@ from pdft.bases.circuit.qft import qft_code
 from pdft.circuit.builder import GATE_SHAPES
 from pdft.loss import L1Norm, MSELoss, loss_function, topk_truncate
 
-from .helpers import complex_normal, random_unitary
+from .helpers import case_rng, complex_normal, random_unitary
 
 
 def test_l1norm_is_stateless():
@@ -49,6 +50,64 @@ def test_topk_truncate_k_larger_than_length_clamps():
     x = jnp.array([[1.0 + 0j, 2.0]])
     out = topk_truncate(x, k=10)
     assert jnp.allclose(out, x)
+
+
+def test_topk_truncate_settles_exact_ties_by_position():
+    x = jnp.array([2.0, 1.0, 5.0, 2.0, 2.0, 0.5])
+    assert topk_truncate(x, k=3).tolist() == [2.0, 0.0, 5.0, 2.0, 0.0, 0.0]
+
+
+@pytest.mark.parametrize("nudged", [1, 3])
+def test_topk_truncate_band_makes_a_rounding_tie_reproducible(nudged):
+    # Two magnitudes equal up to rounding, the cut between them. Which of the
+    # two is the larger depends on `nudged`; the kept position must not.
+    x = jnp.array([4.0, 1.0, 0.25, 1.0, 3.0]).at[nudged].mul(1 + 1e-13)
+    kept = topk_truncate(x, k=3, rtol=1e-8) != 0
+    assert kept.tolist() == [True, True, False, False, True]
+    # without the band the survivor is whichever rounding made larger
+    exact = topk_truncate(x, k=3) != 0
+    assert exact.tolist() == [True, nudged == 1, False, nudged == 3, True]
+
+
+def test_topk_truncate_band_reaches_above_the_cut_as_well_as_below():
+    # Three magnitudes equal up to rounding, two of them to keep. The largest
+    # of the three is tied like the others, not kept for being the largest.
+    x = jnp.array([1.0, 5.0, 1.0 + 1e-13, 1.0 + 2e-13, 0.1])
+    kept = topk_truncate(x, k=3, rtol=1e-8) != 0
+    assert kept.tolist() == [True, True, True, False, False]
+    assert (topk_truncate(x, k=3) != 0).tolist() == [False, True, True, True, False]
+
+
+def test_topk_truncate_band_keeps_exactly_k_and_leaves_clear_cuts_alone():
+    x = jnp.asarray(complex_normal(case_rng("band"), (6, 5)))
+    for k in (1, 7, 29):
+        banded = topk_truncate(x, k, rtol=1e-8)
+        assert int(jnp.sum(banded != 0)) == k
+        assert jnp.array_equal(banded, topk_truncate(x, k))
+    # a band wider than the gaps: everything inside it is tied, the first by position kept
+    wide = topk_truncate(jnp.array([1.0, 1.05, 3.0, 0.95, 0.2]), k=2, rtol=0.2)
+    assert wide.tolist() == [1.0, 0.0, 3.0, 0.0, 0.0]
+
+
+@pytest.mark.parametrize("rtol", [0.0, 1e-8])
+def test_topk_truncate_keeps_an_infinite_entry(rtol):
+    x = jnp.array([jnp.inf, 1.0, 2.0, 3.0])
+    assert topk_truncate(x, k=1, rtol=rtol).tolist() == [jnp.inf, 0.0, 0.0, 0.0]
+    jitted = jax.jit(lambda a: topk_truncate(a, k=1, rtol=rtol))(x)
+    assert jitted.tolist() == [jnp.inf, 0.0, 0.0, 0.0]
+
+
+@pytest.mark.parametrize("rtol", [-1e-8, float("nan"), float("inf")])
+def test_topk_truncate_rejects_a_band_that_is_not_a_width(rtol):
+    with pytest.raises(ValueError, match="rtol must be finite and >= 0"):
+        topk_truncate(jnp.ones(4), k=2, rtol=rtol)
+
+
+def test_topk_truncate_compares_integers_exactly():
+    # magnitudes a float cannot tell apart; the default rule never leaves the integers
+    x = jnp.array([2**53, 2**53 + 1, 5])
+    assert topk_truncate(x, k=1).tolist() == [0, 2**53 + 1, 0]
+    assert jax.jit(lambda a: topk_truncate(a, k=1))(x).tolist() == [0, 2**53 + 1, 0]
 
 
 def test_mseloss_no_extra_loss_unchanged():

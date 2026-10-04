@@ -20,6 +20,7 @@ The manifold geometry used by the optimizers: projections, retractions and batch
    OrthogonalManifold
    Unitary2qManifold
    Orthogonal2qManifold
+   EuclideanManifold
    classify_manifold
    group_by_manifold
    stack_tensors

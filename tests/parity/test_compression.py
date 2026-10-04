@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from pdft.bases.base import QFTBasis
-from pdft.io.compression import compress_with_k, recover
+from pdft.tasks.compression import compress_with_k, recover
 
 GOLDENS = Path(__file__).resolve().parent.parent.parent / "reference" / "goldens"
 

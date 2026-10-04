@@ -611,7 +611,7 @@ def test_freezing_the_one_qubit_gates_trains_only_the_phases():
 @pytest.mark.parametrize(
     ("frozen", "message"),
     [
-        ([6], "out-of-range index 6"),
+        ([6], r"out-of-range index 6; basis has 6 tensors \(valid range 0..5\)"),
         ([-1], "negative index -1"),
         ([0, 0], "duplicate index 0"),
         ([1.9], "non-integer index 1.9"),

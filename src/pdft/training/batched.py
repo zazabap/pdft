@@ -57,6 +57,21 @@ def _resolve_optimizer(spec, lr: float, max_grad_norm: float | None):
     raise ValueError(f"unknown optimizer spec: {spec!r}")
 
 
+def _at_least_one(name: str, value: int) -> None:
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1, got {value}")
+
+
+def _check_dataset(dataset: Sequence) -> None:
+    if len(dataset) == 0:
+        raise ValueError("dataset must be non-empty")
+
+
+def _check_image_shape(index: int, image, expected_size: tuple[int, int]) -> None:
+    if image.shape != expected_size:
+        raise ValueError(f"dataset[{index}] has shape {image.shape}, expected {expected_size}")
+
+
 def _validate_batched_args(
     dataset: Sequence,
     epochs: int,
@@ -65,25 +80,24 @@ def _validate_batched_args(
     early_stopping_patience: int,
     warmup_frac: float,
 ):
-    if len(dataset) == 0:
-        raise ValueError("dataset must be non-empty")
-    if epochs < 1:
-        raise ValueError(f"epochs must be >= 1, got {epochs}")
-    if batch_size < 1:
-        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    _check_dataset(dataset)
+    _at_least_one("epochs", epochs)
+    _at_least_one("batch_size", batch_size)
     if not (0.0 <= validation_split < 1.0):
         raise ValueError(f"validation_split must be in [0, 1), got {validation_split}")
-    if early_stopping_patience < 1:
-        raise ValueError(f"early_stopping_patience must be >= 1, got {early_stopping_patience}")
+    _at_least_one("early_stopping_patience", early_stopping_patience)
     if not (0.0 <= warmup_frac < 1.0):
         raise ValueError(f"warmup_frac must be in [0, 1), got {warmup_frac}")
 
 
-def _validate_frozen_indices(frozen_indices: list[int] | None, n_tensors: int) -> frozenset:
+def _validate_frozen_indices(
+    frozen_indices: list[int] | None, n_tensors: int, holder: str = "basis", held: str = "tensors"
+) -> frozenset:
     """Validate and normalise ``frozen_indices``.
 
     Returns a ``frozenset[int]`` of validated frozen indices (empty set means
-    no freezing).  Raises ``ValueError`` on any violation.
+    no freezing).  Raises ``ValueError`` on any violation. ``holder`` and
+    ``held`` word the message for what the indices count.
     """
     if frozen_indices is None or len(frozen_indices) == 0:
         return frozenset()
@@ -109,7 +123,7 @@ def _validate_frozen_indices(frozen_indices: list[int] | None, n_tensors: int) -
         if i >= n_tensors:
             raise ValueError(
                 f"frozen_indices contains out-of-range index {i}; "
-                f"basis has {n_tensors} tensors (valid range 0..{n_tensors - 1})."
+                f"{holder} has {n_tensors} {held} (valid range 0..{n_tensors - 1})."
             )
         if i in seen:
             raise ValueError(
@@ -165,15 +179,13 @@ def train_basis_batched(
     _validate_batched_args(
         dataset, epochs, batch_size, validation_split, early_stopping_patience, warmup_frac
     )
-    if val_every_k_epochs < 1:
-        raise ValueError(f"val_every_k_epochs must be >= 1, got {val_every_k_epochs}")
+    _at_least_one("val_every_k_epochs", val_every_k_epochs)
 
     expected_size = basis.image_size
     images = []
     for i, img in enumerate(dataset):
         arr = jnp.asarray(np.asarray(img), dtype=jnp.complex128)
-        if arr.shape != expected_size:
-            raise ValueError(f"dataset[{i}] has shape {arr.shape}, expected {expected_size}")
+        _check_image_shape(i, arr, expected_size)
         images.append(arr)
 
     rng = np.random.default_rng(seed)
@@ -216,8 +228,8 @@ def train_basis_batched(
     spec = _resolve_optimizer(optimizer, lr=lr_peak, max_grad_norm=max_grad_norm)
     if isinstance(spec, RiemannianAdam):
         adam_step = adam_stepper(
-            basis,
-            loss,
+            _mean_loss,
+            basis.tensors,
             beta1=spec.beta1,
             beta2=spec.beta2,
             eps=spec.eps,
