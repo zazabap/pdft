@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "pdft: learning parametric quantum Fourier transforms via manifold optimization"
+abstract: >-
+  Python port of ParametricDFT.jl. pdft builds image bases as isometric tensor
+  networks relaxed from fast transforms (the quantum Fourier transform, the
+  DCT-IV and related topologies) and trains them with Riemannian optimization.
+authors:
+  - family-names: An
+    given-names: Shiwen
+    orcid: "https://orcid.org/0000-0002-4727-2906"
+    affiliation: "Institute of Science Tokyo"
+  - family-names: Ni
+    given-names: Zhongyi
+    orcid: "https://orcid.org/0000-0002-6332-1237"
+    affiliation: "The Hong Kong University of Science and Technology (Guangzhou)"
+  - family-names: Zhou
+    given-names: Huanhai
+    affiliation: "The Hong Kong University of Science and Technology (Guangzhou)"
+  - family-names: Liu
+    given-names: Jin-Guo
+    orcid: "https://orcid.org/0000-0003-1635-2679"
+    affiliation: "The Hong Kong University of Science and Technology (Guangzhou)"
+version: 0.3.0
+date-released: "2026-10-11"
+doi: 10.5281/zenodo.23296617
+license: MIT
+repository-code: "https://github.com/zazabap/pdft"
+url: "https://zazabap.github.io/pdft/"
+keywords:
+  - quantum Fourier transform
+  - tensor networks
+  - Riemannian optimization
+  - image compression
+  - discrete cosine transform
