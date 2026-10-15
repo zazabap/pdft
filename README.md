@@ -167,6 +167,25 @@ to 1.7 times on a CPU. `train_basis`, most of whose step runs outside the
 circuit, gains less: on a GPU 1.2 to 1.5 times at 256x256 and about 5 at
 1024x1024.
 
+The FFT is the baseline. At its initial tensors a `QFTBasis` computes the
+same transform as the FFT: `basis.forward_transform(bit_reverse(x))` is
+`np.fft.ifft2(x, norm="ortho")`. The FFT is faster at every size. One
+transform of a complex128 image on a CPU (Ryzen 5 9600X, 6 cores, JAX
+0.10.2), in ms, median of repeated calls with compilation excluded:
+
+| Image | FFT (`jnp.fft.fft2`) | `QFTBasis`, default | `QFTBasis`, both options |
+|---|---|---|---|
+| 64x64 | 0.014 | 0.11 | 0.12 |
+| 128x128 | 0.059 | 0.61 | 0.31 |
+| 256x256 | 0.11 | 1.4 | 0.75 |
+| 512x512 | 0.38 | 6.7 | 3.4 |
+| 1024x1024 | 2.6 | 36 | 21 |
+| 2048x2048 | 19 | 267 | 152 |
+
+With both options a transform takes 5 to 9 times as long as the FFT, and
+by default 8 to 18 times. What a trained basis offers over the FFT is a
+sparser representation of the images it was trained on, not speed.
+
 ## Coherence with the pixel basis
 
 Compression cares only how few coefficients a basis needs. Recovering an
