@@ -47,6 +47,15 @@ BASES: dict[str, Callable[[], object]] = {
     "blocked_qft_2x2_in_3x3": lambda: pdft.BlockedBasis(pdft.QFTBasis(m=2, n=2), 1, 1),
 }
 
+# The opt-in arithmetic options of a CircuitCode, each alone and both together;
+# both together is the faster choice the docs recommend.
+ARITHMETICS = (
+    {"slices": True},
+    {"merge_diagonals": True},
+    {"slices": True, "merge_diagonals": True},
+)
+FAST = ARITHMETICS[-1]
+
 
 def small_circuit() -> list[Gate]:
     """Four gates on two qubits, one of each kind the einsum form has.

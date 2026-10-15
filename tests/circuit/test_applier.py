@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import string
+from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -21,9 +22,11 @@ from pdft.circuit.builder import (
     apply_circuit,
     apply_program,
     compile_program,
+    cp_gate,
 )
 
 from ..helpers import (
+    ARITHMETICS,
     BASES,
     case_rng,
     complex_image,
@@ -78,24 +81,43 @@ def test_apply_program_inverse_with_conjugated_tensors_is_the_adjoint():
     np.testing.assert_allclose(back, x, atol=1e-12)
 
 
-def test_slices_are_a_distinct_code_computing_the_same_thing():
-    """The opt-in arithmetic of the one-qubit gates agrees with the default to
-    rounding, in both directions and both precisions, at tensors with no symmetry."""
+@pytest.mark.parametrize("options", ARITHMETICS, ids="+".join)
+def test_each_arithmetic_is_a_distinct_code_computing_the_same_thing(options):
+    """Each opt-in arithmetic agrees with the default to rounding, in both
+    directions and both precisions, at tensors with no symmetry, on a circuit
+    that starts and ends with a run of controlled phases oriented both ways."""
     rng = np.random.default_rng(6)
-    gates = small_circuit() + [Gate(kind="CRY", qubits=(2, 1), tensor=HADAMARD, phase=0.0)]
-    program, tensors = compile_program(gates, 1, 1)
-    tensors = [t * jnp.asarray(1 + 0.2 * rng.standard_normal(t.shape)) for t in tensors]
-    assert CircuitCode(program, slices=True) != CircuitCode(program)
+    runs = [cp_gate(2, 1, 0.4), cp_gate(1, 2, 1.1)]
+    cry = Gate(kind="CRY", qubits=(2, 1), tensor=HADAMARD, phase=0.0)
+    program, tensors = compile_program(runs + small_circuit() + [cry] + runs, 1, 1)
+    # Additive noise: a multiplicative one keeps the zeros of the U4, which then
+    # commutes with the run before it and hides where the run is applied.
+    tensors = [t + 0.2 * jnp.asarray(complex_normal(rng, t.shape)) for t in tensors]
+    assert CircuitCode(program, **options) != CircuitCode(program)
     x = jnp.asarray(complex_normal(rng, (4, 2, 2)))
     for inverse in (False, True):
         default = apply_program(program, tensors, x, inverse=inverse)
-        sliced = apply_program(program, tensors, x, inverse=inverse, slices=True)
-        np.testing.assert_allclose(sliced, default, rtol=1e-13, atol=1e-13)
+        other = apply_program(program, tensors, x, inverse=inverse, **options)
+        np.testing.assert_allclose(other, default, rtol=1e-13, atol=1e-13)
         single = apply_program(
-            program, tensors, x.astype(jnp.complex64), inverse=inverse, slices=True
+            program, tensors, x.astype(jnp.complex64), inverse=inverse, **options
         )
         assert single.dtype == jnp.complex64
         np.testing.assert_allclose(single, default, rtol=1e-5, atol=1e-5)
+        # A code called directly computes in the precision the gates and the
+        # image promote to, a real image included, under every arithmetic.
+        code = CircuitCode(program, inverse=inverse)
+        for gates, pic in (
+            (jnp.complex64, x[0]),
+            (jnp.complex128, x[0].astype(jnp.complex64)),
+            (jnp.complex128, x[0].real),
+            (jnp.complex128, x[0].real.astype(jnp.float32)),
+        ):
+            mixed = [t.astype(gates) for t in tensors]
+            want = code(*mixed, pic)
+            got = replace(code, **options)(*mixed, pic)
+            assert got.dtype == want.dtype == jnp.complex128
+            np.testing.assert_allclose(got, want, rtol=1e-13, atol=1e-13)
 
 
 def test_a_gate_outside_the_registers_or_of_an_unknown_kind_is_refused():
@@ -205,16 +227,19 @@ def test_a_code_called_directly_reads_the_qubits_from_the_first_axes():
         basis.code(*basis.tensors, complex_image((2, 4)))
 
 
-def _primitives(jaxpr) -> set[str]:
-    """The names of the primitives in a traced graph, those inside jitted calls included."""
-    names = set()
+def _equations(jaxpr):
+    """The equations of a traced graph, those inside jitted calls included."""
     for equation in jaxpr.eqns:
-        names.add(equation.primitive.name)
+        yield equation
         for value in equation.params.values():
             inner = getattr(value, "jaxpr", value)
             if hasattr(inner, "eqns"):
-                names |= _primitives(inner)
-    return names
+                yield from _equations(inner)
+
+
+def _primitives(jaxpr) -> set[str]:
+    """The names of the primitives in a traced graph, those inside jitted calls included."""
+    return {equation.primitive.name for equation in _equations(jaxpr)}
 
 
 @pytest.mark.parametrize("kind", ["H", "CRY"])
@@ -222,19 +247,62 @@ def test_the_slice_arithmetic_is_what_runs_when_asked_for(kind):
     """The two arithmetics agree to rounding, so agreement cannot show which one ran. With
     slices a one-qubit gate, and the block of a controlled rotation, involve no
     contraction at all; and that holds for each way of asking: the walk, a
-    ``CircuitCode``, ``apply_program``."""
+    ``CircuitCode``, ``apply_program``, with or without merged diagonals."""
     steps = (("H", (1,)), ("H", (2,))) if kind == "H" else (("CRY", (1, 2)),)
     program = Program(1, 1, steps, tuple(range(len(steps))))
     tensors = [HADAMARD] * len(steps)
     pic = complex_image((2, 2), seed=2)
     ways = {
-        "walk": lambda flag: lambda *ts: _walk(program, False, flag, ts, pic),
-        "code": lambda flag: lambda *ts: CircuitCode(program, slices=flag)(*ts, pic),
-        "apply_program": lambda flag: lambda *ts: apply_program(program, ts, pic, slices=flag),
+        "walk": lambda flag, merge: (
+            lambda *ts: _walk(program, False, flag, ts, pic, merge_diagonals=merge)
+        ),
+        "code": lambda flag, merge: (
+            lambda *ts: CircuitCode(program, slices=flag, merge_diagonals=merge)(*ts, pic)
+        ),
+        "apply_program": lambda flag, merge: (
+            lambda *ts: apply_program(program, ts, pic, slices=flag, merge_diagonals=merge)
+        ),
     }
     for name, way in ways.items():
-        contracts = {
-            flag: "dot_general" in _primitives(jax.make_jaxpr(way(flag))(*tensors).jaxpr)
-            for flag in (False, True)
-        }
-        assert contracts == {False: True, True: False}, name
+        for merge in (False, True):
+            contracts = {
+                flag: "dot_general" in _primitives(jax.make_jaxpr(way(flag, merge))(*tensors).jaxpr)
+                for flag in (False, True)
+            }
+            assert contracts == {False: True, True: False}, (name, merge)
+
+
+def test_merged_diagonals_reach_the_image_once_per_run():
+    """Merging changes no number beyond rounding, so agreement cannot show that it
+    ran. A QFT register of four qubits has six controlled phases in three runs:
+    the image is multiplied by a diagonal six times without merging and three
+    times with it, in both directions, with either arithmetic of the one-qubit
+    gates and for each way of asking, a stack of images included."""
+    program, tensors = compile_program(qft_gates_1d(4, 0) + qft_gates_1d(1, 4), 4, 1)
+    x = complex_image((3, 16, 2), seed=2)
+    pic = x[0].reshape((2,) * 5)
+    ways = {
+        "walk": lambda flag, inverse, slices: (
+            lambda *ts: _walk(program, inverse, slices, ts, pic, merge_diagonals=flag)
+        ),
+        "code": lambda flag, inverse, slices: (
+            lambda *ts: CircuitCode(program, inverse, slices, merge_diagonals=flag)(*ts, pic)
+        ),
+        "apply_program": lambda flag, inverse, slices: (
+            lambda *ts: apply_program(
+                program, ts, x, inverse=inverse, slices=slices, merge_diagonals=flag
+            )
+        ),
+    }
+    for name, way in ways.items():
+        image = (3, *pic.shape) if name == "apply_program" else pic.shape
+        for inverse in (False, True):
+            for slices in (False, True):
+                products = {}
+                for flag in (False, True):
+                    jaxpr = jax.make_jaxpr(way(flag, inverse, slices))(*tensors).jaxpr
+                    products[flag] = sum(
+                        equation.primitive.name == "mul" and equation.outvars[0].aval.shape == image
+                        for equation in _equations(jaxpr)
+                    )
+                assert products == {False: 6, True: 3}, (name, inverse, slices)

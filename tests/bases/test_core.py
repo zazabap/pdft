@@ -15,7 +15,7 @@ from pdft.bases.circuit.qft import qft_gates
 from pdft.bases.core import BasisTransforms
 from pdft.circuit.builder import CircuitCode, Program, cp_gate, hadamard_gate
 
-from ..helpers import CIRCUIT_CLASSES, complex_image
+from ..helpers import CIRCUIT_CLASSES, FAST, complex_image
 
 
 @dataclass(init=False)
@@ -86,15 +86,16 @@ def test_only_the_qft_topology_freezes_to_a_blocked_basis():
 
 def test_a_given_code_replaces_the_circuits_own():
     """The constructor still takes ``code`` and ``inv_code``; a use for it is
-    asking for the slice arithmetic of the one-qubit gates."""
+    asking for the faster arithmetic."""
     plain = pdft.QFTBasis(m=3, n=2)
     fast = pdft.QFTBasis(
         m=3,
         n=2,
-        code=replace(plain.code, slices=True),
-        inv_code=replace(plain.inv_code, slices=True),
+        code=replace(plain.code, **FAST),
+        inv_code=replace(plain.inv_code, **FAST),
     )
-    assert fast.code.slices and fast.inv_code.slices and fast.code != plain.code
+    assert fast.code == replace(plain.code, **FAST) != plain.code
+    assert fast.inv_code == replace(plain.inv_code, **FAST)
     x = jnp.asarray(np.random.default_rng(1).standard_normal((8, 4)))
     np.testing.assert_allclose(fast.forward_transform(x), plain.forward_transform(x), atol=1e-12)
     np.testing.assert_allclose(fast.inverse_transform(x), plain.inverse_transform(x), atol=1e-12)
@@ -226,11 +227,11 @@ def test_a_subclass_that_is_not_a_dataclass_keeps_its_attributes():
 def test_a_code_passed_alone_brings_its_counterpart(given):
     """Its program, the other direction, the same arithmetic."""
     front = pdft.EntangledQFTBasis(m=2, n=2, seed=1, entangle_position="front")
-    passed = replace(getattr(front, given), slices=True)
+    passed = replace(getattr(front, given), **FAST)
     rebuilt = pdft.EntangledQFTBasis(m=2, n=2, tensors=front.tensors, **{given: passed})
     assert rebuilt.program == front.program
-    assert rebuilt.code == replace(front.code, slices=True)
-    assert rebuilt.inv_code == replace(front.inv_code, slices=True)
+    assert rebuilt.code == replace(front.code, **FAST)
+    assert rebuilt.inv_code == replace(front.inv_code, **FAST)
     x = complex_image((4, 4))
     np.testing.assert_allclose(
         rebuilt.inverse_transform(rebuilt.forward_transform(x)), x, atol=1e-12
