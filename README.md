@@ -148,7 +148,8 @@ as_before = pdft.QFTBasis(
 ```
 
 Batched gradients at 256x256 in double precision, against the contraction
-arithmetic (16 images on a GPU, 4 to 16 on a CPU):
+arithmetic (an RTX 5070 with 16 images, a 6-core Ryzen 5 9600X with 4 to
+16; compilation excluded):
 
 | Circuit | GPU | CPU |
 |---|---|---|
@@ -160,18 +161,22 @@ arithmetic (16 images on a GPU, 4 to 16 on a CPU):
 The last two rows have no runs of controlled phases to merge, and their
 dense two-qubit gates are contracted either way. Only their one-qubit gates
 gain, and the controlled rotations of the controlled DCT4. The gain grows
-with the image (for a blocked basis, with the block). At 16x16 on a CPU it
-is about even, and the options compile more slowly.
+with the image (for a blocked basis, with the block), and at 16x16 on a CPU
+it is about even. In single precision the first row gains 8 to 9 times on
+the GPU. The cost is compilation: a 512x512 controlled DCT4 training step
+compiles in 29 s instead of 9.
 
 Training gains what the gradient gains: a step of `train_basis_batched`
-costs its gradient and about a millisecond more. On an RTX 5070, 60 epochs
+costs its gradient and about a millisecond more (an Adam step on 16 QFT
+images of 256x256 takes 9 ms instead of 94 on the GPU, and 118 instead of
+198 on the CPU). On the RTX 5070, 60 epochs
 of Adam over 500 images of 512x512 (`MSELoss` keeping 10%, 75 images held
 out for validation, the largest batch that fits in 12 GB), estimated from
 one timed epoch, take about 2 minutes for a `QFTBasis` instead of 25 (the
 options also halve the memory, so its batch is 16 instead of 8), 1.6 hours
 for a `DCT4Basis(parametrization="controlled")` instead of 6.5 (at this
-size it gains more than in the table), and 46 minutes for a `RichBasis`
-instead of 66. `train_basis`, most of whose step runs outside
+size it gains more than in the table), 2.5 hours for the `"o4"` one instead
+of 3.5, and 46 minutes for a `RichBasis` instead of 66. `train_basis`, most of whose step runs outside
 the circuit, gains less: on a GPU 1.0 to 1.6 times at 256x256 and about 5
 at 1024x1024.
 
