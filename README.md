@@ -39,12 +39,15 @@ and example gallery are at [zazabap.github.io/pdft](https://zazabap.github.io/pd
 From PyPI (Python 3.11+):
 
 ```bash
-pip install "pdft>=0.3.0"
+pip install "pdft>=0.4.0"
 ```
 
-> **Note:** 0.3.0 is the first release with the completion task, the step
-> trainer and the parameter views, and it moves `compress` / `recover` from
-> `pdft.io` to `pdft.tasks`. The older `pdft==0.2.2` wheel predates
+> **Note:** 0.4.0 turns the faster `slices` and `merge_diagonals`
+> arithmetic on by default, so results differ from 0.3.0 by rounding; a
+> `CircuitCode` with both off gives 0.3.0's numbers. 0.3.0 is the first
+> release with the completion task, the step trainer and the parameter
+> views, and it moves `compress` / `recover` from `pdft.io` to
+> `pdft.tasks`. The older `pdft==0.2.2` wheel predates
 > `DCT4Basis` and the `parametrization="u4"` option of `TEBDBasis` /
 > `MERABasis`.
 
