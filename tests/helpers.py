@@ -47,6 +47,18 @@ BASES: dict[str, Callable[[], object]] = {
     "blocked_qft_2x2_in_3x3": lambda: pdft.BlockedBasis(pdft.QFTBasis(m=2, n=2), 1, 1),
 }
 
+# The arithmetic options of a CircuitCode, all on by default. ARITHMETICS are
+# the others: each option off alone, and all off, the contraction arithmetic
+# of 0.3.0.
+DEFAULT_ARITHMETIC = {"slices": True, "merge_diagonals": True}
+CONTRACTION = dict.fromkeys(DEFAULT_ARITHMETIC, False)
+ARITHMETICS = (*({option: False} for option in DEFAULT_ARITHMETIC), CONTRACTION)
+
+
+def arithmetic_id(options: dict) -> str:
+    """A test id that says which options an arithmetic sets, and to what."""
+    return "+".join(f"{key}={value}" for key, value in options.items()) or "default"
+
 
 def small_circuit() -> list[Gate]:
     """Four gates on two qubits, one of each kind the einsum form has.

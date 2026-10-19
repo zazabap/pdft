@@ -3,7 +3,7 @@
 The per-basis test files check most of this one class at a time. The bases
 share one implementation, so these run the same assertions over every
 registered case, including the ones no per-basis file covers: the pytree, the
-round trip, the two arithmetics, what the program says about the stored
+round trip, the arithmetics, what the program says about the stored
 tensors, and the precision and shape each family's transforms accept and return.
 """
 
@@ -23,7 +23,16 @@ from pdft.circuit import GATE_KINDS, REGISTERS, is_compact_cp
 from pdft.circuit.builder import GATE_SHAPES
 from pdft.manifolds import PhaseManifold, Unitary2qManifold, UnitaryManifold, classify_manifold
 
-from ..helpers import BASES, case_rng, complex_normal, generic, single_precision
+from ..helpers import (
+    ARITHMETICS,
+    BASES,
+    DEFAULT_ARITHMETIC,
+    arithmetic_id,
+    case_rng,
+    complex_normal,
+    generic,
+    single_precision,
+)
 
 CASES = list(BASES)
 
@@ -84,23 +93,29 @@ def test_inverse_undoes_forward(case):
     np.testing.assert_allclose(basis.forward_transform(basis.inverse_transform(x)), x, atol=1e-12)
 
 
-def _with_slices(code):
-    """The same code with the slice arithmetic for its one-qubit gates."""
+def _with_arithmetic(code, **options):
+    """The same code with other arithmetic options, for a blocked basis on its inner code."""
     if isinstance(code, BlockCode):
-        return replace(code, inner=_with_slices(code.inner))
-    return replace(code, slices=True)
+        return replace(code, inner=_with_arithmetic(code.inner, **options))
+    return replace(code, **options)
 
 
+@pytest.mark.parametrize("options", ARITHMETICS, ids=arithmetic_id)
 @pytest.mark.parametrize("case", CASES)
-def test_slice_arithmetic_matches_the_default(case):
-    """The opt-in arithmetic changes how one-qubit gates are computed, not what."""
+def test_each_arithmetic_matches_the_default(case, options):
+    """The default turns every option on; the other arithmetics change how the
+    gates are computed, not what."""
     rng = case_rng(case)
     basis = generic(BASES[case](), rng)
     pic = jnp.asarray(complex_normal(rng, basis.image_size)).reshape((2,) * (basis.m + basis.n))
     conj = [jnp.conj(t) for t in basis.tensors]
     for code, tensors in ((basis.code, basis.tensors), (basis.inv_code, conj)):
+        assert _with_arithmetic(code, **DEFAULT_ARITHMETIC) == code
         np.testing.assert_allclose(
-            _with_slices(code)(*tensors, pic), code(*tensors, pic), rtol=1e-12, atol=1e-12
+            _with_arithmetic(code, **options)(*tensors, pic),
+            code(*tensors, pic),
+            rtol=1e-12,
+            atol=1e-12,
         )
 
 
