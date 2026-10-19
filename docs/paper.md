@@ -23,7 +23,7 @@ through it ({func}`~pdft.training.train_basis_steps` on the phase views), and
 the argument that the circuit's structure keeps its coherence with the pixels
 at the minimum. Demonstrated by
 {ref}`sphx_glr_auto_examples_completion_demo.py`, whose page carries the
-BibTeX entry. With the package, the paper's Table 1 on DIV2K reproduces to
+BibTeX entry. With pdft 0.3.0, the paper's Table 1 on DIV2K reproduces to
 0.01 dB: 20.72 dB for the DFT, 22.63 dB for the phase-only circuit and
 22.75 dB for the four-phase circuit, against 20.72, 22.62 and 22.74 in the
 paper.

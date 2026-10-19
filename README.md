@@ -114,27 +114,25 @@ python examples/mera_demo.py            # MERA basis training
 python examples/completion_demo.py      # fill in an image, train through the solver
 ```
 
-## Faster arithmetic
+## Arithmetic
 
-By default a circuit is applied gate by gate, each gate reading and writing
-the whole image, with arithmetic that matches the Julia goldens within the
-parity tolerances. Two opt-in options apply the same operator with less work
-and change only the low bits:
+A circuit is applied to an image one gate at a time. Two options of the
+applier cut the work, and both are on by default (in 0.3.0 they were
+off):
 
 - `merge_diagonals` multiplies each run of consecutive controlled-phase
   gates into one diagonal over the wires the run touches, and applies it to
   the image once. A QFT register of `w` qubits then makes `2w - 1` passes
   over the image instead of `w(w+1)/2`, and the gradient reduces over the
   image once per run instead of once per gate.
-- `slices` applies each one-qubit gate as four multiplications by a scalar
-  of the two slices of its axis, instead of a contraction.
+- `slices` applies each one-qubit gate, and the rotation of a controlled
+  `R_y` gate, as multiplications by scalars of the two slices of its axis,
+  instead of a contraction.
 
-Use the two together. On a GPU the one-qubit contractions take most of the
-time until `slices` removes them; the merge then makes a gradient another
-2.5 to 2.9 times faster.
-
-Set them on a basis, for instance one you saved, and its transforms and
-every trainer use them:
+They change how the gates are computed, not what: results agree with the
+contraction arithmetic of 0.3.0 to rounding, and the Julia parity tests pass
+with them on a CPU and a GPU. To get 0.3.0's numbers bit for bit on a CPU,
+turn both off on a basis, for instance one you saved:
 
 ```python
 from dataclasses import replace
@@ -143,29 +141,39 @@ import pdft
 from pdft.io import load_basis
 
 basis = load_basis("basis.json")
-fast = pdft.QFTBasis(
+as_before = pdft.QFTBasis(
     basis.m, basis.n, tensors=basis.tensors,
-    code=replace(basis.code, slices=True, merge_diagonals=True),
+    code=replace(basis.code, slices=False, merge_diagonals=False),
 )
 ```
 
-Batched gradients at 256x256 in double precision, both options against the
-default (16 images on a GPU, 4 to 16 on a CPU):
+Batched gradients at 256x256 in double precision, against the contraction
+arithmetic (16 images on a GPU, 4 to 16 on a CPU):
 
 | Circuit | GPU | CPU |
 |---|---|---|
 | QFT, EntangledQFT, TEBD and MERA (`"cp"`) | 11 to 16 times faster | 1.7 to 2 times |
 | QFT blocked into 32x32 | 10 times | 1.5 times |
-| DCT4, Rich, RealRich, TEBD and MERA (`"u4"`) | 1.3 to 2.5 times | 1.1 to 1.2 times |
+| DCT4 (`parametrization="controlled"`) | 1.9 times | 1.1 times |
+| DCT4 (`"o4"`), Rich, RealRich, TEBD and MERA (`"u4"`) | 1.3 to 2.5 times | 1.1 to 1.2 times |
 
-The last row never has two controlled phases in a row to merge: its dense
-two-qubit gates are contracted either way, and only its one-qubit gates
-gain. The gain grows with the image (for a blocked basis, with the block);
-at 16x16 on a CPU it is about even. A batched Adam step of
-`train_basis_batched` on 256x256 QFT images gains 10 times on a GPU and up
-to 1.7 times on a CPU. `train_basis`, most of whose step runs outside the
-circuit, gains less: on a GPU 1.2 to 1.5 times at 256x256 and about 5 at
-1024x1024.
+The last two rows have no runs of controlled phases to merge, and their
+dense two-qubit gates are contracted either way. Only their one-qubit gates
+gain, and the controlled rotations of the controlled DCT4. The gain grows
+with the image (for a blocked basis, with the block). At 16x16 on a CPU it
+is about even, and the options compile more slowly.
+
+Training gains what the gradient gains: a step of `train_basis_batched`
+costs its gradient and about a millisecond more. On an RTX 5070, 60 epochs
+of Adam over 500 images of 512x512 (`MSELoss` keeping 10%, 75 images held
+out for validation, the largest batch that fits in 12 GB), estimated from
+one timed epoch, take about 2 minutes for a `QFTBasis` instead of 25 (the
+options also halve the memory, so its batch is 16 instead of 8), 1.6 hours
+for a `DCT4Basis(parametrization="controlled")` instead of 6.5 (at this
+size it gains more than in the table), and 46 minutes for a `RichBasis`
+instead of 66. `train_basis`, most of whose step runs outside
+the circuit, gains less: on a GPU 1.0 to 1.6 times at 256x256 and about 5
+at 1024x1024.
 
 The FFT is the baseline. At its initial tensors a `QFTBasis` computes the
 same transform as the FFT: `basis.forward_transform(bit_reverse(x))` is
@@ -173,17 +181,17 @@ same transform as the FFT: `basis.forward_transform(bit_reverse(x))` is
 transform of a complex128 image on a CPU (Ryzen 5 9600X, 6 cores, JAX
 0.10.2), in ms, median of repeated calls with compilation excluded:
 
-| Image | FFT (`jnp.fft.fft2`) | `QFTBasis`, default | `QFTBasis`, both options |
+| Image | FFT (`jnp.fft.fft2`) | `QFTBasis` | `QFTBasis`, both options off |
 |---|---|---|---|
-| 64x64 | 0.014 | 0.11 | 0.12 |
-| 128x128 | 0.059 | 0.61 | 0.31 |
-| 256x256 | 0.11 | 1.4 | 0.75 |
-| 512x512 | 0.38 | 6.7 | 3.4 |
-| 1024x1024 | 2.6 | 36 | 21 |
-| 2048x2048 | 19 | 267 | 152 |
+| 64x64 | 0.014 | 0.12 | 0.11 |
+| 128x128 | 0.059 | 0.31 | 0.61 |
+| 256x256 | 0.11 | 0.75 | 1.4 |
+| 512x512 | 0.38 | 3.4 | 6.7 |
+| 1024x1024 | 2.6 | 21 | 36 |
+| 2048x2048 | 19 | 152 | 267 |
 
-With both options a transform takes 5 to 9 times as long as the FFT, and
-by default 8 to 18 times. What a trained basis offers over the FFT is a
+A transform takes 5 to 9 times as long as the FFT, and with both options
+off 8 to 18 times. What a trained basis offers over the FFT is a
 sparser representation of the images it was trained on, not speed.
 
 ## Coherence with the pixel basis
