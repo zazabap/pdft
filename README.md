@@ -114,6 +114,91 @@ python examples/mera_demo.py            # MERA basis training
 python examples/completion_demo.py      # fill in an image, train through the solver
 ```
 
+## Arithmetic
+
+A circuit is applied to an image one gate at a time. Two options of the
+applier cut the work, and both are on by default (in 0.3.0 they were
+off):
+
+- `merge_diagonals` multiplies each run of consecutive controlled-phase
+  gates into one diagonal over the wires the run touches, and applies it to
+  the image once. A QFT register of `w` qubits then makes `2w - 1` passes
+  over the image instead of `w(w+1)/2`, and the gradient reduces over the
+  image once per run instead of once per gate.
+- `slices` applies each one-qubit gate, and the rotation of a controlled
+  `R_y` gate, as multiplications by scalars of the two slices of its axis,
+  instead of a contraction.
+
+They change how the gates are computed, not what: results agree with the
+contraction arithmetic of 0.3.0 to rounding, and the Julia parity tests pass
+with them on a CPU and a GPU. To get 0.3.0's numbers bit for bit on a CPU,
+turn both off on a basis, for instance one you saved:
+
+```python
+from dataclasses import replace
+
+import pdft
+from pdft.io import load_basis
+
+basis = load_basis("basis.json")
+as_before = pdft.QFTBasis(
+    basis.m, basis.n, tensors=basis.tensors,
+    code=replace(basis.code, slices=False, merge_diagonals=False),
+)
+```
+
+Batched gradients at 256x256 in double precision, against the contraction
+arithmetic (an RTX 5070 with 16 images, a 6-core Ryzen 5 9600X with 4 to
+16; compilation excluded):
+
+| Circuit | GPU | CPU |
+|---|---|---|
+| QFT, EntangledQFT, TEBD and MERA (`"cp"`) | 11 to 16 times faster | 1.7 to 2 times |
+| QFT blocked into 32x32 | 10 times | 1.5 times |
+| DCT4 (`parametrization="controlled"`) | 1.9 times | 1.1 times |
+| DCT4 (`"o4"`), Rich, RealRich, TEBD and MERA (`"u4"`) | 1.3 to 2.5 times | 1.1 to 1.2 times |
+
+The last two rows have no runs of controlled phases to merge, and their
+dense two-qubit gates are contracted either way. Only their one-qubit gates
+gain, and the controlled rotations of the controlled DCT4. The gain grows
+with the image (for a blocked basis, with the block), and at 16x16 on a CPU
+it is about even. In single precision the first row gains 8 to 9 times on
+the GPU. The cost is compilation: a 512x512 controlled DCT4 training step
+compiles in 29 s instead of 9.
+
+Training gains what the gradient gains: a step of `train_basis_batched`
+costs its gradient and about a millisecond more (an Adam step on 16 QFT
+images of 256x256 takes 9 ms instead of 94 on the GPU, and 118 instead of
+198 on the CPU). On the RTX 5070, 60 epochs
+of Adam over 500 images of 512x512 (`MSELoss` keeping 10%, 75 images held
+out for validation, the largest batch that fits in 12 GB), estimated from
+one timed epoch, take about 2 minutes for a `QFTBasis` instead of 25 (the
+options also halve the memory, so its batch is 16 instead of 8), 1.6 hours
+for a `DCT4Basis(parametrization="controlled")` instead of 6.5 (at this
+size it gains more than in the table), 2.5 hours for the `"o4"` one instead
+of 3.5, and 46 minutes for a `RichBasis` instead of 66. `train_basis`, most of whose step runs outside
+the circuit, gains less: on a GPU 1.0 to 1.6 times at 256x256 and about 5
+at 1024x1024.
+
+The FFT is the baseline. At its initial tensors a `QFTBasis` computes the
+same transform as the FFT: `basis.forward_transform(bit_reverse(x))` is
+`np.fft.ifft2(x, norm="ortho")`. The FFT is faster at every size. One
+transform of a complex128 image on a CPU (Ryzen 5 9600X, 6 cores, JAX
+0.10.2), in ms, median of repeated calls with compilation excluded:
+
+| Image | FFT (`jnp.fft.fft2`) | `QFTBasis` | `QFTBasis`, both options off |
+|---|---|---|---|
+| 64x64 | 0.014 | 0.12 | 0.11 |
+| 128x128 | 0.059 | 0.31 | 0.61 |
+| 256x256 | 0.11 | 0.75 | 1.4 |
+| 512x512 | 0.38 | 3.4 | 6.7 |
+| 1024x1024 | 2.6 | 21 | 36 |
+| 2048x2048 | 19 | 152 | 267 |
+
+A transform takes 5 to 9 times as long as the FFT, and with both options
+off 8 to 18 times. What a trained basis offers over the FFT is a
+sparser representation of the images it was trained on, not speed.
+
 ## Coherence with the pixel basis
 
 Compression cares only how few coefficients a basis needs. Recovering an
