@@ -293,15 +293,11 @@ def _one_qubit(pic: Array, ax: int, T: Array, inverse: bool, slices: bool) -> Ar
     Hadamard the leg swap changes nothing, but for a trained, non-symmetric
     gate the round trip fails without it.
 
-    Two arithmetics compute the same thing. ``slices`` (on by default in a
-    ``CircuitCode``) combines the two slices of the axis explicitly, with no
-    contraction at all. Without it ``T`` is contracted with the axis, asking for exact matmul precision: in
-    single precision XLA otherwise lowers the contraction to TF32 on recent
-    GPUs, which costs three digits. Measured on an L1 gradient of ``QFTBasis``
-    in double precision on one machine: on a GPU slices are 2 to 6 times
-    faster (41 ms against 7 ms at 512x512); on a CPU between 1.4 times slower,
-    for small circuits, and 1.2 times faster; and slices compile more slowly.
-    The two differ in the low bits.
+    Two arithmetics compute the same thing, to rounding. ``slices`` combines
+    the two slices of the axis explicitly, with no contraction at all.
+    Without it ``T`` is contracted with the axis, asking for exact matmul
+    precision: in single precision XLA otherwise lowers the contraction to
+    TF32 on recent GPUs, which costs three digits.
     """
     if slices:
         U = T.T if inverse else T
@@ -311,24 +307,16 @@ def _one_qubit(pic: Array, ax: int, T: Array, inverse: bool, slices: bool) -> Ar
     return jnp.moveaxis(out, 0, ax)
 
 
-def _walk(
-    program: Program,
-    inverse: bool,
-    slices: bool,
-    tensors: tuple,
-    pic: Array,
-    lead: int = 0,
-    merge_diagonals: bool = True,
-) -> Array:
-    """Apply the program to ``pic`` one gate at a time.
+def _walk(code: CircuitCode, tensors: tuple, pic: Array, lead: int = 0) -> Array:
+    """Apply ``code`` to ``pic`` one gate at a time.
 
     ``pic`` has ``lead`` batch axes, then one axis per qubit; any axes after
     those ride along untouched. ``tensors`` is in stored (Hadamard-first)
-    order. ``inverse`` walks the steps backwards with each
-    gate's legs swapped, which is the transpose of the circuit; the caller
-    conjugates the tensors to make it the adjoint, as Julia's
-    ``inverse_code(conj.(tensors)...)`` does. ``slices`` selects the arithmetic
-    of the one-qubit gates and of the rotated half of a ``CRY`` gate, see
+    order. An inverse code walks the steps backwards with each gate's legs
+    swapped, which is the transpose of the circuit; the caller conjugates the
+    tensors to make it the adjoint, as Julia's
+    ``inverse_code(conj.(tensors)...)`` does. ``slices`` is the arithmetic of
+    the one-qubit gates and of the rotated half of a ``CRY`` gate, see
     ``_one_qubit``.
 
     ``merge_diagonals`` multiplies each run of consecutive ``CP`` gates into
@@ -343,6 +331,7 @@ def _walk(
     The diagonal is formed in the precision the image and the gates promote
     to, as the gate-by-gate products are.
     """
+    program, inverse, slices = code.program, code.inverse, code.slices
     m, n = program.m, program.n
     diagonal = None  # the gates of the current run, multiplied together
     order = range(len(program.steps))
@@ -358,7 +347,7 @@ def _walk(
             shape = [1] * pic.ndim
             shape[ax_c] = shape[ax_t] = 2
             factor = (T if ax_c < ax_t else T.T).reshape(shape)
-            if merge_diagonals:
+            if code.merge_diagonals:
                 factor = factor.astype(jnp.result_type(pic, factor))
                 diagonal = factor if diagonal is None else diagonal * factor
             else:
@@ -389,7 +378,8 @@ def _walk(
     return pic if diagonal is None else pic * diagonal
 
 
-_run = jax.jit(_walk, static_argnames=("program", "inverse", "slices", "lead", "merge_diagonals"))
+# The code is static: one compilation per circuit, direction and arithmetic.
+_run = jax.jit(_walk, static_argnames=("code", "lead"))
 
 
 @dataclass(frozen=True)
@@ -397,25 +387,20 @@ class CircuitCode:
     """``code(*tensors, pic)``: a program applied to ``pic`` of shape ``(2,) * (m + n)``.
 
     The callable a basis keeps as ``code`` and ``inv_code``. The qubit axes
-    are the first ``m + n``; for a stack of images use ``apply_program``. It compares and
-    hashes by its fields (program, direction, arithmetic), so two bases with
-    the same circuit and arithmetic share one compiled applier and have equal
-    pytree structures.
+    are the first ``m + n``; for a stack of images use ``apply_program``. It
+    compares and hashes by its fields (program, direction, arithmetic), so two
+    bases with the same circuit and arithmetic share one compiled applier and
+    have equal pytree structures.
 
     Two options change the arithmetic and not the operator, and both are on
-    by default: ``slices`` computes the one-qubit gates, and the rotated half
-    of a ``CRY`` gate, without a contraction (see ``_one_qubit``), and
-    ``merge_diagonals`` applies each run of ``CP`` gates as one diagonal (see
-    ``_walk``). For a circuit of Hadamards and controlled phases they are
-    faster together than the contraction arithmetic on a GPU at every size,
-    and on a CPU for gradients from about 128x128 up; at 16x16 on a CPU the
-    two are about even. A circuit with no two ``CP`` gates in a row gains
-    only where it has one-qubit or ``CRY`` gates: its dense ``U4`` gates are
-    contracted either way. With both off a code runs the arithmetic of pdft
-    0.3.0, and on a CPU gives its numbers bit for bit. To get that on a basis,
-    construct it with ``code=dataclasses.replace(basis.code, slices=False,
-    merge_diagonals=False)`` (for a ``BlockedBasis``, construct its inner
-    basis so); the inverse code follows.
+    by default: ``slices`` computes the one-qubit gates without a contraction
+    (see ``_one_qubit``), and ``merge_diagonals`` applies each run of ``CP``
+    gates as one diagonal (see ``_walk``). With both off a code runs the
+    arithmetic of pdft 0.3.0, and on a CPU gives its numbers bit for bit. To
+    get that on a basis, construct it with
+    ``code=dataclasses.replace(basis.code, slices=False, merge_diagonals=False)``
+    (for a ``BlockedBasis``, construct its inner basis so); the inverse code
+    follows.
     """
 
     program: Program
@@ -425,33 +410,19 @@ class CircuitCode:
 
     def __call__(self, *operands: Array) -> Array:
         *tensors, pic = operands
-        return _run(
-            self.program,
-            self.inverse,
-            self.slices,
-            tuple(tensors),
-            pic,
-            lead=0,
-            merge_diagonals=self.merge_diagonals,
-        )
+        return _run(self, tuple(tensors), pic, lead=0)
 
 
 def apply_program(
-    program: Program,
-    tensors,
-    x: Array,
-    *,
-    inverse: bool = False,
-    slices: bool = True,
-    merge_diagonals: bool = True,
+    program: Program, tensors, x: Array, *, inverse: bool = False, **arithmetic
 ) -> Array:
     """Apply a program to an image, or to a stack of images.
 
     ``x`` has shape ``(..., 2**m, 2**n)``; leading axes are batch axes. The
     working precision follows the image: complex64 for a float32 or complex64
     image, complex128 otherwise, and the tensors are cast to it. For the
-    adjoint pass conjugated tensors with ``inverse=True``. ``slices`` and
-    ``merge_diagonals`` select the arithmetic, as on ``CircuitCode``.
+    adjoint pass conjugated tensors with ``inverse=True``. ``arithmetic``
+    takes the options of ``CircuitCode`` (``slices``, ``merge_diagonals``).
 
     ``apply_circuit`` and ``contract_circuit`` are the single-image entry
     points the bases use; this is the same walk with batch axes and with the
@@ -463,10 +434,8 @@ def apply_program(
     dtype = jnp.complex64 if x.dtype in (jnp.float32, jnp.complex64) else jnp.complex128
     pic = x.astype(dtype).reshape(x.shape[:-2] + (2,) * (m + n))
     cast = tuple(t.astype(dtype) for t in tensors)
-    out = _run(
-        program, inverse, slices, cast, pic, lead=x.ndim - 2, merge_diagonals=merge_diagonals
-    )
-    return out.reshape(x.shape)
+    code = CircuitCode(program, inverse, **arithmetic)
+    return _run(code, cast, pic, lead=x.ndim - 2).reshape(x.shape)
 
 
 def register_width(size: int) -> int:

@@ -96,11 +96,6 @@ def test_a_given_code_replaces_the_circuits_own():
     )
     assert contracting.code == replace(plain.code, **CONTRACTION) != plain.code
     assert contracting.inv_code == replace(plain.inv_code, **CONTRACTION)
-    x = jnp.asarray(np.random.default_rng(1).standard_normal((8, 4)))
-    for transform in ("forward_transform", "inverse_transform"):
-        np.testing.assert_allclose(
-            getattr(contracting, transform)(x), getattr(plain, transform)(x), atol=1e-12
-        )
 
 
 def test_a_family_with_no_options_only_names_its_emitter():

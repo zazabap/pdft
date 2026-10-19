@@ -26,6 +26,7 @@ from pdft.manifolds import PhaseManifold, Unitary2qManifold, UnitaryManifold, cl
 from ..helpers import (
     ARITHMETICS,
     BASES,
+    DEFAULT_ARITHMETIC,
     arithmetic_id,
     case_rng,
     complex_normal,
@@ -102,12 +103,14 @@ def _with_arithmetic(code, **options):
 @pytest.mark.parametrize("options", ARITHMETICS, ids=arithmetic_id)
 @pytest.mark.parametrize("case", CASES)
 def test_each_arithmetic_matches_the_default(case, options):
-    """The other arithmetics change how the gates are computed, not what."""
+    """The default turns every option on; the other arithmetics change how the
+    gates are computed, not what."""
     rng = case_rng(case)
     basis = generic(BASES[case](), rng)
     pic = jnp.asarray(complex_normal(rng, basis.image_size)).reshape((2,) * (basis.m + basis.n))
     conj = [jnp.conj(t) for t in basis.tensors]
     for code, tensors in ((basis.code, basis.tensors), (basis.inv_code, conj)):
+        assert _with_arithmetic(code, **DEFAULT_ARITHMETIC) == code
         np.testing.assert_allclose(
             _with_arithmetic(code, **options)(*tensors, pic),
             code(*tensors, pic),
