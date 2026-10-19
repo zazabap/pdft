@@ -13,7 +13,8 @@ For the default symmetric Hadamard (``[[1, 1], [1, -1]] / sqrt 2``),
 therefore non-symmetric) Hadamard the bug breaks the round-trip:
 ``T† T x ≠ x``. The U4 gate handler in the same function does the
 leg-swap correctly already; this test pins the equivalent contract for
-the H gate.
+the H gate. It runs the default arithmetic, ``slices``; the contraction
+path is held to it by ``tests/circuit/test_applier.py``.
 """
 
 from __future__ import annotations

@@ -21,6 +21,7 @@ from pdft.circuit.builder import (
     _walk,
     apply_circuit,
     apply_program,
+    compile_circuit,
     compile_program,
     cp_gate,
 )
@@ -28,6 +29,7 @@ from pdft.circuit.builder import (
 from ..helpers import (
     ARITHMETICS,
     BASES,
+    arithmetic_id,
     case_rng,
     complex_image,
     complex_normal,
@@ -81,9 +83,9 @@ def test_apply_program_inverse_with_conjugated_tensors_is_the_adjoint():
     np.testing.assert_allclose(back, x, atol=1e-12)
 
 
-@pytest.mark.parametrize("options", ARITHMETICS, ids="+".join)
+@pytest.mark.parametrize("options", ARITHMETICS, ids=arithmetic_id)
 def test_each_arithmetic_is_a_distinct_code_computing_the_same_thing(options):
-    """Each opt-in arithmetic agrees with the default to rounding, in both
+    """Each other arithmetic agrees with the default to rounding, in both
     directions and both precisions, at tensors with no symmetry, on a circuit
     that starts and ends with a run of controlled phases oriented both ways."""
     rng = np.random.default_rng(6)
@@ -99,11 +101,12 @@ def test_each_arithmetic_is_a_distinct_code_computing_the_same_thing(options):
         default = apply_program(program, tensors, x, inverse=inverse)
         other = apply_program(program, tensors, x, inverse=inverse, **options)
         np.testing.assert_allclose(other, default, rtol=1e-13, atol=1e-13)
-        single = apply_program(
-            program, tensors, x.astype(jnp.complex64), inverse=inverse, **options
-        )
-        assert single.dtype == jnp.complex64
-        np.testing.assert_allclose(single, default, rtol=1e-5, atol=1e-5)
+        for arithmetic in ({}, options):
+            single = apply_program(
+                program, tensors, x.astype(jnp.complex64), inverse=inverse, **arithmetic
+            )
+            assert single.dtype == jnp.complex64
+            np.testing.assert_allclose(single, default, rtol=1e-5, atol=1e-5)
         # A code called directly computes in the precision the gates and the
         # image promote to, a real image included, under every arithmetic.
         code = CircuitCode(program, inverse=inverse)
@@ -306,3 +309,30 @@ def test_merged_diagonals_reach_the_image_once_per_run():
                         for equation in _equations(jaxpr)
                     )
                 assert products == {False: 6, True: 3}, (name, inverse, slices)
+
+
+def test_slices_and_merged_diagonals_are_the_default():
+    """A code, ``apply_program``, ``compile_circuit`` and every basis use both options
+    unless told otherwise: the default traces to the graph of asking for both, and not
+    to that of the contraction arithmetic."""
+    both = {"slices": True, "merge_diagonals": True}
+    # a register of three qubits: a run of two controlled phases, so merging shows
+    program, tensors = compile_program(qft_gates_1d(3, 0) + qft_gates_1d(1, 3), 3, 1)
+    x = complex_image((8, 2), seed=3)
+    pic = x.reshape((2,) * 4)
+    for way in (
+        lambda options: lambda *ts: CircuitCode(program, **options)(*ts, pic),
+        lambda options: lambda *ts: apply_program(program, ts, x, **options),
+    ):
+        default, asked, *others = (
+            str(jax.make_jaxpr(way(options))(*tensors)) for options in ({}, both, *ARITHMETICS)
+        )
+        assert default == asked
+        assert all(default != other for other in others)
+    code, _ = compile_circuit(small_circuit(), 1, 1, inverse=True)
+    assert code == CircuitCode(code.program, inverse=True, **both)
+    for make in BASES.values():
+        basis = make()
+        for code in (basis.code, basis.inv_code):
+            code = getattr(code, "inner", code)  # a blocked basis's code maps its inner one
+            assert (code.slices, code.merge_diagonals) == (True, True)

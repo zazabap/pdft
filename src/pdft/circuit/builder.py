@@ -293,15 +293,15 @@ def _one_qubit(pic: Array, ax: int, T: Array, inverse: bool, slices: bool) -> Ar
     Hadamard the leg swap changes nothing, but for a trained, non-symmetric
     gate the round trip fails without it.
 
-    Two arithmetics compute the same thing. The default contracts ``T`` with
-    the axis, asking for exact matmul precision: in single precision XLA
-    otherwise lowers the contraction to TF32 on recent GPUs, which costs three
-    digits. ``slices`` combines the two slices of the axis explicitly, with no
-    contraction at all. Measured on an L1 gradient of ``QFTBasis`` in double
-    precision on one machine: on a GPU slices are 2 to 6 times faster (41 ms
-    against 7 ms at 512x512); on a CPU between 1.4 times slower, for small
-    circuits, and 1.2 times faster; and slices compile more slowly. They also
-    change the low bits. Hence opt-in.
+    Two arithmetics compute the same thing. ``slices`` (on by default in a
+    ``CircuitCode``) combines the two slices of the axis explicitly, with no
+    contraction at all. Without it ``T`` is contracted with the axis, asking for exact matmul precision: in
+    single precision XLA otherwise lowers the contraction to TF32 on recent
+    GPUs, which costs three digits. Measured on an L1 gradient of ``QFTBasis``
+    in double precision on one machine: on a GPU slices are 2 to 6 times
+    faster (41 ms against 7 ms at 512x512); on a CPU between 1.4 times slower,
+    for small circuits, and 1.2 times faster; and slices compile more slowly.
+    The two differ in the low bits.
     """
     if slices:
         U = T.T if inverse else T
@@ -318,7 +318,7 @@ def _walk(
     tensors: tuple,
     pic: Array,
     lead: int = 0,
-    merge_diagonals: bool = False,
+    merge_diagonals: bool = True,
 ) -> Array:
     """Apply the program to ``pic`` one gate at a time.
 
@@ -328,7 +328,8 @@ def _walk(
     gate's legs swapped, which is the transpose of the circuit; the caller
     conjugates the tensors to make it the adjoint, as Julia's
     ``inverse_code(conj.(tensors)...)`` does. ``slices`` selects the arithmetic
-    of the one-qubit gates, see ``_one_qubit``.
+    of the one-qubit gates and of the rotated half of a ``CRY`` gate, see
+    ``_one_qubit``.
 
     ``merge_diagonals`` multiplies each run of consecutive ``CP`` gates into
     one diagonal before it reaches the image: the image is multiplied once
@@ -401,25 +402,26 @@ class CircuitCode:
     the same circuit and arithmetic share one compiled applier and have equal
     pytree structures.
 
-    Two options change the arithmetic and not the operator, and both change
-    the low bits, hence off by default: ``slices`` computes the one-qubit
-    gates without a contraction (see ``_one_qubit``) and ``merge_diagonals``
-    applies each run of ``CP`` gates as one diagonal (see ``_walk``). Together
-    they are the faster choice for a circuit of Hadamards and controlled
-    phases on a GPU at every size, and on a CPU for gradients from about
-    128x128 up; at 16x16 on a CPU they are about even with the default. A
-    circuit with no two ``CP`` gates in a row, whose two-qubit gates are dense
-    ``U4`` gates, gains only what ``slices`` gives its one-qubit gates. To use
-    them on a basis,
-    construct it with ``code=dataclasses.replace(basis.code, slices=True,
-    merge_diagonals=True)`` (for a ``BlockedBasis``, construct its inner
+    Two options change the arithmetic and not the operator, and both are on
+    by default: ``slices`` computes the one-qubit gates, and the rotated half
+    of a ``CRY`` gate, without a contraction (see ``_one_qubit``), and
+    ``merge_diagonals`` applies each run of ``CP`` gates as one diagonal (see
+    ``_walk``). For a circuit of Hadamards and controlled phases they are
+    faster together than the contraction arithmetic on a GPU at every size,
+    and on a CPU for gradients from about 128x128 up; at 16x16 on a CPU the
+    two are about even. A circuit with no two ``CP`` gates in a row gains
+    only where it has one-qubit or ``CRY`` gates: its dense ``U4`` gates are
+    contracted either way. With both off a code runs the arithmetic of pdft
+    0.3.0, and on a CPU gives its numbers bit for bit. To get that on a basis,
+    construct it with ``code=dataclasses.replace(basis.code, slices=False,
+    merge_diagonals=False)`` (for a ``BlockedBasis``, construct its inner
     basis so); the inverse code follows.
     """
 
     program: Program
     inverse: bool = False
-    slices: bool = False
-    merge_diagonals: bool = False
+    slices: bool = True
+    merge_diagonals: bool = True
 
     def __call__(self, *operands: Array) -> Array:
         *tensors, pic = operands
@@ -440,8 +442,8 @@ def apply_program(
     x: Array,
     *,
     inverse: bool = False,
-    slices: bool = False,
-    merge_diagonals: bool = False,
+    slices: bool = True,
+    merge_diagonals: bool = True,
 ) -> Array:
     """Apply a program to an image, or to a stack of images.
 

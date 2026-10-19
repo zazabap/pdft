@@ -47,14 +47,19 @@ BASES: dict[str, Callable[[], object]] = {
     "blocked_qft_2x2_in_3x3": lambda: pdft.BlockedBasis(pdft.QFTBasis(m=2, n=2), 1, 1),
 }
 
-# The opt-in arithmetic options of a CircuitCode, each alone and both together;
-# both together is the faster choice the docs recommend.
+# The arithmetics of a CircuitCode other than the default: each option turned
+# off alone and both together; both off is the contraction arithmetic of 0.3.0.
 ARITHMETICS = (
-    {"slices": True},
-    {"merge_diagonals": True},
-    {"slices": True, "merge_diagonals": True},
+    {"slices": False},
+    {"merge_diagonals": False},
+    {"slices": False, "merge_diagonals": False},
 )
-FAST = ARITHMETICS[-1]
+CONTRACTION = ARITHMETICS[-1]
+
+
+def arithmetic_id(options: dict) -> str:
+    """A test id that says which options an arithmetic sets, and to what."""
+    return "+".join(f"{key}={value}" for key, value in options.items())
 
 
 def small_circuit() -> list[Gate]:

@@ -23,7 +23,15 @@ from pdft.circuit import GATE_KINDS, REGISTERS, is_compact_cp
 from pdft.circuit.builder import GATE_SHAPES
 from pdft.manifolds import PhaseManifold, Unitary2qManifold, UnitaryManifold, classify_manifold
 
-from ..helpers import ARITHMETICS, BASES, case_rng, complex_normal, generic, single_precision
+from ..helpers import (
+    ARITHMETICS,
+    BASES,
+    arithmetic_id,
+    case_rng,
+    complex_normal,
+    generic,
+    single_precision,
+)
 
 CASES = list(BASES)
 
@@ -91,10 +99,10 @@ def _with_arithmetic(code, **options):
     return replace(code, **options)
 
 
-@pytest.mark.parametrize("options", ARITHMETICS, ids="+".join)
+@pytest.mark.parametrize("options", ARITHMETICS, ids=arithmetic_id)
 @pytest.mark.parametrize("case", CASES)
 def test_each_arithmetic_matches_the_default(case, options):
-    """The opt-in arithmetics change how the gates are computed, not what."""
+    """The other arithmetics change how the gates are computed, not what."""
     rng = case_rng(case)
     basis = generic(BASES[case](), rng)
     pic = jnp.asarray(complex_normal(rng, basis.image_size)).reshape((2,) * (basis.m + basis.n))
