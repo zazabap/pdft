@@ -9,6 +9,7 @@ tensors, and the precision and shape each family's transforms accept and return.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 import jax
@@ -19,6 +20,7 @@ import pytest
 import pdft
 from pdft.bases import bases_allclose, program_of, with_cp_phases
 from pdft.bases.block.block import BlockCode
+from pdft.bases.core import _check_planes, _map_planes
 from pdft.circuit import GATE_KINDS, REGISTERS, is_compact_cp
 from pdft.circuit.builder import GATE_SHAPES
 from pdft.manifolds import PhaseManifold, Unitary2qManifold, UnitaryManifold, classify_manifold
@@ -246,3 +248,30 @@ def test_helpers_that_replace_tensors_keep_their_precision(case):
     if getattr(type(single), "freezes_to_blocked", False) and min(single.m, single.n) > 1:
         frozen, indices = pdft.freeze_as_blocked(single, 1, 1)
         assert indices and {t.dtype for t in frozen.tensors} == {jnp.dtype("complex64")}
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_the_transforms_map_over_a_stack_of_planes(case):
+    """How a task reaches a transform with a channel axis: plane by plane, each as if alone.
+
+    One plane is transformed as it is; a stack goes through ``vmap``, which
+    may round differently, so the stack agrees with the planes taken one at a
+    time to rounding, in each precision.
+    """
+    basis = BASES[case]()
+    planes = jnp.asarray(complex_normal(case_rng(case), (3,) + basis.image_size))
+    for transform in (basis.forward_transform, basis.inverse_transform):
+        for x in (planes, planes.astype(jnp.complex64)):
+            stacked = _map_planes(transform, x)
+            one_by_one = jnp.stack([transform(plane) for plane in x])
+            assert stacked.shape == one_by_one.shape and stacked.dtype == one_by_one.dtype
+            tolerance = 1e-12 if x.dtype == jnp.complex128 else 1e-5
+            np.testing.assert_allclose(stacked, one_by_one, rtol=tolerance, atol=tolerance)
+        np.testing.assert_array_equal(_map_planes(transform, planes[0]), transform(planes[0]))
+    h, w = basis.image_size
+    for shape in [(h, w + 1), (3, h + 1, w), (2, 3, h, w), (h * w,)]:
+        with pytest.raises(
+            ValueError,
+            match=rf"has shape {re.escape(str(shape))}, expected \({h}, {w}\) or \(C, {h}, {w}\)",
+        ):
+            _check_planes(jnp.zeros(shape), basis.image_size)

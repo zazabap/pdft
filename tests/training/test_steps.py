@@ -263,3 +263,35 @@ def test_a_rate_of_one_observes_every_pixel():
         return hidden + 0.0 * jnp.sum(jnp.abs(basis.forward_transform(images[0])))
 
     assert _run(basis, _smooth_images(3), objective, rate=1.0, steps=2).loss_history == [0.0, 0.0]
+
+
+def test_colour_images_draw_one_mask_per_image_shared_by_the_channels():
+    basis = pdft.QFTBasis(m=3, n=3)
+    rng = np.random.default_rng(11)
+    planes = [np.moveaxis(rng.random((8, 8, 3)), -1, 0) for _ in range(5)]
+    weights = jnp.asarray(case_rng("colour weights").normal(size=(3, 8, 8)))
+    shapes = []
+
+    def probe(
+        basis, images, masks
+    ):  # an objective on colour images: one mask axis for the channels
+        shapes.append((images.shape, masks.shape))
+        return jnp.sum(jnp.where(masks[:, None], images * weights, 0.0))
+
+    result = _run(basis, planes, probe, batch_size=2, seed=5, steps=3)
+    assert shapes[0] == ((2, 3, 8, 8), (2, 8, 8))
+    # the draw is the batch, then one mask per image over its pixels
+    draws = np.random.default_rng(5)
+    stacked = np.stack(planes)
+    for loss in result.loss_history:
+        picked = stacked[draws.choice(5, size=2, replace=False)]
+        masks = draws.random(picked.shape[:1] + picked.shape[-2:]) < 0.4
+        assert loss == pytest.approx(float(probe(None, jnp.asarray(picked), jnp.asarray(masks))))
+
+
+def test_a_dataset_whose_images_differ_in_channels_is_refused():
+    basis = pdft.QFTBasis(m=3, n=3)
+    with pytest.raises(
+        ValueError, match=r"dataset\[1\] has shape \(3, 8, 8\), dataset\[0\] has \(8, 8\)"
+    ):
+        _run(basis, [np.zeros((8, 8)), np.zeros((3, 8, 8))], completion_loss(k=7, steps=1))

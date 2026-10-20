@@ -9,6 +9,7 @@ import pytest
 
 import pdft
 from pdft.bases import cp_diagonals_view, with_tensors
+from pdft.color import YCBCR
 from pdft.loss import topk_truncate
 from pdft.tasks import complete, completion, completion_loss
 
@@ -19,6 +20,14 @@ def _problem(basis, rng, rate=0.5):
     """A real image of the basis's size and a mask over it."""
     return (
         jnp.asarray(rng.random(basis.image_size)),
+        jnp.asarray(rng.random(basis.image_size) < rate),
+    )
+
+
+def _colour_problem(basis, rng, rate=0.5):
+    """A colour image as its three planes, ``(3, H, W)``, and one mask over its pixels."""
+    return (
+        YCBCR.to_planes(rng.random(basis.image_size + (3,))),
         jnp.asarray(rng.random(basis.image_size) < rate),
     )
 
@@ -119,9 +128,14 @@ def test_complete_validates_its_budget(k, steps):
 def test_complete_validates_its_image():
     basis = pdft.QFTBasis(m=2, n=3)
     image, mask = _problem(basis, case_rng("image"))
-    with pytest.raises(ValueError, match=r"image size \(4, 8\), got \(8, 4\) and \(4, 8\)"):
+    with pytest.raises(
+        ValueError, match=r"observed has shape \(8, 4\), expected \(4, 8\) or \(C, 4, 8\)"
+    ):
         complete(basis, image.T, mask, k=3, steps=1)
-    with pytest.raises(ValueError, match=r"image size \(4, 8\), got \(4, 8\) and \(32,\)"):
+    with pytest.raises(
+        ValueError,
+        match=r"mask must have the shape of observed, \(4, 8\), or the basis's image size \(4, 8\), got \(32,\)",
+    ):
         complete(basis, image, mask.reshape(-1), k=3, steps=1)
     with pytest.raises(ValueError, match="observed is complex"):
         complete(basis, image + 0j, mask, k=3, steps=1)
@@ -207,3 +221,87 @@ def test_the_gradient_does_not_depend_on_rounding_when_the_cut_falls_in_a_pair(k
     monkeypatch.setattr(completion, "topk_truncate", lambda c, k, rtol: topk_truncate(c, k))
     gap = np.abs(gradient(1e-13) - gradient(-1e-13)).max()
     assert (gap > 1e-3) if k % 2 == 0 else (gap < 1e-12)
+
+
+@pytest.mark.parametrize("case", list(BASES))
+def test_complete_takes_a_stack_of_planes_under_one_mask_over_the_pixels(case):
+    basis = BASES[case]()
+    planes, mask = _colour_problem(basis, case_rng(case))
+    out = complete(basis, planes, mask, k=planes.size // 4, steps=2)
+    assert out.shape == planes.shape and bool(jnp.all(jnp.isfinite(out)))
+    np.testing.assert_array_equal(out[:, mask], planes[:, mask])
+    assert float(jnp.abs(out - planes).max()) > 1e-3
+    # the same mask given once per plane is the same run
+    spelled_out = complete(
+        basis, planes, jnp.broadcast_to(mask, planes.shape), k=planes.size // 4, steps=2
+    )
+    np.testing.assert_array_equal(spelled_out, out)
+
+
+def test_one_step_on_planes_is_one_threshold_over_all_of_them():
+    basis = pdft.DCT4Basis(m=3, n=2)
+    rng = case_rng("planes")
+    planes, mask = _colour_problem(basis, rng)
+    planes = (
+        planes * jnp.asarray([1.0, 0.05, 0.05])[:, None, None]
+    )  # faint chroma, as in a photograph
+    zero_filled = jnp.where(mask, planes, 0.0)
+    coefficients = jnp.stack([basis.forward_transform(p) for p in zero_filled])
+    tie_band = float(jnp.finfo(coefficients.dtype).eps) ** 0.5
+    sparse = topk_truncate(coefficients, 11, rtol=tie_band)
+    recovered = jnp.stack([jnp.real(basis.inverse_transform(s)) for s in sparse])
+    filled = jnp.where(mask, planes, recovered)
+    np.testing.assert_allclose(complete(basis, planes, mask, k=11, steps=1), filled, atol=1e-14)
+    # the planes compete for the budget: the faint ones get little of it
+    per_plane = jnp.sum(sparse != 0, axis=(1, 2))
+    assert int(jnp.sum(per_plane)) == 11 and int(per_plane[0]) > int(per_plane[1] + per_plane[2])
+
+
+def test_the_mask_of_a_stack_of_planes_is_validated():
+    basis = pdft.QFTBasis(m=2, n=3)
+    planes, mask = _colour_problem(basis, case_rng("plane mask"))
+    with pytest.raises(
+        ValueError,
+        match=r"mask must have the shape of observed, \(3, 4, 8\), or .* \(4, 8\), got \(3, 8, 4\)",
+    ):
+        complete(
+            basis, planes, jnp.swapaxes(jnp.broadcast_to(mask, planes.shape), 1, 2), k=3, steps=1
+        )
+    with pytest.raises(
+        ValueError, match=r"observed has shape \(2, 3, 4, 8\), expected \(4, 8\) or \(C, 4, 8\)"
+    ):
+        complete(basis, jnp.stack([planes, planes]), mask, k=3, steps=1)
+
+
+def test_completion_loss_shares_each_mask_across_the_channels_of_its_image():
+    basis = pdft.QFTBasis(m=3, n=2)
+    rng = case_rng("colour loss")
+    images = YCBCR.to_planes(rng.random((2, 8, 4, 3)))
+    masks = jnp.asarray(rng.random((2, 8, 4)) < 0.5)
+    objective = completion_loss(k=17, steps=2)
+    solved = jnp.stack([complete(basis, x, o, k=17, steps=2) for x, o in zip(images, masks)])
+    expected = float(jnp.mean((solved - images) ** 2))
+    assert float(objective(basis, images, masks)) == pytest.approx(expected, rel=1e-13)
+    per_channel = jnp.broadcast_to(masks[:, None], images.shape)
+    assert float(objective(basis, images, per_channel)) == pytest.approx(expected, rel=1e-13)
+
+
+def test_a_mask_of_the_planes_shape_is_read_plane_by_plane():
+    """A mask given per channel may differ between the channels, and then it is not one pixel mask."""
+    basis = pdft.QFTBasis(m=3, n=2)
+    rng = case_rng("per-channel mask")
+    planes, _ = _colour_problem(basis, rng)
+    masks = jnp.asarray(rng.random(planes.shape) < 0.5)
+    assert not bool(jnp.all(masks == masks[0]))
+    out = complete(basis, planes, masks, k=13, steps=3)
+    np.testing.assert_array_equal(out[masks], planes[masks])
+    for collapsed in (masks[0], jnp.any(masks, axis=0), jnp.all(masks, axis=0)):
+        other = complete(basis, planes, collapsed, k=13, steps=3)
+        assert float(jnp.abs(out - other).max()) > 1e-3
+    # and the batch objective sees each image's channels under their own masks
+    images = jnp.stack([planes, planes[::-1]])
+    batch_masks = jnp.stack([masks, ~masks])
+    objective = completion_loss(k=13, steps=3)
+    solved = jnp.stack([complete(basis, x, o, k=13, steps=3) for x, o in zip(images, batch_masks)])
+    expected = float(jnp.mean((solved - images) ** 2))
+    assert float(objective(basis, images, batch_masks)) == pytest.approx(expected, rel=1e-13)

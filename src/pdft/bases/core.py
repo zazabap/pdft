@@ -89,6 +89,28 @@ class BasisTransforms:
         return self._apply([jnp.conj(t) for t in self.tensors], self.inv_code, self.m, self.n, pic)
 
 
+def _check_planes(x, image_size: tuple[int, int], name: str = "image") -> None:
+    """Refuse ``x`` unless it is an image of ``image_size`` or a stack of channel planes of one, ``(C, H, W)``."""
+    if x.ndim not in (2, 3) or tuple(x.shape[-2:]) != tuple(image_size):
+        h, w = image_size
+        raise ValueError(f"{name} has shape {tuple(x.shape)}, expected ({h}, {w}) or (C, {h}, {w})")
+
+
+def _map_planes(transform: Callable[[Array], Array], x: Array) -> Array:
+    """``transform`` (a basis's forward or inverse transform) on every ``(H, W)`` plane of ``x``.
+
+    ``x`` is ``(..., H, W)``: a plane is transformed as it is, a stack of
+    planes plane by plane under ``vmap``, so a task written for one plane
+    takes the channels of a colour image with no other change. This is how a
+    task reaches a transform with a channel axis; the transforms themselves
+    take one plane. It lives here, next to the transforms it wraps, because
+    the tasks and the step trainer both use it and neither imports the other.
+    """
+    for _ in range(x.ndim - 2):
+        transform = jax.vmap(transform)
+    return transform(x)
+
+
 @dataclass(init=False)
 class CircuitBasis(BasisTransforms):
     """A basis that is a gate circuit on ``m`` row qubits and ``n`` column qubits.
