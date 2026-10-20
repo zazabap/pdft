@@ -3,7 +3,7 @@ Tasks
 
 .. currentmodule:: pdft.tasks
 
-What a basis is used for, one module per task. A task transforms through ``forward_transform`` and ``inverse_transform``, never through the circuit, so it runs on every basis. Compression keeps the largest coefficients of an image and rebuilds it from them (upstream's ``compression.jl``, with its JSON form). Completion fills in an image from the pixels that were observed, by iterative hard thresholding in the basis; :func:`completion_loss` is the objective for training a basis through that solver.
+What a basis is used for, one module per task. A task transforms through ``forward_transform`` and ``inverse_transform``, never through the circuit, so it runs on every basis. Compression keeps the largest coefficients of an image and rebuilds it from them (upstream's ``compression.jl``, with its JSON form). Completion fills in an image from the pixels that were observed, by iterative hard thresholding in the basis; :func:`completion_loss` is the objective for training a basis through that solver. Both take a colour image as a stack of channel planes, with one budget over the planes; :mod:`pdft.color` makes the stack.
 
 .. automodule:: pdft.tasks
    :no-members:

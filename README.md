@@ -117,6 +117,48 @@ python examples/mera_demo.py            # MERA basis training
 python examples/completion_demo.py      # fill in an image, train through the solver
 ```
 
+## Colour images
+
+A basis acts on one plane. A colour image is handled as a stack of channel
+planes, `(3, H, W)`, in a colour space that decorrelates the channels, and
+the tasks keep one coefficient budget over all three planes together. That is
+the part of JPEG's colour handling worth having here: JPEG converts to YCbCr
+and then spends its bits unevenly across the channels. Its other colour step,
+halving the chroma resolution, costs quality under a coefficient budget and
+is not done.
+
+```python
+import numpy as np
+from PIL import Image
+import pdft
+from pdft.color import YCBCR, klt
+from pdft.tasks import compress, recover
+
+rgb = np.asarray(Image.open("photo.png").convert("RGB"), dtype=np.float64) / 255  # (256, 256, 3)
+basis = pdft.QFTBasis(m=8, n=8)
+
+planes = YCBCR.to_planes(rgb)                # (3, 256, 256): Y, Cb, Cr
+kept = compress(basis, planes, ratio=0.9)    # the 10% largest coefficients over all three planes
+back = YCBCR.to_image(recover(basis, kept))  # (256, 256, 3)
+
+space = klt(training_images)                 # or the principal colour axes of a dataset, (N, H, W, 3)
+```
+
+`complete` and `completion_loss` take the same stacks, with one mask over the
+pixels shared by the channels, and `train_basis_steps` takes a dataset of
+them and draws its masks that way. Training on channel planes as separate
+images (`train_basis_batched`) works as it always did, and one basis trained
+so serves all three channels: on DIV2K, separate luma and chroma bases were
+never better.
+
+Measured on 100 DIV2K validation images at 256x256 with the DCT-II as the
+transform (RGB PSNR; coefficients kept as a share of the 3 N^2 colour
+values): a colour space with one shared budget gains 1.3 dB at 1% and 5 dB at
+20% over RGB, and the budget split evenly per channel gains nothing. `YCBCR`
+is within 0.1 to 0.4 dB of `klt`, which is orthonormal, so the error in its
+coefficients is the error in RGB. Colour costs 1.5 to 1.8 times the
+coefficients of the luma plane alone at equal PSNR.
+
 ## Arithmetic
 
 A circuit is applied to an image one gate at a time. Two options of the

@@ -16,6 +16,7 @@ else is imported from its subpackage, for example
    training
    coherence
    tasks
+   color
    io
 
 .. toctree::
