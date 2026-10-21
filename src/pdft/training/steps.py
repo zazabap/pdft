@@ -23,22 +23,31 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..bases.core import ParameterView, tensors_view
+from ..bases.core import ParameterView, _check_planes, tensors_view
 from ..optimizers import RiemannianAdam
 from .adam_step import adam_stepper
-from .batched import _at_least_one, _check_dataset, _check_image_shape, _validate_frozen_indices
+from .batched import _at_least_one, _check_dataset, _validate_frozen_indices
 from .result import TrainingResult
 
 Array = jax.Array
 
 
 def _stack_real_images(dataset: Sequence, expected_size: tuple[int, int]) -> np.ndarray:
-    """The dataset as one real array, in the precision it came in (integers become float64)."""
+    """The dataset as one real array, in the precision it came in (integers become float64).
+
+    An image is a plane of ``expected_size`` or a stack of channel planes of
+    one, ``(C, H, W)``, the same for every image.
+    """
     _check_dataset(dataset)
     images = []
     for i, img in enumerate(dataset):
         arr = np.asarray(img)
-        _check_image_shape(i, arr, expected_size)
+        _check_planes(arr, expected_size, f"dataset[{i}]")
+        if images and arr.shape != images[0].shape:
+            raise ValueError(
+                f"dataset[{i}] has shape {arr.shape}, dataset[0] has {images[0].shape}: "
+                "every image must have the same channels"
+            )
         if np.iscomplexobj(arr):
             raise ValueError(f"dataset[{i}] is complex; a mask is drawn over real images")
         images.append(arr)
@@ -66,16 +75,19 @@ def train_basis_steps(
     Parameters
     ----------
     dataset
-        Real images of the basis's ``image_size``, in the image's own frame.
+        Real images of the basis's ``image_size``, in the image's own frame;
+        or colour images as stacks of channel planes, ``(C, H, W)``
+        (``pdft.color``), all with the same ``C``.
     objective
         ``(basis, images, masks) -> scalar``, traceable; ``images`` and
-        ``masks`` are stacked along a leading axis. For completion,
+        ``masks`` are stacked along a leading axis, the masks ``(B, H, W)``
+        whatever the images' channels. For completion,
         ``pdft.tasks.completion_loss``. One that ignores the masks trains on
         the batches alone.
     optimizer
         A ``RiemannianAdam``; its learning rate is used as it is, at every step.
     rate
-        The probability that a pixel is observed.
+        The probability that a pixel is observed, in all its channels at once.
     view
         What is trained. The default is the tensors, each on its manifold.
         ``cp_phases_view`` and ``cp_diagonals_view`` train the controlled-phase angles
@@ -107,9 +119,10 @@ def train_basis_steps(
     -----
     The draw, per step and from one ``np.random.default_rng(seed)``, is the
     batch (``choice`` over the dataset, without replacement within a batch)
-    and then its masks (``random(batch.shape) < rate``). That order is the
-    completion paper's, so a seed names the same batches and masks as it does
-    there.
+    and then its masks (``random(batch.shape) < rate``, one mask per image
+    over its pixels; the channels of a colour image share it). That order is
+    the completion paper's, so a seed names the same batches and masks as it
+    does there.
 
     Under the default view the tensors come back as complex128 whatever they
     went in as, as ``RiemannianAdam`` returns them everywhere (a frozen tensor
@@ -162,7 +175,8 @@ def train_basis_steps(
     t0 = time.perf_counter()
     for step in range(steps):
         picked = images[rng.choice(len(images), size=min(batch_size, len(images)), replace=False)]
-        batch = (jnp.asarray(picked), jnp.asarray(rng.random(picked.shape) < rate))
+        pixels = picked.shape[:1] + picked.shape[-2:]  # one mask per image, shared by its channels
+        batch = (jnp.asarray(picked), jnp.asarray(rng.random(pixels) < rate))
         if frame is not None:
             batch = tuple(frame(a) for a in batch)
         params, loss = adam_step(params, batch, optimizer.lr, step + 1)

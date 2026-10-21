@@ -5,11 +5,21 @@ an image's frequency-domain representation (under a given AbstractSparseBasis)
 as a sparse tuple (indices, real parts, imag parts, original size,
 basis_hash). Indices use Julia's 1-based column-major convention for
 cross-language JSON compatibility.
+
+A colour image is compressed as a stack of channel planes, ``(C, H, W)``
+(``pdft.color`` makes one from an RGB image): the basis transforms every plane
+and the ``k`` largest coefficients are kept over all of them together, so a
+plane that carries little signal gets few of them. The indices then run over
+the ``(C, H, W)`` array in column-major order, channel fastest (the order of
+Julia's ``channelview``, though upstream has no colour path: there is no Julia
+behaviour to match, and the tests are the specification). The JSON form adds
+``original_channels`` and says so with schema version 1.1.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,9 +27,11 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 
+from ..bases.core import _check_planes, _map_planes
 from ..io.serialize import basis_hash
 
-_VERSION = "1.0"
+_VERSION = "1.0"  # upstream's schema: one plane
+_VERSION_PLANES = "1.1"  # with ``original_channels``: a stack of planes
 
 
 @dataclass
@@ -27,14 +39,15 @@ class CompressedImage:
     """Sparse frequency-domain representation of an image.
 
     Mirror of upstream src/compression.jl:27-33. `indices` are 1-based
-    column-major linear indices into the frequency-domain matrix (Julia
-    convention, chosen for cross-language JSON interop).
+    column-major linear indices into the frequency-domain array (Julia
+    convention, chosen for cross-language JSON interop). `original_size` is
+    ``(H, W)`` for one plane and ``(C, H, W)`` for a stack of channel planes.
     """
 
     indices: list[int]  # 1-based column-major
     values_real: list[float]
     values_imag: list[float]
-    original_size: tuple[int, int]
+    original_size: tuple[int, ...]
     basis_hash: str
 
 
@@ -60,13 +73,11 @@ def _select_top_coefficients(freq: np.ndarray, k: int):
 
 
 def _compress_keeping(basis, image, keep: Callable[[int], int]) -> CompressedImage:
-    """Transform `image` and keep the `keep(total)` largest of its `total` coefficients."""
-    expected = basis.image_size
+    """Transform `image`, plane by plane, and keep the `keep(total)` largest of its `total` coefficients."""
     image = np.asarray(image)
-    if image.shape != expected:
-        raise ValueError(f"image shape {image.shape} must match basis size {expected}")
+    _check_planes(image, basis.image_size)
 
-    freq = np.asarray(basis.forward_transform(jnp.asarray(image)))
+    freq = np.asarray(_map_planes(basis.forward_transform, jnp.asarray(image)))
     indices, values = _select_top_coefficients(freq, keep(freq.size))
     return CompressedImage(
         indices=indices,
@@ -96,20 +107,20 @@ def compress_with_k(basis, image, *, k: int) -> CompressedImage:
 
 
 def _reconstruct_frequency_domain(compressed: CompressedImage) -> np.ndarray:
-    """Fill a zero matrix with `compressed` non-zero entries (1-based colmajor indices)."""
-    h, w = compressed.original_size
-    freq_flat_colmajor = np.zeros(h * w, dtype=np.complex128)
+    """Fill a zero array with `compressed` non-zero entries (1-based colmajor indices)."""
+    shape = tuple(compressed.original_size)
+    freq_flat_colmajor = np.zeros(math.prod(shape), dtype=np.complex128)
     for idx_1b, re, im in zip(compressed.indices, compressed.values_real, compressed.values_imag):
         freq_flat_colmajor[idx_1b - 1] = complex(re, im)
-    # Reshape from column-major back to (h, w)
-    return freq_flat_colmajor.reshape((h, w), order="F")
+    # Reshape from column-major back to the original shape
+    return freq_flat_colmajor.reshape(shape, order="F")
 
 
 def recover(basis, compressed: CompressedImage, *, verify_hash: bool = True) -> np.ndarray:
     """Reconstruct real-valued image from a compressed representation.
 
     Mirror of upstream src/compression.jl:174-197. Returns `real(T^{-1}(freq))`
-    as a float64 numpy array.
+    as a float64 numpy array of the original shape, ``(H, W)`` or ``(C, H, W)``.
     """
     if verify_hash:
         expected = basis_hash(basis)
@@ -117,36 +128,63 @@ def recover(basis, compressed: CompressedImage, *, verify_hash: bool = True) -> 
             raise ValueError(
                 f"Basis hash mismatch. Compressed: {compressed.basis_hash}, basis: {expected}"
             )
-    if tuple(compressed.original_size) != tuple(basis.image_size):
+    size = tuple(compressed.original_size)
+    if len(size) not in (2, 3) or size[-2:] != tuple(basis.image_size):
         raise ValueError(
             f"Compressed size {compressed.original_size} does not match basis size {basis.image_size}"
         )
 
     freq = _reconstruct_frequency_domain(compressed)
-    recovered = np.asarray(basis.inverse_transform(jnp.asarray(freq)))
+    recovered = np.asarray(_map_planes(basis.inverse_transform, jnp.asarray(freq)))
     return np.real(recovered)
 
 
 def compressed_to_dict(c: CompressedImage) -> dict:
-    """Convert to the JSON-ready dict form (schema version `_VERSION`)."""
-    return {
-        "version": _VERSION,
+    """Convert to the JSON-ready dict form.
+
+    One plane is written in upstream's schema (version 1.0). A stack of planes
+    adds ``original_channels`` and is marked version 1.1.
+    """
+    *channels, height, width = c.original_size
+    d = {
+        "version": _VERSION_PLANES if channels else _VERSION,
         "indices": c.indices,
         "values_real": c.values_real,
         "values_imag": c.values_imag,
-        "original_height": int(c.original_size[0]),
-        "original_width": int(c.original_size[1]),
+        "original_height": int(height),
+        "original_width": int(width),
         "basis_hash": c.basis_hash,
     }
+    if channels:
+        d["original_channels"] = int(channels[0])
+    return d
 
 
 def dict_to_compressed(d: dict) -> CompressedImage:
-    """Inverse of `compressed_to_dict`."""
+    """Inverse of `compressed_to_dict`.
+
+    Refuses a document of a version this reader does not know, and one whose
+    ``original_channels`` does not go with its version.
+    """
+    version = str(d["version"])
+    if version not in (_VERSION, _VERSION_PLANES):
+        raise ValueError(
+            f"unknown compressed-image schema version {version!r}; "
+            f"this reader knows {_VERSION} (one plane) and {_VERSION_PLANES} (a stack of planes)"
+        )
+    stack = version == _VERSION_PLANES
+    if ("original_channels" in d) != stack:
+        raise ValueError(
+            f"schema version {version} {'needs' if stack else 'has no'} original_channels"
+        )
+    size = (int(d["original_height"]), int(d["original_width"]))
+    if stack:
+        size = (int(d["original_channels"]),) + size
     return CompressedImage(
         indices=[int(i) for i in d["indices"]],
         values_real=[float(v) for v in d["values_real"]],
         values_imag=[float(v) for v in d["values_imag"]],
-        original_size=(int(d["original_height"]), int(d["original_width"])),
+        original_size=size,
         basis_hash=str(d["basis_hash"]),
     )
 
@@ -169,13 +207,13 @@ def load_compressed(path: str | Path) -> CompressedImage:
 def compression_stats(c: CompressedImage) -> dict:
     """Summary of compression ratio + kept coefficients.
 
-    Mirror of upstream src/compression.jl:318-343.
+    Mirror of upstream src/compression.jl:318-343. For a stack of planes the
+    counts are over all of them.
     """
-    h, w = c.original_size
-    total = h * w
+    total = math.prod(c.original_size)
     kept = len(c.indices)
     return {
-        "original_size": (h, w),
+        "original_size": tuple(c.original_size),
         "total_coefficients": total,
         "kept_coefficients": kept,
         "compression_ratio": 1.0 - kept / total,

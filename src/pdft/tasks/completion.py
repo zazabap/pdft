@@ -20,6 +20,12 @@ Everything here is in the basis's own frame, as ``compress`` is. A mask lives
 on the pixels, so for a basis whose frame is not the image's (the QFT
 topology: see ``pdft.circuit.bit_reverse``) reverse the observation and the
 mask going in and the reconstruction coming out.
+
+A colour image is completed as a stack of channel planes, ``(C, H, W)``
+(``pdft.color`` makes one): every plane goes through the basis and the ``k``
+coefficients are kept over all of them together. A pixel is observed in every
+channel or in none, so the mask is one ``(H, W)`` array shared by the planes;
+a mask of the planes' own shape is taken as it is.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ from collections.abc import Callable
 import jax
 import jax.numpy as jnp
 
+from ..bases.core import _check_planes, _map_planes
 from ..loss import topk_truncate
 
 Array = jax.Array
@@ -43,12 +50,13 @@ def complete(basis, observed: Array, mask: Array, *, k: int, steps: int) -> Arra
         Any basis: it is used through ``forward_transform``,
         ``inverse_transform`` and ``image_size`` alone.
     observed : Array
-        The image, of the basis's ``image_size``. Only the pixels under
-        ``mask`` are read.
+        The image, of the basis's ``image_size``, or its channel planes,
+        ``(C, H, W)``. Only the pixels under ``mask`` are read.
     mask : Array
-        Boolean, same shape: ``True`` where the pixel was observed.
+        Boolean, ``True`` where the pixel was observed: of the image's size,
+        shared by the planes, or of ``observed``'s shape.
     k : int
-        Coefficients kept at each step.
+        Coefficients kept at each step, over all the planes together.
     steps : int
         Solver iterations.
 
@@ -73,10 +81,11 @@ def complete(basis, observed: Array, mask: Array, *, k: int, steps: int) -> Arra
     """
     if k < 1 or steps < 1:
         raise ValueError(f"k and steps must be positive, got k={k}, steps={steps}")
-    if observed.shape != basis.image_size or mask.shape != basis.image_size:
+    _check_planes(observed, basis.image_size, "observed")
+    if mask.shape not in (observed.shape, tuple(basis.image_size)):
         raise ValueError(
-            f"observed and mask must have the basis's image size {basis.image_size}, "
-            f"got {observed.shape} and {mask.shape}"
+            f"mask must have the shape of observed, {tuple(observed.shape)}, or the basis's "
+            f"image size {basis.image_size}, got {tuple(mask.shape)}"
         )
     if jnp.iscomplexobj(observed):
         raise ValueError("completion reconstructs a real image; observed is complex")
@@ -84,14 +93,15 @@ def complete(basis, observed: Array, mask: Array, *, k: int, steps: int) -> Arra
     zero_filled = jnp.where(mask, observed, 0.0)
 
     def step(x: Array, _) -> tuple[Array, None]:
-        coefficients = basis.forward_transform(x)
+        coefficients = _map_planes(basis.forward_transform, x)
         tie_band = float(jnp.finfo(coefficients.dtype).eps) ** 0.5
         sparse = topk_truncate(coefficients, k, rtol=tie_band)
         # The barrier changes no number. Without it XLA, as of JAX 0.11, carries
         # the real part back through every complex gate before it, and compiling
         # takes exponentially long in the depth of the circuit (104 s against
         # 0.1 s for 4 + 4 qubits).
-        recovered = jnp.real(jax.lax.optimization_barrier(basis.inverse_transform(sparse)))
+        recovered = _map_planes(basis.inverse_transform, sparse)
+        recovered = jnp.real(jax.lax.optimization_barrier(recovered))
         return jnp.where(mask, zero_filled, recovered), None
 
     # The iterate has the precision the transforms return, which need not be the image's.
@@ -103,8 +113,10 @@ def completion_loss(*, k: int, steps: int) -> Callable[[object, Array, Array], A
     """``(basis, images, masks) -> scalar``: the mean squared error of ``complete`` over a batch.
 
     The objective of training through the solver. ``images`` and ``masks`` are
-    stacks along a leading axis; the unobserved pixels are the supervision and
-    are never shown to the solver.
+    stacks along a leading axis: ``(B, H, W)`` images under ``(B, H, W)``
+    masks, or ``(B, C, H, W)`` colour images under ``(B, H, W)`` masks shared
+    by their channels (``(B, C, H, W)`` masks are taken as they are). The
+    unobserved pixels are the supervision and are never shown to the solver.
     """
 
     def objective(basis, images: Array, masks: Array) -> Array:
