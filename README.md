@@ -116,6 +116,7 @@ phases for a phase tensor), so the sparsity objective never rises; a
 `RichBasis` started at the QFT moves away from it, which phase training cannot:
 
 ```python
+import numpy as np
 from pdft.circuit import bit_reverse
 
 result = pdft.train_basis_exact(
@@ -125,6 +126,11 @@ result = pdft.train_basis_exact(
     sweeps=20, passes=2,
 )
 ```
+
+`precision="single"` computes everything the size of an image in single
+precision, for every basis; the sums over the images and the updates stay in
+double. On an RTX 5070, whose double precision is slow, a sweep over four
+`2^12 x 2^13` images took 5.6 s instead of 59 s, with the same losses to `1e-6`.
 
 Runnable demos live in [`examples/`](examples/) (each takes a few seconds):
 

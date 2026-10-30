@@ -32,10 +32,17 @@ basis's own transform, the block's gates set to the identity), and each
 environment inside the block is a small computation: the derivative of
 ``Re tr(M^H U_b)`` by the gate, ``U_b`` the block's gates applied to the
 identity by the package's applier.
+
+What is the size of an image (the transforms, the codes, each image's part
+of ``M``) is computed in the trainer's working precision, ``"double"`` or
+``"single"``, whatever the basis's own transforms would cast to (CLAUDE.md
+13). ``M`` is summed over the images in double precision, and each update is
+computed in double precision from its environment.
 """
 
 from __future__ import annotations
 
+import operator
 import time
 from collections.abc import Callable, Sequence
 from functools import partial
@@ -45,11 +52,64 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..bases.core import with_tensors
-from ..circuit.builder import Program, _axis_of_qubit, apply_program, identity_tensor
+from ..circuit.builder import (
+    Program,
+    _axis_of_qubit,
+    apply_program,
+    check_image_shape,
+    contract_circuit,
+    identity_tensor,
+)
 from ..loss import topk_truncate
+from .batched import _at_least_one, _check_dataset, _validate_frozen_indices
 from .result import TrainingResult
 
 Array = jax.Array
+
+# The working precision of everything the size of an image, by name.
+_PRECISIONS = {"double": jnp.complex128, "single": jnp.complex64}
+
+
+def _working_dtype(precision: str):
+    if precision not in _PRECISIONS:
+        raise ValueError(f"precision must be one of {tuple(_PRECISIONS)}, got {precision!r}")
+    return _PRECISIONS[precision]
+
+
+def _budgets(k: int | Sequence[int]) -> list[int]:
+    """The budgets ``k`` names, each a positive integer: ``H_0`` keeps nothing, and the updates would wipe the basis."""
+    budgets = [k] if np.ndim(k) == 0 else list(k)
+    if not budgets:
+        raise ValueError("k must name at least one budget")
+    try:
+        budgets = [operator.index(b) for b in budgets]
+    except TypeError as exc:
+        raise TypeError(f"k must be an integer or a sequence of integers, got {k!r}") from exc
+    for b in budgets:
+        _at_least_one("k", b)
+    return budgets
+
+
+def _at_most(x: Array, dtype) -> Array:
+    """``x`` narrowed to the precision of the complex ``dtype`` if it is wider, real if it is real.
+
+    Widening is left to the arithmetic, which does it exactly at the first
+    gate, so an image is never held at more than its own precision.
+    """
+    x = jnp.asarray(x)
+    if jnp.issubdtype(x.dtype, jnp.inexact) and jnp.finfo(x.dtype).bits <= jnp.finfo(dtype).bits:
+        return x
+    return x.astype(dtype if jnp.iscomplexobj(x) else jnp.finfo(dtype).dtype)
+
+
+def _transform(basis, tensors: Sequence[Array], x: Array, dtype) -> Array:
+    """``basis``'s circuit, holding ``tensors``, applied to ``x`` in ``dtype``.
+
+    Through the basis's own code, so with its arithmetic, but in the working
+    precision whatever ``forward_transform`` would cast to (CLAUDE.md 13).
+    """
+    cast = [t.astype(dtype) for t in tensors]
+    return contract_circuit(cast, basis.code, basis.m, basis.n, _at_most(x, dtype))
 
 
 def separable_blocks(program: Program) -> list[tuple[tuple[int, ...], list[int]]]:
@@ -158,35 +218,43 @@ def block_correlation(
     ``Re tr(M^H U_b)`` with ``U_b`` the block's unitary in the order of
     ``_block_matrix``: rows and columns run over the block's axes as the
     image lays them out, the lowest axis most significant.
+
+    ``Z_i`` and each image's product are computed in the codes' precision;
+    their sum, ``M``, is complex128.
     """
+    dtype = jnp.result_type(*codes, jnp.complex64)
     program = basis.program
     qubits = sorted({q for i in steps for q in program.steps[i][1]})
     axes = sorted(_axis_of_qubit(q, program.m, program.n) for q in qubits)
     others = [a for a in range(program.m + program.n) if a not in axes]
     identity = list(basis.tensors)
     for i in steps:
-        slot = program.slot[i]
-        identity[slot] = identity_tensor(program.steps[i][0]).astype(basis.tensors[slot].dtype)
-    rest = with_tensors(basis, identity)
+        identity[program.slot[i]] = identity_tensor(program.steps[i][0])
     shape = (2,) * (program.m + program.n)
     m = 0.0
     for x, c in zip(images, codes):
-        z = rest.forward_transform(x)
+        z = _transform(basis, identity, x, dtype)
         # "highest": a single-precision product on a GPU otherwise runs in TF32 (CLAUDE.md 10)
-        m = m + jnp.tensordot(
-            c.reshape(shape), jnp.conj(z.reshape(shape)), axes=(others, others), precision="highest"
+        product = jnp.tensordot(
+            c.astype(dtype).reshape(shape),
+            jnp.conj(z.reshape(shape)),
+            axes=(others, others),
+            precision="highest",
         )
+        m = m + product.astype(jnp.complex128)
     return m.reshape(2 ** len(axes), 2 ** len(axes))
 
 
-def _codes(basis, image: Array, budgets: Sequence[int]) -> tuple[Array, float]:
+def _codes(basis, image: Array, budgets: Sequence[int], dtype) -> tuple[Array, float]:
     """``H_k`` of the image's coefficients, the mean over the budgets, and the energy the budgets leave out."""
-    c = basis.forward_transform(image)
-    codes = sum(topk_truncate(c, k) for k in budgets) / len(budgets)
-    tail = sum(float(jnp.sum(jnp.abs(c - topk_truncate(c, k)) ** 2)) for k in budgets) / len(
-        budgets
-    )
-    return codes, tail
+    c = _transform(basis, basis.tensors, image, dtype)
+    codes, tail = 0, 0.0
+    for k in budgets:
+        kept = topk_truncate(c, k)
+        codes = codes + kept
+        tail += float(jnp.sum(jnp.abs(c - kept) ** 2, dtype=jnp.float64))
+        del kept  # it is the image's size: gone before the next budget's is made
+    return codes / len(budgets), tail / len(budgets)
 
 
 def train_basis_exact(
@@ -197,6 +265,7 @@ def train_basis_exact(
     sweeps: int,
     passes: int = 1,
     frozen_indices: Sequence[int] | None = None,
+    precision: str = "double",
     callback: Callable[[int, object, float], None] | None = None,
 ) -> TrainingResult:
     """Train a separable circuit basis by exact block-coordinate descent on its sparsity.
@@ -214,6 +283,14 @@ def train_basis_exact(
         Visits to every gate of a block per sweep, its codes held fixed.
     frozen_indices
         Indices into ``basis.tensors`` that are not updated.
+    precision
+        ``"double"`` or ``"single"``: the precision of everything the size of
+        an image (the images, the transforms, the codes, each image's part of
+        ``M``) for every basis, including those whose ``forward_transform``
+        casts to double (CLAUDE.md 13). ``"single"`` halves the memory these
+        take. ``M`` is summed in double precision and each update is computed
+        in double precision either way; the tensors come back in the dtype
+        they came in with, unitary to its rounding.
     callback
         ``callback(sweep, basis, loss)`` after every sweep: the basis as the
         sweep left it, and the objective the sweep started from.
@@ -228,9 +305,13 @@ def train_basis_exact(
     Raises
     ------
     ValueError
-        If a gate couples the two registers (``separable_blocks``).
+        If a gate couples the two registers (``separable_blocks``), an image
+        is not ``(2**m, 2**n)``, the dataset or ``k`` is empty, a budget,
+        ``sweeps`` or ``passes`` is below 1, or a frozen index is not one of
+        the basis's tensors.
     TypeError
-        For a basis with no circuit of its own (a ``BlockedBasis``).
+        For a basis with no circuit of its own (a ``BlockedBasis``), or a
+        budget that is not an integer.
 
     Notes
     -----
@@ -240,15 +321,23 @@ def train_basis_exact(
     real. One complex tensor makes every update complex, as under the
     gradient trainers.
     """
-    budgets = [int(k)] if np.ndim(k) == 0 else [int(b) for b in k]
-    images = [jnp.asarray(x) for x in dataset]
+    dtype = _working_dtype(precision)
     program = getattr(basis, "program", None)
     if program is None:
         raise TypeError(
             f"train_basis_exact trains a circuit basis, not a {type(basis).__name__}; "
             "a BlockedBasis tiles one: train its inner basis"
         )
-    frozen = set(frozen_indices or ())
+    budgets = _budgets(k)
+    _at_least_one("sweeps", sweeps)
+    _at_least_one("passes", passes)
+    frozen = _validate_frozen_indices(frozen_indices, len(basis.tensors))
+    _check_dataset(dataset)
+    images = []
+    for x in dataset:
+        x = _at_most(x, dtype)
+        check_image_shape(x, basis.m, basis.n)
+        images.append(x)
     blocks = []
     for qubits, steps in separable_blocks(program):
         trainable = [j for j, i in enumerate(steps) if program.slot[i] not in frozen]
@@ -266,7 +355,7 @@ def train_basis_exact(
     start = time.perf_counter()
     for sweep in range(sweeps):
         coded = None  # the last sweep's codes go before this sweep's are made: they are the images' size
-        coded = [_codes(basis, x, budgets) for x in images]
+        coded = [_codes(basis, x, budgets, dtype) for x in images]
         loss = sum(tail for _, tail in coded)
         history.append(loss)
         for steps, trainable, phase, grad in blocks:
@@ -275,9 +364,8 @@ def train_basis_exact(
             block = [tensors[program.slot[i]] for i in steps]
             for _ in range(passes):
                 for j in trainable:
-                    environment = np.conj(
-                        np.asarray(grad(block, m)[j])
-                    )  # JAX's gradient is the conjugate (CLAUDE.md 1)
+                    # JAX's gradient is the conjugate (CLAUDE.md 1)
+                    environment = np.conj(np.asarray(grad(block, m)[j]))
                     block[j] = _best(block[j], environment, phase=phase[j], real=real)
             for i, t in zip(steps, block):
                 tensors[program.slot[i]] = t

@@ -1,6 +1,6 @@
 """Training pipelines.
 
-Three trainers:
+Four trainers:
 
 - `train_basis` — `optimize` on one target image, which is what the Julia
   goldens harness runs (upstream has no one-image trainer of its own).
