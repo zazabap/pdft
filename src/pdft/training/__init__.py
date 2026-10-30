@@ -9,9 +9,13 @@ Three trainers:
 - `train_basis_steps` — not in upstream: a fixed number of Adam steps, each on
   a fresh batch under a fresh observation mask, for objectives that train a
   basis through a solver (`pdft.tasks.completion_loss`).
+- `train_basis_exact` — not in upstream: no gradient steps; the sparsity
+  objective by exact block-coordinate descent, each gate set in closed form to
+  its best given the others (a separable circuit only).
 """
 
 from .batched import train_basis_batched
+from .exact import train_basis_exact
 from .result import TrainingResult
 from .schedules import cosine_with_warmup
 from .single import train_basis
@@ -22,5 +26,6 @@ __all__ = [
     "cosine_with_warmup",
     "train_basis",
     "train_basis_batched",
+    "train_basis_exact",
     "train_basis_steps",
 ]
