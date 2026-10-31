@@ -112,8 +112,9 @@ A separable circuit (no gate between the two registers: QFT, Rich, RealRich,
 DCT4, TEBD, MERA) can also be trained with no gradient steps at all.
 `train_basis_exact` alternates the codes `H_k(U x)` with an exact update of
 every gate given the others (the polar factor of its environment, or its
-phases for a phase tensor), so the sparsity objective never rises; a
-`RichBasis` started at the QFT moves away from it, which phase training cannot:
+phases for a phase tensor), so the sparsity objective never rises but by
+rounding; a `RichBasis` started at the QFT moves away from it, which phase
+training cannot:
 
 ```python
 import numpy as np

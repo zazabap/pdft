@@ -4,7 +4,8 @@ The objective is the sparsity surrogate ``MSELoss`` trains, the energy of the
 images outside the ``k`` largest coefficients of their transform,
 ``sum_i ||x_i - U^H H_k(U x_i)||^2``. For a unitary ``U`` it equals
 ``sum_i ||U x_i - C_i||^2`` with the codes ``C_i = H_k(U x_i)``, and it is
-minimised by alternation, each step exactly, so it never rises:
+minimised by alternation, each step exactly, so it never rises (in exact
+arithmetic; in floating point, by rounding, once it has converged):
 
 - **Code.** With the circuit fixed, ``C_i = H_k(U x_i)`` (the mean over the
   budgets when there are several).
@@ -34,18 +35,19 @@ environment inside the block is a small computation: the derivative of
 identity by the package's applier.
 
 What is the size of an image (the transforms, the codes, each image's part
-of ``M``) is computed in the trainer's working precision, ``"double"`` or
-``"single"``, whatever the basis's own transforms would cast to (CLAUDE.md
-13). ``M`` is summed over the images in double precision, and each update is
-computed in double precision from its environment.
+of ``M``, a block's unitary and its gradient) is computed in the trainer's
+working precision, ``"double"`` or ``"single"``, whatever the basis's own
+transforms would cast to (CLAUDE.md 13). ``M`` is summed over the images in
+double precision, and each update is computed in double precision from its
+environment.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import operator
 import time
 from collections.abc import Callable, Sequence
-from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -53,15 +55,20 @@ import numpy as np
 
 from ..bases.core import with_tensors
 from ..circuit.builder import (
+    CircuitCode,
     Program,
     _axis_of_qubit,
     apply_program,
-    check_image_shape,
     contract_circuit,
     identity_tensor,
 )
 from ..loss import topk_truncate
-from .batched import _at_least_one, _check_dataset, _validate_frozen_indices
+from .batched import (
+    _at_least_one,
+    _check_dataset,
+    _check_image_shape,
+    _validate_frozen_indices,
+)
 from .result import TrainingResult
 
 Array = jax.Array
@@ -76,18 +83,24 @@ def _working_dtype(precision: str):
     return _PRECISIONS[precision]
 
 
+def _count(name: str, value) -> int:
+    """``value`` as an integer of at least 1; a bool or a fraction is refused, not rounded."""
+    if isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be an integer, got {value!r}")
+    try:
+        value = operator.index(value)
+    except TypeError as exc:
+        raise TypeError(f"{name} must be an integer, got {value!r}") from exc
+    _at_least_one(name, value)
+    return value
+
+
 def _budgets(k: int | Sequence[int]) -> list[int]:
     """The budgets ``k`` names, each a positive integer: ``H_0`` keeps nothing, and the updates would wipe the basis."""
     budgets = [k] if np.ndim(k) == 0 else list(k)
     if not budgets:
         raise ValueError("k must name at least one budget")
-    try:
-        budgets = [operator.index(b) for b in budgets]
-    except TypeError as exc:
-        raise TypeError(f"k must be an integer or a sequence of integers, got {k!r}") from exc
-    for b in budgets:
-        _at_least_one("k", b)
-    return budgets
+    return [_count("k", b) for b in budgets]
 
 
 def _at_most(x: Array, dtype) -> Array:
@@ -161,51 +174,76 @@ def _block_program(program: Program, qubits: tuple[int, ...], steps: list[int]) 
     return Program(len(qubits), 0, sub, tuple(range(len(steps))))
 
 
-def _block_matrix(sub: Program, tensors: Sequence[Array]) -> Array:
-    """The block's unitary, ``(2**w, 2**w)``: column ``j`` its circuit applied to the ``j``-th basis vector."""
-    size = 2**sub.m
-    eye = jnp.eye(size, dtype=jnp.result_type(*tensors, jnp.complex64))[:, :, None]
-    return apply_program(sub, tensors, eye)[:, :, 0].T
+def _block_matrix(code: CircuitCode, tensors: Sequence[Array], dtype) -> Array:
+    """The block's unitary, ``(2**w, 2**w)``, in ``dtype``: column ``j`` its circuit applied to the ``j``-th basis vector.
+
+    ``code`` is the block's own circuit with the basis's arithmetic.
+    """
+    eye = jnp.eye(2**code.program.m, dtype=dtype)[:, :, None]
+    arithmetic = {"slices": code.slices, "merge_diagonals": code.merge_diagonals}
+    return apply_program(code.program, tensors, eye, **arithmetic)[:, :, 0].T
 
 
-def _block_objective(tensors: Sequence[Array], m: Array, *, sub: Program) -> Array:
+def _block_objective(tensors: Sequence[Array], m: Array, *, code: CircuitCode) -> Array:
     """``Re tr(M^H U_b)``, a block's part of ``Re sum_i <C_i, U x_i>``; its gradient by a gate is that gate's environment.
 
-    The real part is taken behind ``optimization_barrier``, as ``complete`` takes
-    its own (CLAUDE.md 14): jitted, XLA otherwise carries it back through the
-    complex gates, and compiling takes exponentially long in their depth.
+    ``U_b`` is computed in the precision of ``m``. The real part is taken
+    behind ``optimization_barrier``, as CLAUDE.md 14 asks of any jitted real
+    part of a circuit's output: under JAX 0.11.2 XLA carried ``complete``'s
+    back through the complex gates, and compiling took exponentially long in
+    their depth.
     """
-    return jnp.real(
-        jax.lax.optimization_barrier(jnp.sum(jnp.conj(m) * _block_matrix(sub, tensors)))
-    )
+    u = _block_matrix(code, tensors, m.dtype)
+    return jnp.real(jax.lax.optimization_barrier(jnp.sum(jnp.conj(m) * u)))
 
 
-def _polar(e: np.ndarray) -> np.ndarray:
-    """The unitary nearest ``e``: ``A B^H`` for ``e = A S B^H``."""
-    a, _, bh = np.linalg.svd(e)
-    return a @ bh
+# Compiled once per block circuit, shape and precision, not once per call.
+_block_gradient = jax.jit(jax.grad(_block_objective), static_argnames="code")
 
 
-def _best(tensor: Array, environment: np.ndarray, *, phase: bool, real: bool) -> Array:
+def _polar(e: np.ndarray, current: np.ndarray, tol: float) -> np.ndarray:
+    """Of the unitaries ``g`` that maximise ``Re tr(e^H g)``, the one nearest ``current``.
+
+    For ``e = A S B^H`` they are ``A diag(I, W) B^H``, ``W`` any unitary on
+    the singular values that are zero (to ``tol`` of the largest): the polar
+    factor ``A B^H`` when none is, ``current`` itself when ``e`` is zero.
+    Otherwise LAPACK would choose ``W`` by rounding, and the gate would move
+    where the objective cannot see.
+    """
+    a, s, bh = np.linalg.svd(e)
+    rank = int(np.count_nonzero(s > tol * s[0]))
+    if rank == len(s):
+        return a @ bh
+    if rank == 0:
+        return current
+    a0, b0h = a[:, rank:], bh[rank:]
+    u, _, vh = np.linalg.svd(a0.conj().T @ current @ b0h.conj().T)
+    return a[:, :rank] @ bh[:rank] + a0 @ (u @ vh) @ b0h
+
+
+def _best(tensor: Array, environment: np.ndarray, *, phase: bool, real: bool, eps: float) -> Array:
     """The tensor of a gate's manifold that maximises ``Re tr(E^H g)``, ``E`` its environment.
 
     ``phase``: a compact controlled phase (kind ``CP``), each entry on the unit
     circle; otherwise a unitary, ``2 x 2`` or a ``(2, 2, 2, 2)`` two-qubit gate.
     The kind comes from the program, not from the values (CLAUDE.md 9), so it
-    holds in single precision on a GPU too. Computed in double precision and
-    returned in the tensor's.
+    holds in single precision on a GPU too. Where several tensors are best (an
+    entry of ``E`` that is zero, a singular value that is, to ``eps`` times
+    the size of ``E``), the one nearest the tensor as it is. Computed in
+    double precision and returned in the tensor's.
     """
     e = np.asarray(environment, np.complex128)
-    e = np.real(e) if real else e
+    current = np.asarray(tensor, np.complex128)
+    if real:
+        e, current = np.real(e), np.real(current)
+    d = int(np.sqrt(tensor.size))
     if phase:
         magnitude = np.abs(e)
-        best = np.where(
-            magnitude > 0, e / np.where(magnitude > 0, magnitude, 1), np.asarray(tensor)
-        )
+        seen = magnitude > d * eps * magnitude.max()
+        best = np.where(seen, e / np.where(seen, magnitude, 1), current)
     else:
-        d = int(np.sqrt(tensor.size))
-        best = _polar(e.reshape(d, d)).reshape(tensor.shape)
-    return jnp.asarray(np.real(best) if real else best, dtype=tensor.dtype)
+        best = _polar(e.reshape(d, d), current.reshape(d, d), d * eps).reshape(tensor.shape)
+    return jnp.asarray(best, dtype=tensor.dtype)
 
 
 def block_correlation(
@@ -286,11 +324,13 @@ def train_basis_exact(
     precision
         ``"double"`` or ``"single"``: the precision of everything the size of
         an image (the images, the transforms, the codes, each image's part of
-        ``M``) for every basis, including those whose ``forward_transform``
-        casts to double (CLAUDE.md 13). ``"single"`` halves the memory these
-        take. ``M`` is summed in double precision and each update is computed
-        in double precision either way; the tensors come back in the dtype
-        they came in with, unitary to its rounding.
+        ``M``, each block's unitary and its gradient) for every basis and
+        whatever the tensors' precision, including the bases whose
+        ``forward_transform`` casts to double (CLAUDE.md 13). ``"single"``
+        halves the memory these take. ``M`` is summed in double precision and
+        each update is computed in double precision from its environment
+        either way; the tensors come back in the dtype they came in with,
+        unitary to its rounding.
     callback
         ``callback(sweep, basis, loss)`` after every sweep: the basis as the
         sweep left it, and the objective the sweep started from.
@@ -300,28 +340,42 @@ def train_basis_exact(
     TrainingResult
         Its ``loss_history`` holds, per sweep, the objective at its start:
         the energy outside the top ``k`` summed over the images (the mean over
-        the budgets), which no sweep raises.
+        the budgets). No sweep raises it in exact arithmetic; once it has
+        converged, rounding can (by about ``1e-15`` of it in double
+        precision, ``1e-7`` in single).
 
     Raises
     ------
     ValueError
-        If a gate couples the two registers (``separable_blocks``), an image
-        is not ``(2**m, 2**n)``, the dataset or ``k`` is empty, a budget,
-        ``sweeps`` or ``passes`` is below 1, or a frozen index is not one of
-        the basis's tensors.
+        If a gate couples the two registers (``separable_blocks``), the
+        dataset or ``k`` is empty, an image is not ``(2**m, 2**n)`` or not
+        finite, a budget, ``sweeps`` or ``passes`` is below 1, a frozen index
+        is not one of the basis's tensors, or ``precision`` is neither
+        ``"double"`` nor ``"single"``.
     TypeError
         For a basis with no circuit of its own (a ``BlockedBasis``), or a
-        budget that is not an integer.
+        budget, ``sweeps`` or ``passes`` that is not an integer.
 
     Notes
     -----
     When every image and every tensor is exactly real, as for a
-    ``RealRichBasis`` on real images, each environment is real but for
-    rounding, and the updates use its real part: the basis stays exactly
+    ``RealRichBasis`` on real images, each environment is exactly real and
+    the updates are computed in real arithmetic: the basis stays exactly
     real. One complex tensor makes every update complex, as under the
     gradient trainers.
+
+    Where the data leave a gate's best value open (several score the same,
+    as when the images are zero or their codes already exact), the gate
+    takes the one of them nearest its value, and is left as it is when its
+    environment is zero.
+
+    The top ``k`` is ``MSELoss``'s, with no tie band (CLAUDE.md 14): where
+    coefficients tie in magnitude, as conjugate pairs of a real image do at
+    the Fourier start, rounding decides which is kept, and the CPU and the
+    GPU, or the two precisions, can follow different trajectories.
     """
     dtype = _working_dtype(precision)
+    eps = float(jnp.finfo(dtype).eps)
     program = getattr(basis, "program", None)
     if program is None:
         raise TypeError(
@@ -329,24 +383,28 @@ def train_basis_exact(
             "a BlockedBasis tiles one: train its inner basis"
         )
     budgets = _budgets(k)
-    _at_least_one("sweeps", sweeps)
-    _at_least_one("passes", passes)
+    sweeps = _count("sweeps", sweeps)
+    passes = _count("passes", passes)
     frozen = _validate_frozen_indices(frozen_indices, len(basis.tensors))
+    separable = separable_blocks(program)
     _check_dataset(dataset)
     images = []
-    for x in dataset:
+    for i, x in enumerate(dataset):
         x = _at_most(x, dtype)
-        check_image_shape(x, basis.m, basis.n)
+        _check_image_shape(i, x, basis.image_size)
+        if not bool(jnp.all(jnp.isfinite(x))):
+            raise ValueError(f"dataset[{i}] is not finite")
         images.append(x)
+    arithmetic = basis.code if isinstance(basis.code, CircuitCode) else CircuitCode(program)
     blocks = []
-    for qubits, steps in separable_blocks(program):
+    for qubits, steps in separable:
         trainable = [j for j, i in enumerate(steps) if program.slot[i] not in frozen]
         if not trainable:
             continue
         sub = _block_program(program, qubits, steps)
+        code = dataclasses.replace(arithmetic, program=sub, inverse=False)
         phase = [program.steps[i][0] == "CP" for i in steps]
-        grad = jax.jit(jax.grad(partial(_block_objective, sub=sub)))
-        blocks.append((steps, trainable, phase, grad))
+        blocks.append((steps, trainable, phase, code))
     real = all(not jnp.iscomplexobj(x) for x in images) and all(
         not np.any(np.imag(np.asarray(t))) for t in basis.tensors
     )
@@ -358,15 +416,16 @@ def train_basis_exact(
         coded = [_codes(basis, x, budgets, dtype) for x in images]
         loss = sum(tail for _, tail in coded)
         history.append(loss)
-        for steps, trainable, phase, grad in blocks:
+        for steps, trainable, phase, code in blocks:
             m = block_correlation(basis, steps, images, [codes for codes, _ in coded])
+            m = m.astype(dtype)  # summed in double; the block's unitary is image-sized too
             tensors = list(basis.tensors)
             block = [tensors[program.slot[i]] for i in steps]
             for _ in range(passes):
                 for j in trainable:
                     # JAX's gradient is the conjugate (CLAUDE.md 1)
-                    environment = np.conj(np.asarray(grad(block, m)[j]))
-                    block[j] = _best(block[j], environment, phase=phase[j], real=real)
+                    environment = np.conj(np.asarray(_block_gradient(block, m, code=code)[j]))
+                    block[j] = _best(block[j], environment, phase=phase[j], real=real, eps=eps)
             for i, t in zip(steps, block):
                 tensors[program.slot[i]] = t
             basis = with_tensors(basis, tensors)

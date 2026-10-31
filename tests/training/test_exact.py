@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from functools import partial
 
 import jax
@@ -10,11 +11,14 @@ import numpy as np
 import pytest
 
 import pdft
-from pdft.bases.core import program_of, with_tensors
+import pdft.training.exact as exact
+from pdft.bases.core import cp_phases, program_of, with_cp_phases, with_tensors
+from pdft.circuit.builder import CircuitCode
 from pdft.loss import topk_truncate
 from pdft.training.exact import (
     _PRECISIONS,
     _best,
+    _block_gradient,
     _block_matrix,
     _block_objective,
     _block_program,
@@ -25,6 +29,8 @@ from pdft.training.exact import (
 )
 from tests.helpers import BASES, case_rng, complex_normal, generic, random_unitary
 
+EPS = float(np.finfo(np.float64).eps)
+
 
 def _separable(basis) -> bool:
     try:
@@ -32,6 +38,10 @@ def _separable(basis) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _block_code(program, qubits, steps) -> CircuitCode:
+    return CircuitCode(_block_program(program, qubits, steps))
 
 
 @pytest.mark.parametrize(("precision", "rel"), [("double", 1e-10), ("single", 1e-5)])
@@ -60,8 +70,8 @@ def test_block_correlation_is_the_transforms_inner_product(case: str, precision:
         assert m.dtype == jnp.complex128
         wide = block_correlation(basis, steps, images, [c.astype(jnp.complex128) for c in codes])
         assert bool(jnp.array_equal(m, wide)) == (precision == "double")  # summed in double only
-        sub = _block_program(program, qubits, steps)
-        u = _block_matrix(sub, [basis.tensors[program.slot[i]] for i in steps])
+        code = _block_code(program, qubits, steps)
+        u = _block_matrix(code, [basis.tensors[program.slot[i]] for i in steps], dtype)
         assert float(jnp.real(jnp.sum(jnp.conj(m) * u))) == pytest.approx(whole, rel=rel)
     assert _codes(basis, images[0], [3], dtype)[0].dtype == dtype
 
@@ -83,22 +93,23 @@ def test_a_coupled_circuit_is_refused(case: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("template", "real"),
+    ("template", "phase", "real"),
     [
-        (pdft.QFTBasis(m=1, n=1).tensors[0], False),  # a Hadamard: U(2)
-        (pdft.RichBasis(m=2, n=1).tensors[-1], False),  # a dense two-qubit gate: U(4)
-        (pdft.RealRichBasis(m=2, n=1).tensors[-1], True),  # the same, real: O(4)
-        (pdft.QFTBasis(m=2, n=1).tensors[-1], False),  # a compact controlled phase: U(1)^4
+        (pdft.QFTBasis(m=1, n=1).tensors[0], False, False),  # a Hadamard: U(2)
+        (pdft.RichBasis(m=2, n=1).tensors[-1], False, False),  # a dense two-qubit gate: U(4)
+        (pdft.RealRichBasis(m=2, n=1).tensors[-1], False, True),  # the same, real: O(4)
+        (pdft.QFTBasis(m=2, n=1).tensors[-1], True, False),  # a compact controlled phase: U(1)^4
     ],
     ids=["u2", "u4", "o4", "phase"],
 )
-def test_the_update_beats_every_other_gate_of_its_manifold(template, real: bool) -> None:
+def test_the_update_beats_every_other_gate_of_its_manifold(
+    template, phase: bool, real: bool
+) -> None:
     rng = np.random.default_rng(7)
     environment = complex_normal(rng, template.shape)
     if real:
         environment = environment.real
-    phase = template.shape == (2, 2) and bool(np.allclose(np.abs(np.asarray(template)), 1))
-    best = np.asarray(_best(template, environment, phase=phase, real=real))
+    best = np.asarray(_best(template, environment, phase=phase, real=real, eps=EPS))
 
     def score(g) -> float:
         return float(np.real(np.sum(np.conj(environment) * g)))
@@ -112,6 +123,41 @@ def test_the_update_beats_every_other_gate_of_its_manifold(template, real: bool)
         assert score(best) >= score(other) - 1e-12
     if real:
         assert not np.any(np.imag(best))
+
+
+def test_of_several_best_gates_the_update_takes_the_nearest() -> None:
+    """Where the environment leaves a choice, the gate moves no further than the best score needs.
+
+    A singular value or an entry of the environment that is zero, or below
+    its rounding, says nothing about the data: the polar factor's choice
+    there would be LAPACK's, by rounding.
+    """
+    rng = np.random.default_rng(47)
+    current = random_unitary(rng, 4)
+    a, b = random_unitary(rng, 4), random_unitary(rng, 4)
+    environment = a @ np.diag([1.0, 0.5, 1e-20, 0.0]) @ b.conj().T
+    best = _best(
+        jnp.asarray(current.reshape(2, 2, 2, 2)),
+        environment.reshape(2, 2, 2, 2),
+        phase=False,
+        real=False,
+        eps=EPS,
+    )
+    best = np.asarray(best).reshape(4, 4)
+    np.testing.assert_allclose(best @ best.conj().T, np.eye(4), atol=1e-12)
+    assert float(np.real(np.trace(environment.conj().T @ best))) == pytest.approx(1.5)
+    # every A diag(1, 1, W) B^H scores the same; the update is the one nearest the gate
+    for _ in range(100):
+        w = np.eye(4, dtype=complex)
+        w[2:, 2:] = random_unitary(rng, 2)
+        other = a @ w @ b.conj().T
+        assert np.linalg.norm(best - current) <= np.linalg.norm(other - current) + 1e-12
+
+    phases = np.exp(1j * rng.uniform(0, 2 * np.pi, (2, 2)))
+    environment = np.array([[2.0, 1e-20j], [0.0, -1.0]])
+    best = np.asarray(_best(jnp.asarray(phases), environment, phase=True, real=False, eps=EPS))
+    np.testing.assert_allclose(best[[0, 1], [0, 1]], [1.0, -1.0], atol=1e-15)
+    assert best[0, 1] == phases[0, 1] and best[1, 0] == phases[1, 0]
 
 
 def _images(rng, m: int, n: int, count: int, *, real: bool = True):
@@ -142,8 +188,14 @@ def _objective(basis, images, budgets) -> float:
     ids=["qft", "rich", "real_rich"],
 )
 def test_the_objective_never_rises(make) -> None:
+    """Not by more than rounding, over a few sweeps; the history, the callback and the result agree.
+
+    The images weigh as they are given (one of them twice the others), and
+    the callback gets the basis as each sweep left it.
+    """
     basis = make()
     images = _images(np.random.default_rng(3), basis.m, basis.n, 6)
+    images[0] = 2 * images[0]
     budgets = [4, 8]
     seen = []
     result = train_basis_exact(
@@ -152,13 +204,17 @@ def test_the_objective_never_rises(make) -> None:
         k=budgets,
         sweeps=4,
         passes=2,
-        callback=lambda sweep, b, loss: seen.append((sweep, loss)),
+        callback=lambda sweep, b, loss: seen.append((sweep, b, loss)),
     )
     history = result.loss_history + [_objective(result.basis, images, budgets)]
     assert all(b <= a * (1 + 1e-10) for a, b in zip(history, history[1:]))
     assert history[-1] < history[0]
     assert history[0] == pytest.approx(_objective(basis, images, budgets), rel=1e-12)
-    assert seen == [(i, loss) for i, loss in enumerate(result.loss_history)]
+    assert [(s, loss) for s, _, loss in seen] == list(enumerate(result.loss_history))
+    for (_, left, _), after in zip(seen, result.loss_history[1:] + [history[-1]]):
+        assert _objective(left, images, budgets) == pytest.approx(after, rel=1e-12)
+    assert seen[-1][1] is result.basis
+    assert result.steps == 4
 
 
 @pytest.mark.parametrize("case", sorted(BASES))
@@ -189,16 +245,18 @@ def test_each_gate_stays_on_the_manifold_of_its_kind(case: str) -> None:
     assert norm == pytest.approx(float(jnp.linalg.norm(x)), rel=1e-12)
 
 
-def test_a_sweep_moves_every_block_and_leaves_its_last_gate_at_its_best() -> None:
-    """After one sweep the gate it visited last is the best given the rest, in the basis it returns, under its codes.
+def test_a_sweep_visits_the_gates_in_the_order_they_act() -> None:
+    """After one sweep, under its codes, the gate it visited last is the best given the rest, and the first no longer is.
 
-    That holds only if each block's ``M`` is made after the blocks before it
-    were updated, each environment after the gates before it in the block,
-    and the last block is trained at all. Every block moving says no block's
-    update was dropped. (Not every gate moves: a Hadamard after a dense gate
-    on its qubit is at its best once that gate is, which absorbs it.)
+    That holds only if the gates are visited in the order they act, each
+    block's ``M`` is made after the blocks before it were updated, each
+    environment after the gates before it in the block, and the last block is
+    trained at all; every block moving says no block's update was dropped. A
+    QFT, whose gates cannot absorb their neighbours: in a Rich circuit a
+    Hadamard next to a dense gate on its qubit is at its best once that gate
+    is, whatever the order.
     """
-    basis = pdft.RichBasis(m=3, n=2)
+    basis = pdft.QFTBasis(m=3, n=2)
     images = _images(np.random.default_rng(19), 3, 2, 4, real=False)
     budgets = [4, 8]
     trained = train_basis_exact(basis, dataset=images, k=budgets, sweeps=1).basis
@@ -210,11 +268,16 @@ def test_a_sweep_moves_every_block_and_leaves_its_last_gate_at_its_best() -> Non
     qubits, steps = separable_blocks(program)[-1]
     m = block_correlation(trained, steps, images, codes)
     block = [trained.tensors[program.slot[i]] for i in steps]
-    objective = partial(_block_objective, sub=_block_program(program, qubits, steps))
-    environment = np.conj(np.asarray(jax.grad(objective)(block, m)[-1]))
-    phase = program.steps[steps[-1]][0] == "CP"
-    best = _best(block[-1], environment, phase=phase, real=False)
-    np.testing.assert_allclose(best, block[-1], atol=1e-10)
+    gradient = _block_gradient(block, m, code=_block_code(program, qubits, steps))
+
+    def at_its_best(j: int) -> bool:
+        environment = np.conj(np.asarray(gradient[j]))
+        phase = program.steps[steps[j]][0] == "CP"
+        best = _best(block[j], environment, phase=phase, real=False, eps=EPS)
+        return bool(np.allclose(best, block[j], atol=1e-10))
+
+    assert at_its_best(len(steps) - 1)
+    assert not at_its_best(0)
 
 
 def test_each_pass_descends_on_the_sweeps_codes() -> None:
@@ -255,15 +318,39 @@ def test_the_codes_are_the_top_k_averaged_over_the_budgets() -> None:
     assert tail == pytest.approx(sum(left) / 2, rel=1e-12)
 
 
-def test_the_real_part_is_taken_behind_an_optimization_barrier() -> None:
-    """A compile-time property, not a numerical one (CLAUDE.md 14): nothing else would notice it gone."""
+@pytest.mark.parametrize("dtype", [jnp.complex64, jnp.complex128])
+def test_a_blocks_objective_is_taken_behind_a_barrier_in_the_precision_of_m(dtype) -> None:
+    """Neither shows in a number on a CPU: the barrier is a compile-time property (CLAUDE.md 14), and
+    the block's unitary, image-sized for a two-register circuit, is the memory a single precision run saves.
+    """
     basis = pdft.RichBasis(m=2, n=1)
     program = basis.program
     qubits, steps = separable_blocks(program)[0]
-    block = [basis.tensors[program.slot[i]] for i in steps]
-    m = jnp.eye(2 ** len(qubits), dtype=jnp.complex128)
-    objective = partial(_block_objective, sub=_block_program(program, qubits, steps))
+    block = [basis.tensors[program.slot[i]] for i in steps]  # complex128
+    m = jnp.eye(2 ** len(qubits), dtype=dtype)
+    objective = partial(_block_objective, code=_block_code(program, qubits, steps))
+    traced = jax.make_jaxpr(objective)(block, m).jaxpr
+    barriers = [e for e in traced.eqns if e.primitive.name == "optimization_barrier"]
+    assert [v.aval.dtype for e in barriers for v in e.invars] == [dtype]
     assert "optimization_barrier" in str(jax.make_jaxpr(jax.grad(objective))(block, m))
+
+
+def test_a_complex_basis_on_real_images_is_trained_as_on_complex_ones() -> None:
+    """Only a basis that is exactly real is updated through the real part of its environments.
+
+    At random phases, so that no coefficient of a real image ties with its
+    conjugate.
+    """
+    basis = pdft.QFTBasis(m=3, n=2)
+    angles = np.random.default_rng(37).uniform(0, 2 * np.pi, cp_phases(basis).shape)
+    basis = with_cp_phases(basis, jnp.asarray(angles))
+    images = _images(np.random.default_rng(41), 3, 2, 4)
+    real = train_basis_exact(basis, dataset=images, k=6, sweeps=3)
+    widened = [x.astype(jnp.complex128) for x in images]
+    complex_ = train_basis_exact(basis, dataset=widened, k=6, sweeps=3)
+    np.testing.assert_allclose(real.loss_history, complex_.loss_history, rtol=1e-10)
+    for a, b in zip(real.basis.tensors, complex_.basis.tensors):
+        np.testing.assert_allclose(a, b, atol=1e-10)
 
 
 def test_a_real_basis_on_real_images_stays_real() -> None:
@@ -287,19 +374,41 @@ def test_frozen_tensors_are_left_as_they_are() -> None:
     )
 
 
-def test_an_already_sparse_basis_is_a_fixed_point() -> None:
-    """Images k-sparse under the basis leave nothing outside the top k, before training and after."""
-    basis = pdft.RichBasis(m=2, n=2)
-    rng = np.random.default_rng(13)
-    shape = (4, 4)
+def _sparse(basis, rng, count: int, nonzero: int):
+    """``count`` images with ``nonzero`` coefficients under ``basis``, or zero images for ``nonzero=0``."""
+    shape = (2**basis.m, 2**basis.n)
     images = []
-    for _ in range(3):
-        c = np.zeros(16, complex)
-        c[rng.choice(16, 3, replace=False)] = complex_normal(rng, 3)
+    for _ in range(count):
+        c = np.zeros(shape[0] * shape[1], complex)
+        c[rng.choice(c.size, nonzero, replace=False)] = complex_normal(rng, nonzero)
         images.append(basis.inverse_transform(jnp.asarray(c.reshape(shape))))
-    result = train_basis_exact(basis, dataset=images, k=3, sweeps=2)
-    assert result.loss_history[0] == pytest.approx(0, abs=1e-20)
-    assert _objective(result.basis, images, [3]) == pytest.approx(0, abs=1e-20)
+    return images
+
+
+@pytest.mark.parametrize(
+    ("make", "count", "nonzero", "k"),
+    [
+        (lambda: pdft.RichBasis(m=2, n=2), 3, 3, 3),  # environments of rank 1 to 3
+        (lambda: pdft.QFTBasis(m=3, n=3), 1, 1, 1),  # zero singular values and phase entries
+        (lambda: pdft.QFTBasis(m=2, n=2), 2, 0, 2),  # zero images: every environment is zero
+    ],
+    ids=["rich_3_sparse", "qft_1_sparse", "zero_images"],
+)
+def test_an_already_sparse_basis_is_a_fixed_point(make, count: int, nonzero: int, k: int) -> None:
+    """Nothing outside the top k, and nothing that would lower it: every gate stays where it is.
+
+    The data do not decide the gates here, and of their best values each gate
+    keeps the one it has; a polar factor alone would take one LAPACK chooses
+    by rounding, and a zero environment's is the identity.
+    """
+    basis = make()
+    images = _sparse(basis, np.random.default_rng(13), count, nonzero)
+    result = train_basis_exact(basis, dataset=images, k=k, sweeps=2)
+    assert result.loss_history == pytest.approx([0, 0], abs=1e-20)
+    for a, b in zip(basis.tensors, result.basis.tensors):
+        np.testing.assert_allclose(b, a, atol=1e-12)
+        if nonzero == 0:  # every value scores the same: left exactly as it is
+            assert np.array_equal(np.asarray(a), np.asarray(b))
 
 
 def test_with_tensors_round_trip_keeps_the_program() -> None:
@@ -326,12 +435,17 @@ def test_a_blocked_basis_is_refused() -> None:
         ({"k": [3, -1]}, ValueError, "k must be >= 1"),
         ({"k": []}, ValueError, "at least one budget"),
         ({"k": 2.5}, TypeError, "integer"),
+        ({"k": True}, TypeError, "integer"),
         ({"sweeps": 0}, ValueError, "sweeps"),
         ({"passes": 0}, ValueError, "passes"),
+        ({"passes": 1.5}, TypeError, "passes must be an integer"),
         ({"frozen_indices": [99]}, ValueError, "out-of-range"),
         ({"dataset": []}, ValueError, "non-empty"),
         # a Rich transform would reshape a transposed image silently (CLAUDE.md 13)
         ({"dataset": [jnp.ones((2, 4))]}, ValueError, "shape"),
+        # an array is a sequence of its rows
+        ({"dataset": jnp.ones((4, 2))}, ValueError, r"dataset\[0\] has shape \(2,\)"),
+        ({"dataset": [jnp.ones((4, 2)), jnp.full((4, 2), jnp.nan)]}, ValueError, "finite"),
         ({"precision": "half"}, ValueError, "precision"),
     ],
     ids=[
@@ -339,11 +453,15 @@ def test_a_blocked_basis_is_refused() -> None:
         "k_negative",
         "k_empty",
         "k_fractional",
+        "k_bool",
         "no_sweeps",
         "no_passes",
+        "fractional_passes",
         "frozen_out_of_range",
         "no_images",
         "transposed_image",
+        "one_bare_image",
+        "nan_image",
         "unknown_precision",
     ],
 )
@@ -354,8 +472,21 @@ def test_arguments_are_checked(change: dict, error: type, match: str) -> None:
         train_basis_exact(basis, **arguments)
 
 
+@pytest.fixture
+def gate_steps(monkeypatch) -> list:
+    """Every call the trainer makes to the gate step, as ``(m, code)``."""
+    calls = []
+
+    def gradient(block, m, *, code):
+        calls.append((m, code))
+        return _block_gradient(block, m, code=code)
+
+    monkeypatch.setattr(exact, "_block_gradient", gradient)
+    return calls
+
+
 @pytest.mark.parametrize(("tensors", "atol"), [(jnp.complex128, 1e-12), (jnp.complex64, 1e-6)])
-def test_single_precision_follows_double(tensors, atol: float) -> None:
+def test_single_precision_follows_double(tensors, atol: float, gate_steps: list) -> None:
     """The objective in single precision is the one in double to its rounding, over a few sweeps.
 
     The updates are read from the gates' kinds, not their values, and computed
@@ -363,13 +494,17 @@ def test_single_precision_follows_double(tensors, atol: float) -> None:
     unitary to its rounding. Complex images, so no conjugate pair ties at the
     Fourier start and the two runs make the same choices; complex64 ones, so
     the two runs start from the same numbers and differ only by the arithmetic.
+    The gate step gets ``M`` in the working precision, whatever the tensors'.
     """
     basis = pdft.RichBasis(m=3, n=2)
     basis = with_tensors(basis, [t.astype(tensors) for t in basis.tensors])
     rng = np.random.default_rng(17)
     images = [x.astype(jnp.complex64) for x in _images(rng, 3, 2, 4, real=False)]
     double = train_basis_exact(basis, dataset=images, k=6, sweeps=3, passes=2)
+    assert {m.dtype for m, _ in gate_steps} == {jnp.dtype(jnp.complex128)}
+    gate_steps.clear()
     single = train_basis_exact(basis, dataset=images, k=6, sweeps=3, passes=2, precision="single")
+    assert {m.dtype for m, _ in gate_steps} == {jnp.dtype(jnp.complex64)}
     np.testing.assert_allclose(single.loss_history, double.loss_history, rtol=1e-5)
     # by rounding, from the first codes on: it did run in single
     assert single.loss_history[0] != double.loss_history[0]
@@ -379,3 +514,13 @@ def test_single_precision_follows_double(tensors, atol: float) -> None:
         d = int(np.sqrt(t.size))
         u = np.asarray(t, np.complex128).reshape(d, d)
         assert np.allclose(u @ u.conj().T, np.eye(d), atol=atol)
+
+
+def test_the_gate_step_keeps_the_bases_arithmetic(gate_steps: list) -> None:
+    """A basis built with pdft 0.3.0's arithmetic (CLAUDE.md 10) gets it in its gate step too, not the default."""
+    default = pdft.QFTBasis(m=2, n=2)
+    contraction = dataclasses.replace(default.code, slices=False, merge_diagonals=False)
+    basis = pdft.QFTBasis(m=2, n=2, code=contraction)
+    train_basis_exact(basis, dataset=_images(np.random.default_rng(43), 2, 2, 2), k=3, sweeps=1)
+    assert gate_steps
+    assert all(not (c.slices or c.merge_diagonals or c.inverse) for _, c in gate_steps)
