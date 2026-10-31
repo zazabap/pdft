@@ -90,6 +90,8 @@ def test_a_coupled_circuit_is_refused(case: str) -> None:
     image = jnp.ones((2**basis.m, 2**basis.n))
     with pytest.raises(ValueError, match="not separable"):
         train_basis_exact(basis, dataset=[image], k=2, sweeps=1)
+    with pytest.raises(ValueError, match="not separable"):  # before an image is read
+        train_basis_exact(basis, dataset=[image.T], k=2, sweeps=1)
 
 
 @pytest.mark.parametrize(
@@ -125,27 +127,38 @@ def test_the_update_beats_every_other_gate_of_its_manifold(
         assert not np.any(np.imag(best))
 
 
-def test_of_several_best_gates_the_update_takes_the_nearest() -> None:
+@pytest.mark.parametrize("size", [1.0, 1e-20])
+def test_of_several_best_gates_the_update_takes_the_nearest(size: float) -> None:
     """Where the environment leaves a choice, the gate moves no further than the best score needs.
 
     A singular value or an entry of the environment that is zero, or below
     its rounding, says nothing about the data: the polar factor's choice
-    there would be LAPACK's, by rounding.
+    there would be LAPACK's, by rounding. Below rounding next to the
+    environment's own size, whatever that is, or next to what it was
+    computed from: an environment that is all rounding leaves the gate as it
+    is.
     """
     rng = np.random.default_rng(47)
     current = random_unitary(rng, 4)
     a, b = random_unitary(rng, 4), random_unitary(rng, 4)
-    environment = a @ np.diag([1.0, 0.5, 1e-20, 0.0]) @ b.conj().T
-    best = _best(
-        jnp.asarray(current.reshape(2, 2, 2, 2)),
-        environment.reshape(2, 2, 2, 2),
-        phase=False,
-        real=False,
-        eps=EPS,
-    )
-    best = np.asarray(best).reshape(4, 4)
+    environment = size * (a @ np.diag([1.0, 0.5, 1e-20, 0.0]) @ b.conj().T)
+
+    def update(e, *, phase=False, scale=0.0, gate=current):
+        shape = (2, 2) if phase else (2, 2, 2, 2)
+        best = _best(
+            jnp.asarray(gate.reshape(shape)),
+            e.reshape(shape),
+            phase=phase,
+            real=False,
+            eps=EPS,
+            scale=scale,
+        )
+        return np.asarray(best).reshape(gate.shape)
+
+    best = update(environment)
     np.testing.assert_allclose(best @ best.conj().T, np.eye(4), atol=1e-12)
-    assert float(np.real(np.trace(environment.conj().T @ best))) == pytest.approx(1.5)
+    score = float(np.real(np.trace(environment.conj().T @ best)))
+    assert score == pytest.approx(1.5 * size)
     # every A diag(1, 1, W) B^H scores the same; the update is the one nearest the gate
     for _ in range(100):
         w = np.eye(4, dtype=complex)
@@ -153,11 +166,16 @@ def test_of_several_best_gates_the_update_takes_the_nearest() -> None:
         other = a @ w @ b.conj().T
         assert np.linalg.norm(best - current) <= np.linalg.norm(other - current) + 1e-12
 
+    noise = 1e-17 * complex_normal(rng, (4, 4))  # what a block's M of size 1 leaves by rounding
+    assert np.array_equal(update(noise, scale=1.0), current)
+
     phases = np.exp(1j * rng.uniform(0, 2 * np.pi, (2, 2)))
-    environment = np.array([[2.0, 1e-20j], [0.0, -1.0]])
-    best = np.asarray(_best(jnp.asarray(phases), environment, phase=True, real=False, eps=EPS))
+    environment = size * np.array([[2.0, 1e-20j], [0.0, -1.0]])
+    best = update(environment, phase=True, gate=phases)
     np.testing.assert_allclose(best[[0, 1], [0, 1]], [1.0, -1.0], atol=1e-15)
     assert best[0, 1] == phases[0, 1] and best[1, 0] == phases[1, 0]
+    noise = 1e-17 * complex_normal(rng, (2, 2))
+    assert np.array_equal(update(noise, phase=True, scale=1.0, gate=phases), phases)
 
 
 def _images(rng, m: int, n: int, count: int, *, real: bool = True):
@@ -321,7 +339,8 @@ def test_the_codes_are_the_top_k_averaged_over_the_budgets() -> None:
 @pytest.mark.parametrize("dtype", [jnp.complex64, jnp.complex128])
 def test_a_blocks_objective_is_taken_behind_a_barrier_in_the_precision_of_m(dtype) -> None:
     """Neither shows in a number on a CPU: the barrier is a compile-time property (CLAUDE.md 14), and
-    the block's unitary, image-sized for a two-register circuit, is the memory a single precision run saves.
+    the block's unitary, as large as the image for a two-register circuit with m == n, is memory that
+    single precision halves.
     """
     basis = pdft.RichBasis(m=2, n=1)
     program = basis.program
@@ -394,19 +413,23 @@ def _sparse(basis, rng, count: int, nonzero: int):
     ],
     ids=["rich_3_sparse", "qft_1_sparse", "zero_images"],
 )
-def test_an_already_sparse_basis_is_a_fixed_point(make, count: int, nonzero: int, k: int) -> None:
+@pytest.mark.parametrize(("precision", "atol"), [("double", 1e-12), ("single", 1e-6)])
+def test_an_already_sparse_basis_is_a_fixed_point(
+    make, count: int, nonzero: int, k: int, precision: str, atol: float
+) -> None:
     """Nothing outside the top k, and nothing that would lower it: every gate stays where it is.
 
     The data do not decide the gates here, and of their best values each gate
     keeps the one it has; a polar factor alone would take one LAPACK chooses
-    by rounding, and a zero environment's is the identity.
+    by rounding, and a zero environment's is the identity. In single
+    precision what counts as zero is single precision's rounding.
     """
     basis = make()
     images = _sparse(basis, np.random.default_rng(13), count, nonzero)
-    result = train_basis_exact(basis, dataset=images, k=k, sweeps=2)
-    assert result.loss_history == pytest.approx([0, 0], abs=1e-20)
+    result = train_basis_exact(basis, dataset=images, k=k, sweeps=2, precision=precision)
+    assert result.loss_history == pytest.approx([0, 0], abs=1e-10)
     for a, b in zip(basis.tensors, result.basis.tensors):
-        np.testing.assert_allclose(b, a, atol=1e-12)
+        np.testing.assert_allclose(b, a, atol=atol)
         if nonzero == 0:  # every value scores the same: left exactly as it is
             assert np.array_equal(np.asarray(a), np.asarray(b))
 
@@ -524,3 +547,35 @@ def test_the_gate_step_keeps_the_bases_arithmetic(gate_steps: list) -> None:
     train_basis_exact(basis, dataset=_images(np.random.default_rng(43), 2, 2, 2), k=3, sweeps=1)
     assert gate_steps
     assert all(not (c.slices or c.merge_diagonals or c.inverse) for _, c in gate_steps)
+    # and the block's unitary is computed with it: the default slices its Hadamards instead
+    qubits, steps = separable_blocks(basis.program)[0]
+    block = [basis.tensors[basis.program.slot[i]] for i in steps]
+
+    def contractions(code) -> int:
+        traced = jax.make_jaxpr(lambda t: _block_matrix(code, t, jnp.complex128))(block)
+        return str(traced).count("dot_general")
+
+    code = gate_steps[0][1]
+    assert contractions(code) > 0
+    assert contractions(dataclasses.replace(code, slices=True, merge_diagonals=True)) == 0
+
+
+def test_each_update_is_told_the_size_of_its_blocks_m(gate_steps: list, monkeypatch) -> None:
+    """What is zero in an environment is zero next to the ``M`` it was computed from.
+
+    No images found so far leave an environment that is all rounding, so the
+    trainer's part is pinned by what it passes.
+    """
+    scales = []
+    best = exact._best
+
+    def recording(*args, scale: float = 0.0, **kwargs):
+        scales.append(scale)
+        return best(*args, scale=scale, **kwargs)
+
+    monkeypatch.setattr(exact, "_best", recording)
+    basis = pdft.QFTBasis(m=2, n=2)
+    train_basis_exact(basis, dataset=_images(np.random.default_rng(53), 2, 2, 2), k=3, sweeps=1)
+    sizes = [float(jnp.linalg.norm(m)) for m, _ in gate_steps]
+    assert scales == pytest.approx(sizes, rel=1e-12)
+    assert min(scales) > 0

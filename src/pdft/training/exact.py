@@ -180,7 +180,12 @@ def _block_matrix(code: CircuitCode, tensors: Sequence[Array], dtype) -> Array:
     ``code`` is the block's own circuit with the basis's arithmetic.
     """
     eye = jnp.eye(2**code.program.m, dtype=dtype)[:, :, None]
-    arithmetic = {"slices": code.slices, "merge_diagonals": code.merge_diagonals}
+    # every option of the code but the circuit and its direction (CLAUDE.md 10)
+    arithmetic = {
+        f.name: getattr(code, f.name)
+        for f in dataclasses.fields(code)
+        if f.name not in ("program", "inverse")
+    }
     return apply_program(code.program, tensors, eye, **arithmetic)[:, :, 0].T
 
 
@@ -201,17 +206,17 @@ def _block_objective(tensors: Sequence[Array], m: Array, *, code: CircuitCode) -
 _block_gradient = jax.jit(jax.grad(_block_objective), static_argnames="code")
 
 
-def _polar(e: np.ndarray, current: np.ndarray, tol: float) -> np.ndarray:
+def _polar(e: np.ndarray, current: np.ndarray, tol: float, scale: float) -> np.ndarray:
     """Of the unitaries ``g`` that maximise ``Re tr(e^H g)``, the one nearest ``current``.
 
     For ``e = A S B^H`` they are ``A diag(I, W) B^H``, ``W`` any unitary on
-    the singular values that are zero (to ``tol`` of the largest): the polar
-    factor ``A B^H`` when none is, ``current`` itself when ``e`` is zero.
-    Otherwise LAPACK would choose ``W`` by rounding, and the gate would move
-    where the objective cannot see.
+    the singular values that are zero (to ``tol`` of the largest, or of
+    ``scale`` if that is larger): the polar factor ``A B^H`` when none is,
+    ``current`` itself when ``e`` is zero. Otherwise LAPACK would choose ``W``
+    by rounding, and the gate would move where the objective cannot see.
     """
     a, s, bh = np.linalg.svd(e)
-    rank = int(np.count_nonzero(s > tol * s[0]))
+    rank = int(np.count_nonzero(s > tol * max(s[0], scale)))
     if rank == len(s):
         return a @ bh
     if rank == 0:
@@ -221,16 +226,25 @@ def _polar(e: np.ndarray, current: np.ndarray, tol: float) -> np.ndarray:
     return a[:, :rank] @ bh[:rank] + a0 @ (u @ vh) @ b0h
 
 
-def _best(tensor: Array, environment: np.ndarray, *, phase: bool, real: bool, eps: float) -> Array:
+def _best(
+    tensor: Array,
+    environment: np.ndarray,
+    *,
+    phase: bool,
+    real: bool,
+    eps: float,
+    scale: float = 0.0,
+) -> Array:
     """The tensor of a gate's manifold that maximises ``Re tr(E^H g)``, ``E`` its environment.
 
     ``phase``: a compact controlled phase (kind ``CP``), each entry on the unit
     circle; otherwise a unitary, ``2 x 2`` or a ``(2, 2, 2, 2)`` two-qubit gate.
     The kind comes from the program, not from the values (CLAUDE.md 9), so it
     holds in single precision on a GPU too. Where several tensors are best (an
-    entry of ``E`` that is zero, a singular value that is, to ``eps`` times
-    the size of ``E``), the one nearest the tensor as it is. Computed in
-    double precision and returned in the tensor's.
+    entry or a singular value of ``E`` below ``eps`` times the size of ``E``
+    times its largest, or times ``scale``, the size of what ``E`` was
+    computed from, if that is larger), the one nearest the tensor as it is.
+    Computed in double precision and returned in the tensor's.
     """
     e = np.asarray(environment, np.complex128)
     current = np.asarray(tensor, np.complex128)
@@ -239,10 +253,11 @@ def _best(tensor: Array, environment: np.ndarray, *, phase: bool, real: bool, ep
     d = int(np.sqrt(tensor.size))
     if phase:
         magnitude = np.abs(e)
-        seen = magnitude > d * eps * magnitude.max()
+        seen = magnitude > d * eps * max(magnitude.max(), scale)
         best = np.where(seen, e / np.where(seen, magnitude, 1), current)
     else:
-        best = _polar(e.reshape(d, d), current.reshape(d, d), d * eps).reshape(tensor.shape)
+        best = _polar(e.reshape(d, d), current.reshape(d, d), d * eps, scale)
+        best = best.reshape(tensor.shape)
     return jnp.asarray(best, dtype=tensor.dtype)
 
 
@@ -341,8 +356,9 @@ def train_basis_exact(
         Its ``loss_history`` holds, per sweep, the objective at its start:
         the energy outside the top ``k`` summed over the images (the mean over
         the budgets). No sweep raises it in exact arithmetic; once it has
-        converged, rounding can (by about ``1e-15`` of it in double
-        precision, ``1e-7`` in single).
+        converged, rounding can, by about ``1e-15`` of it when the working
+        precision and the tensors are both double, ``1e-7`` when either is
+        single.
 
     Raises
     ------
@@ -367,7 +383,8 @@ def train_basis_exact(
     Where the data leave a gate's best value open (several score the same,
     as when the images are zero or their codes already exact), the gate
     takes the one of them nearest its value, and is left as it is when its
-    environment is zero.
+    environment is zero; zero here means below the rounding of the working
+    precision, next to the block's ``M``.
 
     The top ``k`` is ``MSELoss``'s, with no tie band (CLAUDE.md 14): where
     coefficients tie in magnitude, as conjugate pairs of a real image do at
@@ -393,7 +410,7 @@ def train_basis_exact(
         x = _at_most(x, dtype)
         _check_image_shape(i, x, basis.image_size)
         if not bool(jnp.all(jnp.isfinite(x))):
-            raise ValueError(f"dataset[{i}] is not finite")
+            raise ValueError(f"dataset[{i}] is not finite in {precision} precision")
         images.append(x)
     arithmetic = basis.code if isinstance(basis.code, CircuitCode) else CircuitCode(program)
     blocks = []
@@ -418,14 +435,18 @@ def train_basis_exact(
         history.append(loss)
         for steps, trainable, phase, code in blocks:
             m = block_correlation(basis, steps, images, [codes for codes, _ in coded])
-            m = m.astype(dtype)  # summed in double; the block's unitary is image-sized too
+            # every environment of the block is a contraction of M: what is zero is zero next to it
+            scale = float(jnp.linalg.norm(m))
+            m = m.astype(dtype)  # summed in double; the block's unitary can be as large as an image
             tensors = list(basis.tensors)
             block = [tensors[program.slot[i]] for i in steps]
             for _ in range(passes):
                 for j in trainable:
                     # JAX's gradient is the conjugate (CLAUDE.md 1)
                     environment = np.conj(np.asarray(_block_gradient(block, m, code=code)[j]))
-                    block[j] = _best(block[j], environment, phase=phase[j], real=real, eps=eps)
+                    block[j] = _best(
+                        block[j], environment, phase=phase[j], real=real, eps=eps, scale=scale
+                    )
             for i, t in zip(steps, block):
                 tensors[program.slot[i]] = t
             basis = with_tensors(basis, tensors)

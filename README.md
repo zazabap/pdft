@@ -129,9 +129,15 @@ result = pdft.train_basis_exact(
 ```
 
 `precision="single"` computes everything the size of an image in single
-precision, for every basis; the sums over the images and the updates stay in
-double. On an RTX 5070, whose double precision is slow, a sweep over four
-`2^12 x 2^13` images took 5.6 s instead of 59 s, with the same losses to `1e-6`.
+precision, for every basis: the transforms, the codes and each block's gate
+step. The sums over the images and the updates stay in double. On an RTX 5070,
+whose double precision is slow, a sweep over four `2^12 x 2^13` images under a
+Rich circuit of four blocks (6, 6, 6 and 7 qubits, one per mode of a 4-D scan)
+took about 6 s instead of 59 s, and a two-register `RichBasis(10, 10)` needs
+half the memory. On complex images the two precisions agree to a few `1e-6`;
+on real images at the Fourier start the top `k` settles ties by rounding, and
+the two (like a CPU and a GPU) can end up about `1e-3` apart after twenty
+sweeps.
 
 Runnable demos live in [`examples/`](examples/) (each takes a few seconds):
 
