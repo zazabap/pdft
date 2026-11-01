@@ -108,6 +108,37 @@ result = pdft.train_basis_steps(
 )
 ```
 
+A separable circuit (no gate between the two registers: QFT, Rich, RealRich,
+DCT4, TEBD, MERA) can also be trained with no gradient steps at all.
+`train_basis_exact` alternates the codes `H_k(U x)` with an exact update of
+every gate given the others (the polar factor of its environment, or its
+phases for a phase tensor), so the sparsity objective never rises but by
+rounding; a `RichBasis` started at the QFT moves away from it, which phase
+training cannot:
+
+```python
+import numpy as np
+from pdft.circuit import bit_reverse
+
+result = pdft.train_basis_exact(
+    pdft.RichBasis(m=6, n=6),
+    dataset=[bit_reverse(x) / np.linalg.norm(x) for x in images],  # each image weighs the same
+    k=[205, 410],                                                  # budgets, averaged
+    sweeps=20, passes=2,
+)
+```
+
+`precision="single"` computes everything the size of an image in single
+precision, for every basis: the transforms, the codes and each block's gate
+step. The sums over the images and the updates stay in double. On an RTX 5070,
+whose double precision is slow, a sweep over four `2^12 x 2^13` images under a
+Rich circuit of four blocks (6, 6, 6 and 7 qubits, one per mode of a 4-D scan)
+took about 6 s instead of 59 s, and a two-register `RichBasis(10, 10)` needs
+half the memory. On complex images the two precisions agree to a few `1e-6`;
+on real images at the Fourier start the top `k` settles ties by rounding, and
+the two (like a CPU and a GPU) can end up about `1e-3` apart after twenty
+sweeps.
+
 Runnable demos live in [`examples/`](examples/) (each takes a few seconds):
 
 ```bash
